@@ -1,0 +1,6 @@
+{
+  "name": "Vio streaming - Video Streaming Platform",
+  "description": "A comprehensive video streaming platform featuring dynamic feeds, trending reels, channel following, interactive comments, search, and cinema playback.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

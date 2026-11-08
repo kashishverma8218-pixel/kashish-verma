@@ -1,0 +1,50 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile and authentication details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique authentication UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "Full display name" },
+        "handle": { "type": "string", "description": "Unique username handle e.g. @creator" },
+        "photoURL": { "type": "string", "description": "Profile avatar image URL" },
+        "bannerURL": { "type": "string", "description": "Channel header banner image URL" },
+        "bio": { "type": "string", "description": "User bio or channel description" },
+        "subscribersCount": { "type": "number", "description": "Total subscriber count" },
+        "createdAt": { "type": "number", "description": "Account creation timestamp" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Video": {
+      "title": "Video",
+      "description": "Uploaded video record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Video unique identifier" },
+        "userId": { "type": "string", "description": "Creator user UID" },
+        "title": { "type": "string", "description": "Video title" },
+        "description": { "type": "string", "description": "Video description" },
+        "url": { "type": "string", "description": "Video streaming source URL" },
+        "poster": { "type": "string", "description": "Thumbnail poster URL" },
+        "category": { "type": "string", "description": "Content category" },
+        "views": { "type": "number", "description": "View count" },
+        "likes": { "type": "number", "description": "Like count" },
+        "visibility": { "type": "string", "description": "public, unlisted, or private" },
+        "createdAt": { "type": "number", "description": "Upload timestamp" }
+      },
+      "required": ["id", "userId", "title", "url"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles readable publicly and editable by the authenticated owner"
+    },
+    "/videos/{videoId}": {
+      "schema": "Video",
+      "description": "Video records readable publicly and editable by the creator"
+    }
+  }
+}
