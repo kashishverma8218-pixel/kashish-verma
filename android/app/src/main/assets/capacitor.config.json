@@ -1,0 +1,8 @@
+{
+	"appId": "com.viostreaming.app",
+	"appName": "Vio streaming",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	}
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Vio streaming</string>
+    <string name="title_activity_main">Vio streaming</string>
+    <string name="package_name">com.viostreaming.app</string>
+    <string name="custom_url_scheme">com.viostreaming.app</string>
+</resources>
