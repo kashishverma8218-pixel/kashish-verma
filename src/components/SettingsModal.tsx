@@ -53,7 +53,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return localStorage.getItem('vio_pref_ambient') !== 'false';
   });
   const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(() => {
-    return localStorage.getItem('vio_pref_subtitles') === 'true';
+    return (localStorage.getItem('vio_streaming_subtitles_enabled') || localStorage.getItem('vio_pref_subtitles')) === 'true';
   });
 
   // Notification settings
@@ -97,6 +97,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleSubtitlesToggle = () => {
     const next = !subtitlesEnabled;
     setSubtitlesEnabled(next);
+    localStorage.setItem('vio_streaming_subtitles_enabled', String(next));
     localStorage.setItem('vio_pref_subtitles', String(next));
     showSavedBadge('Captions default updated');
   };

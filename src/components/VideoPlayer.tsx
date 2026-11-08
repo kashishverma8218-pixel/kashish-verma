@@ -22,11 +22,24 @@ import {
   Share2,
   Copy,
   Eye,
-  EyeOff
+  EyeOff,
+  Captions,
+  Upload,
+  FileText,
+  SlidersHorizontal,
+  Plus,
+  Trash2,
+  X
 } from 'lucide-react';
 import { VideoItem, Bookmark, VideoFilters, AspectRatioMode } from '../types/video';
 import { formatTime } from '../utils/formatTime';
 import { useVideoKeyboardShortcuts } from '../utils/useVideoKeyboardShortcuts';
+import {
+  parseSubtitleFile,
+  getPresetSubtitleTracks,
+  SubtitleCue,
+  SubtitleTrack,
+} from '../utils/subtitleParser';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -98,6 +111,223 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [enableCors, setEnableCors] = useState<boolean>(false);
   const [currentSrc, setCurrentSrc] = useState<string>(video.url);
   const [retryCount, setRetryCount] = useState<number>(0);
+
+  // Subtitles / Closed Captions State
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('vio_streaming_subtitles_enabled') === 'true';
+  });
+  const [availableTracks, setAvailableTracks] = useState<SubtitleTrack[]>(() => {
+    return getPresetSubtitleTracks(video.id);
+  });
+  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(() => {
+    const saved = localStorage.getItem('vio_streaming_subtitle_track');
+    const presets = getPresetSubtitleTracks(video.id);
+    if (saved && presets.some((t) => t.id === saved)) return saved;
+    return presets[0]?.id || null;
+  });
+  const [activeCue, setActiveCue] = useState<SubtitleCue | null>(null);
+  const [subtitleOffset, setSubtitleOffset] = useState<number>(0); // in seconds
+  const [subtitleFontSize, setSubtitleFontSize] = useState<'sm' | 'base' | 'lg'>(() => {
+    return (localStorage.getItem('vio_streaming_subtitle_size') as 'sm' | 'base' | 'lg') || 'base';
+  });
+  const [subtitleColor, setSubtitleColor] = useState<'white' | 'yellow' | 'cyan'>(() => {
+    return (localStorage.getItem('vio_streaming_subtitle_color') as 'white' | 'yellow' | 'cyan') || 'white';
+  });
+  const [subtitleBg, setSubtitleBg] = useState<'black-80' | 'black-solid' | 'transparent'>(() => {
+    return (localStorage.getItem('vio_streaming_subtitle_bg') as 'black-80' | 'black-solid' | 'transparent') || 'black-80';
+  });
+  const [subtitleMenuOpen, setSubtitleMenuOpen] = useState<boolean>(false);
+  const [subtitleToast, setSubtitleToast] = useState<string | null>(null);
+  const [showUrlModal, setShowUrlModal] = useState<boolean>(false);
+  const [pastedUrlOrText, setPastedUrlOrText] = useState<string>('');
+  const [isParsingUrl, setIsParsingUrl] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync subtitle tracks when video changes
+  useEffect(() => {
+    const presets = getPresetSubtitleTracks(video.id);
+    setAvailableTracks((prev) => {
+      const customTracks = prev.filter((t) => t.isCustom);
+      return [...customTracks, ...presets];
+    });
+
+    setSelectedTrackId((prev) => {
+      if (prev && prev.startsWith('custom-')) return prev;
+      return presets[0]?.id || null;
+    });
+    setActiveCue(null);
+    setSubtitleOffset(0);
+  }, [video.id]);
+
+  // Real-time active cue matcher synchronized with currentTime + offset
+  useEffect(() => {
+    if (!subtitlesEnabled || !selectedTrackId) {
+      setActiveCue(null);
+      return;
+    }
+
+    const currentTrack = availableTracks.find((t) => t.id === selectedTrackId);
+    if (!currentTrack || !currentTrack.cues || currentTrack.cues.length === 0) {
+      setActiveCue(null);
+      return;
+    }
+
+    const adjustedTime = currentTime + subtitleOffset;
+    const matching = currentTrack.cues.find(
+      (cue) => adjustedTime >= cue.startTime && adjustedTime <= cue.endTime
+    );
+
+    setActiveCue(matching || null);
+  }, [currentTime, subtitlesEnabled, selectedTrackId, availableTracks, subtitleOffset]);
+
+  const showSubToast = (msg: string) => {
+    setSubtitleToast(msg);
+    setTimeout(() => {
+      setSubtitleToast((curr) => (curr === msg ? null : curr));
+    }, 2500);
+  };
+
+  // Toggle Subtitles ON/OFF
+  const toggleSubtitles = useCallback(() => {
+    setSubtitlesEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('vio_streaming_subtitles_enabled', String(next));
+      if (next) {
+        const track = availableTracks.find((t) => t.id === selectedTrackId) || availableTracks[0];
+        if (track && !selectedTrackId) setSelectedTrackId(track.id);
+        showSubToast(`Subtitles: ${track ? track.label : 'On'}`);
+      } else {
+        showSubToast('Subtitles: Off');
+      }
+      return next;
+    });
+  }, [availableTracks, selectedTrackId]);
+
+  // Select a specific track (or 'off')
+  const handleSelectTrack = (trackId: string | null) => {
+    if (!trackId) {
+      setSubtitlesEnabled(false);
+      localStorage.setItem('vio_streaming_subtitles_enabled', 'false');
+      showSubToast('Subtitles: Off');
+    } else {
+      setSelectedTrackId(trackId);
+      setSubtitlesEnabled(true);
+      localStorage.setItem('vio_streaming_subtitles_enabled', 'true');
+      localStorage.setItem('vio_streaming_subtitle_track', trackId);
+      const track = availableTracks.find((t) => t.id === trackId);
+      showSubToast(`Subtitles: ${track?.label || 'Selected'}`);
+    }
+    setSubtitleMenuOpen(false);
+  };
+
+  // Upload local .srt or .vtt file
+  const handleSubtitleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (!content) return;
+
+      try {
+        const cues = parseSubtitleFile(content, file.name);
+        if (cues.length === 0) {
+          showSubToast('No valid subtitle cues found in file.');
+          return;
+        }
+
+        const newTrack: SubtitleTrack = {
+          id: `custom-${Date.now()}`,
+          label: `${file.name.replace(/\.(srt|vtt)$/i, '')} (Custom)`,
+          language: 'custom',
+          cues,
+          isCustom: true,
+          filename: file.name,
+        };
+
+        setAvailableTracks((prev) => [newTrack, ...prev.filter((t) => t.filename !== file.name)]);
+        setSelectedTrackId(newTrack.id);
+        setSubtitlesEnabled(true);
+        localStorage.setItem('vio_streaming_subtitles_enabled', 'true');
+        showSubToast(`Loaded: ${file.name} (${cues.length} cues)`);
+      } catch (err) {
+        console.error('Failed to parse subtitle file:', err);
+        showSubToast('Could not parse subtitle file format.');
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Load from URL or pasted text
+  const handleLoadUrlOrText = async () => {
+    const input = pastedUrlOrText.trim();
+    if (!input) return;
+
+    setIsParsingUrl(true);
+    try {
+      if (input.startsWith('http://') || input.startsWith('https://')) {
+        const res = await fetch(input);
+        const text = await res.text();
+        const cues = parseSubtitleFile(text, input);
+        if (cues.length > 0) {
+          const rawName = input.split('/').pop()?.split('?')[0] || 'remote_subtitles.srt';
+          const newTrack: SubtitleTrack = {
+            id: `custom-${Date.now()}`,
+            label: `${rawName.replace(/\.(srt|vtt)$/i, '')} (URL)`,
+            language: 'custom',
+            cues,
+            isCustom: true,
+            filename: rawName,
+          };
+          setAvailableTracks((prev) => [newTrack, ...prev]);
+          setSelectedTrackId(newTrack.id);
+          setSubtitlesEnabled(true);
+          localStorage.setItem('vio_streaming_subtitles_enabled', 'true');
+          showSubToast(`Loaded ${cues.length} cues from URL`);
+          setShowUrlModal(false);
+          setPastedUrlOrText('');
+        } else {
+          showSubToast('No subtitle cues found at URL.');
+        }
+      } else {
+        const cues = parseSubtitleFile(input, 'pasted.srt');
+        if (cues.length > 0) {
+          const newTrack: SubtitleTrack = {
+            id: `custom-${Date.now()}`,
+            label: `Pasted Subtitles (${cues.length} cues)`,
+            language: 'custom',
+            cues,
+            isCustom: true,
+          };
+          setAvailableTracks((prev) => [newTrack, ...prev]);
+          setSelectedTrackId(newTrack.id);
+          setSubtitlesEnabled(true);
+          localStorage.setItem('vio_streaming_subtitles_enabled', 'true');
+          showSubToast(`Loaded ${cues.length} cues`);
+          setShowUrlModal(false);
+          setPastedUrlOrText('');
+        } else {
+          showSubToast('Could not parse pasted subtitle text.');
+        }
+      }
+    } catch (err) {
+      showSubToast('Network or format error loading subtitle.');
+    } finally {
+      setIsParsingUrl(false);
+    }
+  };
+
+  const handleDeleteCustomTrack = (trackId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setAvailableTracks((prev) => prev.filter((t) => t.id !== trackId));
+    if (selectedTrackId === trackId) {
+      const fallback = availableTracks.find((t) => t.id !== trackId);
+      setSelectedTrackId(fallback ? fallback.id : null);
+    }
+    showSubToast('Custom subtitle track removed.');
+  };
 
   useEffect(() => {
     setCurrentSrc(video.url);
@@ -378,6 +608,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     currentVolume: volume,
     takeSnapshot,
     handleAddBookmark: handleAddBookmarkClick,
+    toggleSubtitles,
     duration,
     onSeekPercent: (pct) => {
       if (videoRef.current && duration) {
@@ -580,7 +811,61 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </div>
           </div>
         )}
+
+        {/* Real-time Subtitle / Closed Caption Overlay */}
+        {subtitlesEnabled && activeCue && !isCleanMode && (
+          <div
+            className={`pointer-events-none absolute inset-x-0 z-20 flex justify-center px-4 transition-all duration-150 ${
+              showControls ? 'bottom-20 sm:bottom-24' : 'bottom-6 sm:bottom-8'
+            }`}
+          >
+            <div
+              className={`max-w-[92%] sm:max-w-[80%] text-center font-medium leading-relaxed select-none transition-all ${
+                subtitleColor === 'yellow'
+                  ? 'text-yellow-300'
+                  : subtitleColor === 'cyan'
+                  ? 'text-cyan-300'
+                  : 'text-white'
+              } ${
+                subtitleFontSize === 'sm'
+                  ? 'text-xs sm:text-sm px-2.5 py-1'
+                  : subtitleFontSize === 'lg'
+                  ? 'text-base sm:text-lg md:text-xl font-bold px-4 py-2'
+                  : 'text-sm sm:text-base md:text-lg px-3.5 py-1.5'
+              } ${
+                subtitleBg === 'black-solid'
+                  ? 'bg-black rounded-xl shadow-2xl'
+                  : subtitleBg === 'transparent'
+                  ? 'bg-transparent [text-shadow:_0_2px_4px_rgb(0_0_0_/_95%),_0_0_10px_rgb(0_0_0_/_90%)]'
+                  : 'bg-black/80 backdrop-blur-xs rounded-xl shadow-2xl ring-1 ring-white/10'
+              }`}
+            >
+              {activeCue.text.split('\n').map((line, idx) => (
+                <span key={idx} className="block">
+                  {line}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Hidden File Input for External .srt and .vtt Subtitles */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".srt,.vtt,text/plain"
+          onChange={handleSubtitleFileUpload}
+          className="hidden"
+        />
       </div>
+
+      {/* Subtitle Toast Feedback */}
+      {subtitleToast && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full border border-white/15 bg-slate-900/95 px-4 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-2">
+          <Captions className="h-4 w-4 text-sky-400 shrink-0" />
+          <span>{subtitleToast}</span>
+        </div>
+      )}
 
       {/* Snapshot Toast Preview */}
       {snapshotToast && (
@@ -637,6 +922,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
           >
             <Sliders className="h-4 w-4" />
+          </button>
+
+          {/* Subtitles Quick Launcher */}
+          <button
+            onClick={() => setSubtitleMenuOpen(!subtitleMenuOpen)}
+            title={`Subtitles / Captions (C) - ${subtitlesEnabled ? 'On' : 'Off'}`}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+              subtitlesEnabled
+                ? 'bg-sky-500/20 text-sky-400 ring-1 ring-sky-500/40'
+                : 'bg-white/10 text-white hover:bg-white/20'
+            }`}
+          >
+            <Captions className="h-4 w-4" />
           </button>
 
           {/* Quick Aspect Ratio */}
@@ -898,6 +1196,225 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               )}
             </div>
 
+            {/* Subtitles / Closed Captions (CC) Quick Toggle & Menu */}
+            <div className="relative">
+              <button
+                onClick={toggleSubtitles}
+                title={`Subtitles / Captions (C) - ${subtitlesEnabled ? 'On' : 'Off'} (Tap menu button for tracks & custom .srt upload)`}
+                className={`relative flex items-center justify-center p-1.5 rounded-lg transition-all ${
+                  subtitlesEnabled
+                    ? 'text-sky-400 bg-sky-500/20 ring-1 ring-sky-500/40'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <Captions className="h-4 w-4" />
+                {subtitlesEnabled && (
+                  <span className="absolute bottom-0.5 right-1 h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+                )}
+              </button>
+
+              {/* Subtitles Options Trigger Pill */}
+              <button
+                onClick={() => setSubtitleMenuOpen(!subtitleMenuOpen)}
+                title="Subtitle Tracks & Settings"
+                className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-800 text-[9px] text-slate-300 hover:bg-sky-600 hover:text-white ring-1 ring-white/20 transition-colors"
+              >
+                <SlidersHorizontal className="h-2 w-2" />
+              </button>
+
+              {/* Subtitles Dropdown Menu */}
+              {subtitleMenuOpen && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute right-0 bottom-9 z-50 w-72 sm:w-80 rounded-2xl border border-white/15 bg-slate-900/98 p-3 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150 space-y-3"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <div className="flex items-center gap-2">
+                      <Captions className="h-4 w-4 text-sky-400" />
+                      <span className="font-bold text-sm">Subtitles & Captions</span>
+                    </div>
+                    <button
+                      onClick={() => setSubtitleMenuOpen(false)}
+                      className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* Quick Toggle On/Off */}
+                  <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-xs font-semibold">Subtitles Display</span>
+                    <button
+                      onClick={toggleSubtitles}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                        subtitlesEnabled ? 'bg-sky-500' : 'bg-slate-700'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
+                          subtitlesEnabled ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Track Selection List */}
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">
+                      Available Tracks
+                    </div>
+
+                    <div className="max-h-40 overflow-y-auto space-y-0.5 pr-1">
+                      {/* Disable Subtitles Option */}
+                      <button
+                        onClick={() => handleSelectTrack(null)}
+                        className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
+                          !subtitlesEnabled
+                            ? 'bg-sky-500/15 text-sky-400 font-bold'
+                            : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        <span>Off (Disable)</span>
+                        {!subtitlesEnabled && <Check className="h-3.5 w-3.5" />}
+                      </button>
+
+                      {/* Language & Custom Tracks */}
+                      {availableTracks.map((track) => {
+                        const isSelected = subtitlesEnabled && selectedTrackId === track.id;
+                        return (
+                          <div
+                            key={track.id}
+                            onClick={() => handleSelectTrack(track.id)}
+                            className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left cursor-pointer transition-colors ${
+                              isSelected
+                                ? 'bg-sky-500/15 text-sky-400 font-bold'
+                                : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="truncate">{track.label}</span>
+                              {track.isCustom && (
+                                <span className="rounded bg-purple-500/20 text-purple-300 text-[9px] font-semibold px-1.5 py-0.2 shrink-0">
+                                  Custom
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {isSelected && <Check className="h-3.5 w-3.5 text-sky-400" />}
+                              {track.isCustom && (
+                                <button
+                                  onClick={(e) => handleDeleteCustomTrack(track.id, e)}
+                                  title="Delete custom track"
+                                  className="p-1 rounded opacity-0 group-hover:opacity-100 hover:text-rose-400 text-slate-400 transition-opacity"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Upload & External Subtitle Actions */}
+                  <div className="pt-2 border-t border-white/10 grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-semibold transition-colors"
+                    >
+                      <Upload className="h-3.5 w-3.5 text-sky-400" />
+                      <span>Upload .SRT/.VTT</span>
+                    </button>
+                    <button
+                      onClick={() => setShowUrlModal(true)}
+                      className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-semibold transition-colors"
+                    >
+                      <FileText className="h-3.5 w-3.5 text-purple-400" />
+                      <span>Paste / URL</span>
+                    </button>
+                  </div>
+
+                  {/* Timing Sync & Customization Settings */}
+                  <div className="pt-2 border-t border-white/10 space-y-2">
+                    {/* Audio Sync Offset */}
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-slate-400 font-medium">
+                        Audio Sync: {subtitleOffset === 0 ? '0.0s' : `${subtitleOffset > 0 ? '+' : ''}${subtitleOffset.toFixed(1)}s`}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setSubtitleOffset((prev) => parseFloat((prev - 0.5).toFixed(1)))}
+                          title="-0.5s Earlier"
+                          className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px]"
+                        >
+                          -0.5s
+                        </button>
+                        <button
+                          onClick={() => setSubtitleOffset(0)}
+                          title="Reset Sync"
+                          className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] text-slate-300"
+                        >
+                          Reset
+                        </button>
+                        <button
+                          onClick={() => setSubtitleOffset((prev) => parseFloat((prev + 0.5).toFixed(1)))}
+                          title="+0.5s Later"
+                          className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px]"
+                        >
+                          +0.5s
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Font Size & Color Customization */}
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <div>
+                        <span className="text-slate-400 block mb-1">Text Size</span>
+                        <div className="flex rounded-lg bg-black/40 p-0.5 border border-white/10">
+                          {(['sm', 'base', 'lg'] as const).map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => {
+                                setSubtitleFontSize(s);
+                                localStorage.setItem('vio_streaming_subtitle_size', s);
+                              }}
+                              className={`flex-1 py-0.5 rounded text-center capitalize transition-colors ${
+                                subtitleFontSize === s ? 'bg-sky-500 text-white font-bold' : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {s === 'sm' ? 'S' : s === 'base' ? 'M' : 'L'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-slate-400 block mb-1">Text Color</span>
+                        <div className="flex rounded-lg bg-black/40 p-0.5 border border-white/10">
+                          {(['white', 'yellow', 'cyan'] as const).map((c) => (
+                            <button
+                              key={c}
+                              onClick={() => {
+                                setSubtitleColor(c);
+                                localStorage.setItem('vio_streaming_subtitle_color', c);
+                              }}
+                              className={`flex-1 py-0.5 rounded text-center capitalize transition-colors ${
+                                subtitleColor === c ? 'bg-sky-500 text-white font-bold' : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {c[0].toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Loop Toggle */}
             <button
               onClick={() => setIsLooping(!isLooping)}
@@ -945,6 +1462,68 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         </div>
       </div>
+
+      {/* External Subtitle URL or Paste Modal */}
+      {showUrlModal && (
+        <div
+          onClick={() => setShowUrlModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-3xl border border-white/15 bg-slate-900 p-5 shadow-2xl text-white space-y-4 animate-in zoom-in-95"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-sky-400" />
+                <h4 className="font-bold text-base">Load External Subtitles</h4>
+              </div>
+              <button
+                onClick={() => setShowUrlModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Paste a direct URL to an external <code className="text-sky-300 font-mono">.srt</code> or <code className="text-sky-300 font-mono">.vtt</code> file, or paste raw subtitle text below:
+            </p>
+
+            <textarea
+              rows={4}
+              value={pastedUrlOrText}
+              onChange={(e) => setPastedUrlOrText(e.target.value)}
+              placeholder="https://example.com/movie_subtitles.srt&#10;or paste&#10;1&#10;00:00:01,000 --> 00:00:04,000&#10;Welcome to Vio streaming..."
+              className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-mono text-white placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none"
+            />
+
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-[11px] text-slate-400">
+                Supports SRT & WebVTT formats
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowUrlModal(false)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLoadUrlOrText}
+                  disabled={isParsingUrl || !pastedUrlOrText.trim()}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white text-xs font-bold shadow-md transition-all cursor-pointer"
+                >
+                  {isParsingUrl ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  <span>Parse & Load</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

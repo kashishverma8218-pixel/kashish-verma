@@ -9,6 +9,7 @@ export interface VideoKeyboardShortcutsOptions {
   currentVolume?: number;
   takeSnapshot?: () => void;
   handleAddBookmark?: () => void;
+  toggleSubtitles?: () => void;
   duration?: number;
   onSeekPercent?: (pct: number) => void;
   enabled?: boolean;
@@ -35,6 +36,7 @@ export function useVideoKeyboardShortcuts({
   currentVolume = 1,
   takeSnapshot,
   handleAddBookmark,
+  toggleSubtitles,
   duration,
   onSeekPercent,
   enabled = true,
@@ -101,6 +103,13 @@ export function useVideoKeyboardShortcuts({
           }
           break;
 
+        case 'c':
+          if (toggleSubtitles) {
+            e.preventDefault();
+            toggleSubtitles();
+          }
+          break;
+
         case 'f':
           e.preventDefault();
           toggleFullscreen();
@@ -152,6 +161,7 @@ export function useVideoKeyboardShortcuts({
     currentVolume,
     takeSnapshot,
     handleAddBookmark,
+    toggleSubtitles,
     duration,
     onSeekPercent,
   ]);

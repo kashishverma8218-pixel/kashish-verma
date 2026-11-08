@@ -15,6 +15,7 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
     { key: 'J / L', desc: 'Seek 10 seconds backward / forward' },
     { key: '↑ / ↓', desc: 'Increase / decrease volume by 5%' },
     { key: 'M', desc: 'Mute / Unmute audio' },
+    { key: 'C', desc: 'Toggle Subtitles / Captions' },
     { key: 'F', desc: 'Toggle Fullscreen mode' },
     { key: 'P', desc: 'Toggle Picture-in-Picture window' },
     { key: 'S', desc: 'Capture high-res frame snapshot (PNG)' },
