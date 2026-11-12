@@ -1,0 +1,196 @@
+// BACKUP OF FIRESTORE RULES - SAVED FOR SAFETY
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        request.auth.token.admin == true ||
+        request.auth.token.email == 'kashishverma8218@gmail.com'
+      );
+    }
+
+    // 1. USER PROFILES
+    match /users/{uid} {
+      allow read: if true;
+      allow create: if isOwner(uid);
+      allow update, delete: if isOwner(uid) || isAdmin();
+    }
+
+    // 2. VIDEOS
+    match /videos/{videoId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+                    && request.resource.data.ownerId == request.auth.uid;
+
+      allow update: if (signedIn() && (
+                      resource.data.ownerId == request.auth.uid ||
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes', 'dislikes'])
+                    )) || isAdmin();
+
+      allow delete: if (signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+    }
+
+    // 3. REELS
+    match /reels/{reelId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+                    && request.resource.data.ownerId == request.auth.uid;
+
+      allow update: if (signedIn() && (
+                      resource.data.ownerId == request.auth.uid ||
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes', 'commentsCount', 'sharesCount'])
+                    )) || isAdmin();
+
+      allow delete: if (signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+    }
+
+    // 4. COMMENTS
+    match /comments/{commentId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+                    && request.resource.data.userId == request.auth.uid;
+
+      allow update: if (signedIn() && (
+                      resource.data.userId == request.auth.uid ||
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'dislikes', 'repliesCount'])
+                    )) || isAdmin();
+
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // 5. LIKES
+    match /likes/{likeId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+                    && request.resource.data.userId == request.auth.uid;
+
+      allow update: if false;
+
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // 6. SUBSCRIPTIONS
+    match /subscriptions/{subscriptionId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+                    && request.resource.data.userId == request.auth.uid;
+
+      allow update: if false;
+
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // 7. FOLLOWERS
+    match /followers/{followerId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+                    && request.resource.data.followerId == request.auth.uid;
+
+      allow update: if false;
+
+      allow delete: if (signedIn() && resource.data.followerId == request.auth.uid) || isAdmin();
+    }
+
+    // 8. NOTIFICATIONS
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if signedIn() || isAdmin();
+
+      allow update: if signedIn()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // 9. WATCH HISTORY
+    match /watchHistory/{historyId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+
+      allow update: if signedIn()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == request.auth.uid;
+
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // 10. PLAYLISTS
+    match /playlists/{playlistId} {
+      allow read: if resource.data.isPublic == true
+                  || resource.data.isPrivate == false
+                  || (signedIn() && resource.data.userId == request.auth.uid)
+                  || isAdmin();
+
+      allow create: if signedIn()
+                    && request.resource.data.userId == request.auth.uid;
+
+      allow update, delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // 11. ANALYTICS
+    match /analytics/{analyticsId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if signedIn() || isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // 12. REPORTS
+    match /reports/{reportId} {
+      allow create: if signedIn()
+                    && request.resource.data.userId == request.auth.uid;
+
+      allow read: if isAdmin()
+                  || (signedIn() && resource.data.userId == request.auth.uid);
+
+      allow update, delete: if isAdmin();
+    }
+
+    // 13. CATEGORIES
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 14. SEARCH HISTORY
+    match /searchHistory/{searchId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+
+      allow update: if signedIn()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == request.auth.uid;
+
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // Default test connection
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // DENY EVERYTHING ELSE
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

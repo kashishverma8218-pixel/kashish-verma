@@ -16,9 +16,11 @@ import {
   Eye,
   LogOut,
   ExternalLink,
-  Sparkles
+  Sparkles,
+  Server
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { CloudInfrastructureModal } from './CloudInfrastructureModal';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -66,6 +68,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [saveHistory, setSaveHistory] = useState<boolean>(true);
   const [restrictedMode, setRestrictedMode] = useState<boolean>(false);
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
+  const [showInfra, setShowInfra] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
@@ -403,6 +406,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
                 </button>
               </div>
+
+              {/* Cloud Infrastructure & CDN Edge Status */}
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
+                <div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <Server className="h-3.5 w-3.5 text-purple-500" />
+                    <span>Cloud Streaming, Auto-Scale & Global CDN</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">Auto-scale pods, Anycast CDN edge (285 PoPs) & HLS Transcoding</div>
+                </div>
+                <button
+                  onClick={() => setShowInfra(true)}
+                  className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-xs transition-colors shrink-0"
+                >
+                  View Cloud Stats
+                </button>
+              </div>
             </div>
           )}
 
@@ -614,6 +634,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
         </main>
       </div>
+
+      {/* Cloud Infrastructure & CDN Edge Status Modal */}
+      <CloudInfrastructureModal
+        isOpen={showInfra}
+        onClose={() => setShowInfra(false)}
+      />
     </div>
   );
 };

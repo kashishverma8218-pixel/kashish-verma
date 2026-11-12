@@ -25,49 +25,13 @@ export const VioLogo: React.FC<VioLogoProps> = ({
 
   return (
     <div className={`flex items-center gap-2 select-none shrink-0 ${className}`}>
-      {/* Precision Vector Vio Brand Mark (Purple-to-Orange Gradient Play Panther) */}
-      <div className={`relative ${iconSizes[size]} shrink-0 flex items-center justify-center`}>
-        <svg
-          viewBox="0 0 100 100"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-          className="h-full w-full drop-shadow-sm transition-transform group-hover:scale-105"
-        >
-          <defs>
-            <linearGradient id="vioGradientMain" x1="10" y1="10" x2="90" y2="90" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stopColor="#7c3aed" />
-              <stop offset="50%" stopColor="#ec4899" />
-              <stop offset="100%" stopColor="#f97316" />
-            </linearGradient>
-            <linearGradient id="vioGradientInner" x1="20" y1="30" x2="80" y2="70" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stopColor="#8b5cf6" />
-              <stop offset="100%" stopColor="#f43f5e" />
-            </linearGradient>
-          </defs>
-
-          {/* Smooth Play Outline Arrow */}
-          <path
-            d="M26 16C21.5 13.5 16 16.7 16 21.8V78.2C16 83.3 21.5 86.5 26 84L82 55.8C86.5 53.3 86.5 46.7 82 44.2L26 16Z"
-            fill="url(#vioGradientMain)"
-          />
-
-          {/* Panther / Fast Dynamic Silhouette Interior Cutout */}
-          <path
-            d="M32 30C32 30 38 25 48 30C58 35 62 44 68 47C72 49 76 49 76 49C76 49 71 53 65 53C58 53 53 48 46 45C39 42 35 44 32 47V30Z"
-            fill="#ffffff"
-            fillOpacity="0.9"
-          />
-
-          {/* Sleek Forward Eye */}
-          <circle cx="58" cy="42" r="2.5" fill="#f97316" />
-
-          {/* Lower Dynamic Flow Cut */}
-          <path
-            d="M32 58C36 55 42 56 46 60C50 64 56 64 62 61L74 54L32 75V58Z"
-            fill="#ffffff"
-            fillOpacity="0.4"
-          />
-        </svg>
+      {/* User-submitted Vio Brand Logo Mark */}
+      <div className={`relative ${iconSizes[size]} shrink-0 flex items-center justify-center overflow-hidden rounded-xl bg-slate-900/10 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10 shadow-xs`}>
+        <img
+          src="/assets/logo.png"
+          alt="Vio streaming"
+          className="h-full w-full object-contain p-0.5 transition-transform group-hover:scale-105"
+        />
       </div>
 
       {showWordmark && (

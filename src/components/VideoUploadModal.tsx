@@ -26,11 +26,16 @@ import {
   Radio,
   FileVideo,
   Layers,
-  HelpCircle
+  HelpCircle,
+  Zap,
+  Loader2
 } from 'lucide-react';
 import { VideoItem, Channel } from '../types/video';
 import { CATEGORIES } from '../data/mockData';
 import { formatFileSize, formatTime } from '../utils/formatTime';
+import { buildStreamLadder, triggerCloudTranscoding } from '../services/streamingService';
+import { addVideoDoc, uploadFileToStorage } from '../services/firebaseDatabaseService';
+import { useAuth } from '../context/AuthContext';
 
 interface VideoUploadModalProps {
   isOpen: boolean;
@@ -47,6 +52,7 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
   onPublishVideo,
   channels,
 }) => {
+  const { currentUser } = useAuth();
   const [activeTab, setActiveTab] = useState<'upload' | 'details' | 'privacy' | 'checks'>('upload');
   const [sourceType, setSourceType] = useState<'file' | 'url'>('url');
   const [file, setFile] = useState<File | null>(null);
@@ -56,6 +62,7 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
   const [videoResolution, setVideoResolution] = useState<string>('1920x1080 (1080p HD)');
 
   // Upload Progress & State
+  const [isPublishing, setIsPublishing] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>('idle');
   const [isPaused, setIsPaused] = useState<boolean>(false);
@@ -99,7 +106,23 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
   const [scheduleDate, setScheduleDate] = useState<string>('');
 
   const [error, setError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Intelligent title cleaner: strips suffixes, extensions, underscores and formats capitalization
+  const cleanTitleFromFileName = (name: string): string => {
+    const withoutExt = name.replace(/\.[^/.]+$/, '');
+    const humanized = withoutExt
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b(1080p|720p|480p|4k|hdr|master|final|h264|hevc|x264|v\d+)\b/gi, '')
+      .trim();
+    if (!humanized) return withoutExt || 'New Video Stream';
+    return humanized
+      .split(' ')
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  };
 
   // Reset state when modal is opened
   useEffect(() => {
@@ -175,12 +198,41 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       setFile(selected);
       const blobUrl = URL.createObjectURL(selected);
       setResolvedVideoUrl(blobUrl);
-      if (!title) {
-        setTitle(selected.name.replace(/\.[^/.]+$/, ''));
-      }
+      setTitle(cleanTitleFromFileName(selected.name));
       setError(null);
       const sizeMB = selected.size / (1024 * 1024);
       startUploadPipeline(selected.name, sizeMB);
+      extractThumbnails(blobUrl);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const dropped = e.dataTransfer.files[0];
+      if (!dropped.type.startsWith('video/')) {
+        setError('Please drop a valid video file (.mp4, .webm, .mov, etc.).');
+        return;
+      }
+      setSourceType('file');
+      setFile(dropped);
+      const blobUrl = URL.createObjectURL(dropped);
+      setResolvedVideoUrl(blobUrl);
+      setTitle(cleanTitleFromFileName(dropped.name));
+      setError(null);
+      const sizeMB = dropped.size / (1024 * 1024);
+      startUploadPipeline(dropped.name, sizeMB);
       extractThumbnails(blobUrl);
     }
   };
@@ -199,10 +251,8 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     }
     setError(null);
     setResolvedVideoUrl(targetUrl);
-    if (!title) {
-      const inferred = targetUrl.split('/').pop()?.split('?')[0] || 'Uploaded Video';
-      setTitle(inferred.replace(/\.[^/.]+$/, ''));
-    }
+    const inferred = targetUrl.split('/').pop()?.split('?')[0] || 'Uploaded Video Stream';
+    setTitle(cleanTitleFromFileName(inferred));
     startUploadPipeline(targetUrl, 68.5);
     extractThumbnails(targetUrl);
   };
@@ -239,13 +289,22 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     setTags(tags.filter((t) => t !== tagToRemove));
   };
 
-  const handlePublish = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) {
-      setError('Please provide a title for your video.');
-      setActiveTab('details');
+  const handlePublish = async (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setError(null);
+
+    // 1. Enforce Authentication - No Guest Uploads
+    if (!currentUser?.uid) {
+      setError('Authentication Required: Please sign in to your Vio Streaming account before publishing videos.');
       return;
     }
+
+    const fallbackTitle = file
+      ? cleanTitleFromFileName(file.name)
+      : url.trim()
+      ? cleanTitleFromFileName(url.split('/').pop()?.split('?')[0] || '')
+      : 'Vio Stream Video';
+    const finalTitle = title.trim() || fallbackTitle;
 
     const finalPoster =
       customThumbnailUrl.trim() ||
@@ -253,33 +312,103 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       autoThumbnails[0] ||
       'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80';
 
-    const newVideo: VideoItem = {
-      id: `studio-${Date.now()}`,
-      title: title.trim(),
-      description: description.trim() || 'Uploaded with Vio streaming Studio.',
-      url: resolvedVideoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-      poster: finalPoster,
-      channelId: channelId,
-      views: 0,
-      likes: 0,
-      dislikes: 0,
-      publishedAt: 'Just now',
-      duration: Math.round(videoDuration) || 120,
-      category: category,
-      tags: tags.length > 0 ? tags : [category],
-      isLocal: sourceType === 'file',
-      fileSize: file ? formatFileSize(file.size) : totalBytes,
-      visibility,
-      hideLikes,
-      commentsControl,
-      notifySubscribers,
-      allowRemix,
-      ageRestricted,
-      createdAt: Date.now(),
-    };
+    const finalVideoId = `studio-${Date.now()}`;
+    let effectiveUrl = resolvedVideoUrl || url.trim();
 
-    onPublishVideo(newVideo);
-    onClose();
+    setIsPublishing(true);
+    setUploadPhase('uploading');
+    setUploadProgress(0);
+
+    try {
+      // 2. Real Upload to Firebase Storage with live 0-100% progress
+      if (file) {
+        setTotalBytes(formatFileSize(file.size));
+        const startTime = Date.now();
+
+        effectiveUrl = await uploadFileToStorage(
+          file,
+          'videos',
+          (pct, bytesTransferred, total) => {
+            setUploadProgress(pct);
+            setUploadedBytes(formatFileSize(bytesTransferred));
+            setTotalBytes(formatFileSize(total));
+            const elapsed = (Date.now() - startTime) / 1000;
+            if (elapsed > 0 && bytesTransferred > 0) {
+              const speedMBps = bytesTransferred / (1024 * 1024) / elapsed;
+              setUploadSpeed(`${speedMBps.toFixed(1)} MB/s`);
+              const remainingBytes = total - bytesTransferred;
+              const remainingSec = Math.round(remainingBytes / (bytesTransferred / elapsed));
+              setEtaSeconds(Math.max(0, remainingSec));
+            }
+          },
+          { visibility, title: finalTitle }
+        );
+      }
+
+      if (!effectiveUrl) {
+        throw new Error('Please select a video file or provide a valid video URL.');
+      }
+
+      setUploadPhase('transcoding');
+      setUploadProgress(90);
+
+      const ladder = buildStreamLadder(finalVideoId, effectiveUrl);
+
+      const newVideo: VideoItem = {
+        id: finalVideoId,
+        title: finalTitle,
+        description: description.trim() || 'Uploaded with Vio streaming Studio.',
+        url: effectiveUrl,
+        poster: finalPoster,
+        channelId: channelId,
+        views: 0,
+        likes: 0,
+        dislikes: 0,
+        publishedAt: 'Just now',
+        duration: Math.round(videoDuration) || 120,
+        category: category,
+        tags: tags.length > 0 ? tags : [category],
+        isLocal: sourceType === 'file',
+        fileSize: file ? formatFileSize(file.size) : totalBytes,
+        visibility,
+        hideLikes,
+        commentsControl,
+        notifySubscribers,
+        allowRemix,
+        ageRestricted,
+        createdAt: Date.now(),
+        streamQualities: ladder,
+        hlsManifestUrl: `/api/stream/manifest/${finalVideoId}?format=hls`,
+        backupStreams: [
+          effectiveUrl,
+          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+        ],
+        transcodingStatus: 'ready',
+      };
+
+      // 3. Save to Cloud Firestore ONLY AFTER Firebase Storage upload completes successfully
+      setUploadPhase('checking');
+      setUploadProgress(95);
+      await addVideoDoc(newVideo);
+
+      setUploadProgress(100);
+      setUploadPhase('completed');
+
+      triggerCloudTranscoding(finalVideoId, finalTitle);
+      onPublishVideo(newVideo);
+      setIsPublishing(false);
+      onClose();
+    } catch (err: unknown) {
+      console.error('Video upload/publish error:', err);
+      setIsPublishing(false);
+      setUploadPhase('idle');
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to upload video to Firebase Storage. Please check your network and try again.'
+      );
+    }
   };
 
   return (
@@ -345,6 +474,15 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
             <div className="flex items-center gap-2.5 rounded-2xl bg-rose-500/10 p-3.5 text-xs text-rose-500 border border-rose-500/20">
               <AlertCircle className="h-4 w-4 shrink-0" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {!currentUser && (
+            <div className="flex items-center gap-3 rounded-2xl bg-amber-500/10 p-3.5 text-xs text-amber-700 dark:text-amber-300 border border-amber-500/20">
+              <ShieldCheck className="h-4 w-4 shrink-0 text-amber-500" />
+              <span>
+                <strong>Login Required:</strong> You must sign in to upload videos. Guest/anonymous uploads are disabled to keep your channel and videos secure.
+              </span>
             </div>
           )}
 
@@ -471,16 +609,23 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
                   />
                   <div
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-slate-300 p-8 text-center cursor-pointer hover:border-red-500 hover:bg-red-500/5 dark:border-slate-700 dark:hover:border-red-500 transition-all"
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={`flex flex-col items-center justify-center rounded-3xl border-2 border-dashed p-8 text-center cursor-pointer transition-all ${
+                      isDragging
+                        ? 'border-red-500 bg-red-500/10 scale-[1.01] shadow-lg shadow-red-500/10'
+                        : 'border-slate-300 hover:border-red-500 hover:bg-red-500/5 dark:border-slate-700 dark:hover:border-red-500'
+                    }`}
                   >
                     <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10 text-red-500 mb-3">
                       <Upload className="h-7 w-7" />
                     </div>
                     <p className="text-sm font-bold text-slate-900 dark:text-white">
-                      Drag and drop video files to upload
+                      {isDragging ? 'Drop video file here now' : 'Drag and drop video files to upload'}
                     </p>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      Supports MP4, WebM, MOV, ProRes up to 4K 60fps
+                      Supports MP4, WebM, MOV, ProRes up to 4K 60fps · Auto-title & thumbnail
                     </p>
                     <button
                       type="button"
@@ -534,7 +679,7 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
                             setUrl(demo.url);
                             handleUrlProceed(demo.url);
                           }}
-                          className="rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors font-medium"
+                          className="rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors font-medium cursor-pointer"
                         >
                           {demo.name}
                         </button>
@@ -544,7 +689,86 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
                 </div>
               )}
 
-              <div className="pt-2 flex justify-end">
+              {/* Frictionless 1-Click Quick Publish Card (Visible when video source is selected) */}
+              {(file || resolvedVideoUrl || url) && (
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4.5 dark:border-red-500/30 dark:bg-red-950/20 space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                      <Zap className="h-4 w-4 fill-current" />
+                      Frictionless 1-Click Publishing
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Auto-transcoding & thumbnail ready
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Title
+                      </label>
+                      <input
+                        type="text"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        placeholder="Enter video title"
+                        className="w-full rounded-xl border border-slate-200 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-900 dark:text-white focus:border-red-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Category
+                      </label>
+                      <select
+                        value={category}
+                        onChange={(e) => setCategory(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-900 dark:text-white focus:border-red-500 focus:outline-none"
+                      >
+                        {CATEGORIES.filter((c) => c !== 'All').map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Visibility presets */}
+                  <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-[11px] font-medium text-slate-500">Visibility:</span>
+                      {(['public', 'unlisted', 'private'] as const).map((vis) => (
+                        <button
+                          key={vis}
+                          type="button"
+                          onClick={() => setVisibility(vis)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold capitalize transition-all ${
+                            visibility === vis
+                              ? 'bg-red-600 text-white shadow-xs'
+                              : 'bg-white/80 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          {vis}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handlePublish}
+                      className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-6 py-2.5 text-xs font-bold text-white shadow-md shadow-red-600/30 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Zap className="h-4 w-4 fill-white" />
+                      <span>⚡ Publish Now (1-Click)</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
+                <span className="text-[11px] text-slate-400">
+                  Want custom tags, thumbnail upload, or scheduling?
+                </span>
                 <button
                   type="button"
                   onClick={() => {
@@ -553,9 +777,9 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
                     }
                     setActiveTab('details');
                   }}
-                  className="flex items-center gap-2 rounded-xl bg-red-600 px-6 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-red-500 transition-all active:scale-95 cursor-pointer"
+                  className="flex items-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 px-4 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
                 >
-                  <span>Next: Video Details</span>
+                  <span>Advanced Settings</span>
                   <ArrowRight className="h-4 w-4" />
                 </button>
               </div>
@@ -714,21 +938,31 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
                   <ArrowLeft className="h-4 w-4" />
                   <span>Back to Upload</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!title.trim()) {
-                      setError('Title is required to proceed.');
-                      return;
-                    }
-                    setError(null);
-                    setActiveTab('privacy');
-                  }}
-                  className="flex items-center gap-1.5 rounded-xl bg-red-600 px-6 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-red-500 cursor-pointer"
-                >
-                  <span>Next: Privacy & Controls</span>
-                  <ArrowRight className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePublish}
+                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-red-600/30 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Zap className="h-3.5 w-3.5 fill-white" />
+                    <span>Publish Now</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!title.trim()) {
+                        setError('Title is required to proceed.');
+                        return;
+                      }
+                      setError(null);
+                      setActiveTab('privacy');
+                    }}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 px-5 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <span>Next: Privacy</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1039,14 +1273,24 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
                   <ArrowLeft className="h-4 w-4" />
                   <span>Back to Details</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('checks')}
-                  className="flex items-center gap-1.5 rounded-xl bg-red-600 px-6 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-red-500 cursor-pointer"
-                >
-                  <span>Next: Checks & Review</span>
-                  <ArrowRight className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePublish}
+                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-red-600/30 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Zap className="h-3.5 w-3.5 fill-white" />
+                    <span>Publish Now</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('checks')}
+                    className="flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 px-5 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <span>Next: Checks</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1117,11 +1361,25 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
 
                 <button
                   type="button"
+                  disabled={isPublishing || !currentUser}
                   onClick={handlePublish}
-                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-500 px-7 py-3 text-xs font-bold text-white shadow-lg shadow-red-600/30 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                  className={`flex items-center gap-2 rounded-xl px-7 py-3 text-xs font-bold text-white shadow-lg transition-all ${
+                    isPublishing || !currentUser
+                      ? 'bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-75'
+                      : 'bg-gradient-to-r from-red-600 via-rose-600 to-red-500 shadow-red-600/30 hover:brightness-110 active:scale-95 cursor-pointer'
+                  }`}
                 >
-                  <Sparkles className="h-4 w-4" />
-                  <span>Publish Video to Vio streaming</span>
+                  {isPublishing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Uploading to Firebase ({uploadProgress}%)...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4" />
+                      <span>{!currentUser ? 'Sign In to Publish' : 'Publish Video to Vio streaming'}</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

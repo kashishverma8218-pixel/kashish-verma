@@ -21,7 +21,9 @@ import {
   ArrowLeft,
   Plus,
   Layers,
-  ListVideo
+  ListVideo,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { ReelItem, ReelComment, Channel } from '../types/video';
 
@@ -96,6 +98,8 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [newCommentText, setNewCommentText] = useState('');
   const [copiedToast, setCopiedToast] = useState(false);
+  const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
+  const [fitToast, setFitToast] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [viewMode, setViewMode] = useState<'feed' | 'series'>('feed');
 
@@ -255,11 +259,31 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         </div>
       )}
 
+      {fitToast && (
+        <div className="fixed top-16 z-50 rounded-xl bg-slate-900/95 text-white px-4 py-2 text-xs font-semibold shadow-xl border border-red-500/30 backdrop-blur-md animate-in fade-in duration-200 flex items-center gap-2">
+          <Sparkles className="h-3.5 w-3.5 text-red-500" />
+          <span>{fitToast}</span>
+        </div>
+      )}
+
       {/* Main Reels Center Column */}
       <div className="relative flex items-center gap-4 sm:gap-6 max-w-full">
-        {/* Vertical Reel Container (9:16 aspect ratio) */}
-        <div className="relative w-[340px] xs:w-[380px] sm:w-[410px] h-[calc(100vh-5.5rem)] max-h-[820px] rounded-3xl overflow-hidden bg-black shadow-2xl border border-white/10 flex items-center justify-center">
-          {/* Main Video Element */}
+        {/* Vertical Reel Container (strict 9:16 aspect ratio, zero clipping) */}
+        <div className="relative aspect-[9/16] h-[calc(100dvh-5.5rem)] max-h-[820px] w-auto max-w-[calc(100vw-5.5rem)] sm:max-w-[460px] rounded-3xl overflow-hidden bg-black shadow-2xl border border-white/10 flex items-center justify-center">
+          {/* Ambient Glow Backdrop for seamless non-clipped framing */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            <video
+              src={activeReel.videoUrl}
+              poster={activeReel.poster}
+              loop
+              muted
+              playsInline
+              className="w-full h-full object-cover blur-2xl opacity-45 scale-125 transition-all duration-500"
+            />
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
+          </div>
+
+          {/* Main Foreground Video Element */}
           <video
             ref={videoRef}
             src={activeReel.videoUrl}
@@ -269,7 +293,9 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
             playsInline
             onTimeUpdate={handleTimeUpdate}
             onClick={handleVideoClick}
-            className="w-full h-full object-cover cursor-pointer"
+            className={`relative z-10 w-full h-full cursor-pointer transition-all duration-300 ${
+              fitMode === 'contain' ? 'object-contain' : 'object-cover'
+            }`}
           />
 
           {/* Top Scrim & Controls */}
@@ -321,6 +347,29 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                   <span className="hidden sm:inline">Create</span>
                 </button>
               )}
+              {/* Aspect Ratio Fit / Fill Toggle */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const next = fitMode === 'contain' ? 'cover' : 'contain';
+                  setFitMode(next);
+                  setFitToast(
+                    next === 'contain'
+                      ? 'Fit Screen: full frame, zero clipping'
+                      : 'Fill Screen: immersive full bleed'
+                  );
+                  setTimeout(() => setFitToast(null), 2500);
+                }}
+                title={fitMode === 'contain' ? 'Current: Fit Screen (No clipping) • Click to Fill' : 'Current: Fill Screen • Click to Fit'}
+                aria-label="Toggle video aspect fit"
+                className={`flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md transition-all active:scale-95 ${
+                  fitMode === 'contain'
+                    ? 'bg-red-600/90 text-white shadow-md shadow-red-600/30 ring-1 ring-white/20'
+                    : 'bg-black/40 text-white/90 hover:bg-black/60'
+                }`}
+              >
+                {fitMode === 'contain' ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              </button>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -366,6 +415,11 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                   <img
                     src={activeChannel?.avatar || activeReel.poster}
                     alt={activeChannel?.name || 'Creator'}
+                    onError={(e) => {
+                      const target = e.currentTarget as HTMLImageElement;
+                      const fallback = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
+                      if (target.src !== fallback) target.src = fallback;
+                    }}
                     className="h-9 w-9 rounded-full object-cover ring-2 ring-white/60 group-hover:ring-red-500 transition-all shrink-0"
                   />
                   {!isFollowing && (

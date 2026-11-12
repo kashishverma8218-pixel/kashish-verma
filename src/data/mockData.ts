@@ -63,7 +63,16 @@ export const INITIAL_VIDEOS: VideoItem[] = [
   {
     id: 'video-bbb',
     title: 'Big Buck Bunny: The Open Animation Masterpiece',
-    description: 'A large, gentle woodland rabbit named Big Buck awakens to a sunny morning only to be harassed by three bullying forest pests: Frank the flying squirrel, Rinky the red squirrel, and Gimera the chinchilla. Watch how he devises clever comedic revenge!',
+    description: `A large, gentle woodland rabbit named Big Buck awakens to a sunny morning only to be harassed by three bullying forest pests: Frank the flying squirrel, Rinky the red squirrel, and Gimera the chinchilla. Watch how he devises clever comedic revenge!
+
+Chapters:
+00:00 Morning in the Forest
+01:15 Awakening of the Bullies
+02:30 The Pranks Begin
+04:12 Big Buck Crafts the Trap
+06:05 Retaliation & Forest Chase
+08:20 The Flying Squirrel Showdown
+09:15 Peaceful Meadow & Outro`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
     poster: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-blender',
@@ -79,7 +88,13 @@ export const INITIAL_VIDEOS: VideoItem[] = [
   {
     id: 'video-sintel',
     title: 'Sintel: The Dragon Quest — Official 4K Trailer',
-    description: 'A lonely young warrior girl named Sintel rescues and nurtures an injured baby dragon whom she names Scales. When her beloved companion is snatched by an adult dragon, she braves treacherous blizzards and subterranean ruins to win him back.',
+    description: `A lonely young warrior girl named Sintel rescues and nurtures an injured baby dragon whom she names Scales. When her beloved companion is snatched by an adult dragon, she braves treacherous blizzards and subterranean ruins to win him back.
+
+Chapters:
+00:00 Desert Blizzard & Intro
+00:15 The Memory of Scales
+00:32 Mountain Ruins Confrontation
+00:45 The Quest Continues`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
     poster: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-blender',
@@ -95,7 +110,16 @@ export const INITIAL_VIDEOS: VideoItem[] = [
   {
     id: 'video-tears-of-steel',
     title: 'Tears of Steel: Amsterdam Dystopian VFX Short',
-    description: 'Set in a dystopian future Amsterdam, a group of eccentric scientists and military personnel gather at the Oude Kerk to stage a crucial historical event in a desperate bid to rescue the world from marauding robotic sentinels.',
+    description: `Set in a dystopian future Amsterdam, a group of eccentric scientists and military personnel gather at the Oude Kerk to stage a crucial historical event in a desperate bid to rescue the world from marauding robotic sentinels.
+
+Chapters:
+00:00 Amsterdam Under Siege
+01:45 The Secret Bunker at Oude Kerk
+03:20 Memory Capture & Holographic Calibration
+05:10 Robot Sentry Breach
+07:35 Emotional Reconciliation
+09:50 Final Defense & Rocket Launch
+11:20 Aftermath & Horizon`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
     poster: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-scifi',
@@ -111,7 +135,12 @@ export const INITIAL_VIDEOS: VideoItem[] = [
   {
     id: 'video-escapes',
     title: 'Ultra HD Escapes: Alpine Rivers & Glacial Valleys',
-    description: 'Take a restorative visual journey through untouched high alpine ecosystems, crystal-clear glacial streams, cascading waterfalls, and majestic evergreen ridges filmed in pristine Ultra High Definition.',
+    description: `Take a restorative visual journey through untouched high alpine ecosystems, crystal-clear glacial streams, cascading waterfalls, and majestic evergreen ridges filmed in pristine Ultra High Definition.
+
+Chapters:
+00:00 Alpine Valley Sunrise
+00:05 Crystal Glacial Stream
+00:10 Ridge Pine Canopy`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
     poster: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-nature',
@@ -127,7 +156,15 @@ export const INITIAL_VIDEOS: VideoItem[] = [
   {
     id: 'video-elephants-dream',
     title: 'Elephants Dream: Surreal Machinery & Human Perception',
-    description: 'Two explorers, Proog and Emo, traverse an infinite labyrinthine mechanical world of living cables and clockwork machinery. Their conflicting visions of reality threaten to unravel the very world around them.',
+    description: `Two explorers, Proog and Emo, traverse an infinite labyrinthine mechanical world of living cables and clockwork machinery. Their conflicting visions of reality threaten to unravel the very world around them.
+
+Chapters:
+00:00 Entering the Endless Machine
+01:25 Proog's Explanation
+03:10 The Bridge of Living Wires
+05:40 Emo's Skepticism & Disruption
+07:55 The Machine Awakens
+09:40 The Final Stand`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
     poster: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-openfilm',

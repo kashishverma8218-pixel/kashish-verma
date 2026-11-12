@@ -1,0 +1,76 @@
+package com.viostreaming.app
+
+import android.os.Bundle
+import android.util.Log
+import com.getcapacitor.BridgeActivity
+import com.google.android.gms.ads.AdListener
+import com.google.android.gms.ads.AdLoader
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.LoadAdError
+import com.google.android.gms.ads.MobileAds
+import com.google.android.gms.ads.nativead.NativeAd
+
+class MainActivity : BridgeActivity() {
+
+    private val TAG = "MainActivity"
+    // Google official sample Native Ad Unit ID for testing
+    private val AD_UNIT_ID = "ca-app-pub-3940256099942544/2247696110"
+    
+    private var loadedNativeAd: NativeAd? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // 1. Initialize Google Mobile Ads SDK
+        MobileAds.initialize(this) { initializationStatus ->
+            Log.d(TAG, "Google Mobile Ads initialized successfully.")
+        }
+
+        // 2. Load Native Ad with AdLoader.Builder
+        val adLoader = AdLoader.Builder(this, AD_UNIT_ID)
+            .forNativeAd { nativeAd ->
+                // Avoid memory leaks if activity is finishing or destroyed
+                if (isDestroyed || isFinishing) {
+                    nativeAd.destroy()
+                    return@forNativeAd
+                }
+
+                Log.d(TAG, "Native ad loaded successfully: ${nativeAd.headline}")
+
+                loadedNativeAd?.destroy()
+                loadedNativeAd = nativeAd
+            }
+            .withAdListener(object : AdListener() {
+                override fun onAdFailedToLoad(adError: LoadAdError) {
+                    // Error handling for native ad
+                    Log.e(TAG, "Native ad failed to load: ${adError.message} (Code: ${adError.code})")
+                }
+
+                override fun onAdClicked() {
+                    Log.d(TAG, "Native ad clicked.")
+                }
+
+                override fun onAdOpened() {
+                    Log.d(TAG, "Native ad opened.")
+                }
+
+                override fun onAdClosed() {
+                    Log.d(TAG, "Native ad closed.")
+                }
+
+                override fun onAdImpression() {
+                    Log.d(TAG, "Native ad impression recorded.")
+                }
+            })
+            .build()
+
+        // 3. Request and load the ad
+        adLoader.loadAd(AdRequest.Builder().build())
+    }
+
+    override fun onDestroy() {
+        loadedNativeAd?.destroy()
+        loadedNativeAd = null
+        super.onDestroy()
+    }
+}

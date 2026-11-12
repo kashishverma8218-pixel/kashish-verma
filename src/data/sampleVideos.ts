@@ -4,7 +4,16 @@ export const SAMPLE_VIDEOS: VideoItem[] = [
   {
     id: 'sample-big-buck-bunny',
     title: 'Big Buck Bunny',
-    description: 'A large, lovable rabbit encounters bullying forest creatures in this iconic open-source 3D animated short film produced by Blender Foundation.',
+    description: `A large, lovable rabbit encounters bullying forest creatures in this iconic open-source 3D animated short film produced by Blender Foundation.
+
+Chapters:
+00:00 Morning in the Forest
+01:15 Awakening of the Bullies
+02:30 The Pranks Begin
+04:12 Big Buck Crafts the Trap
+06:05 Retaliation & Forest Chase
+08:20 The Flying Squirrel Showdown
+09:15 Peaceful Meadow & Outro`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
     poster: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-blender',
@@ -21,7 +30,13 @@ export const SAMPLE_VIDEOS: VideoItem[] = [
   {
     id: 'sample-sintel',
     title: 'Sintel (Dragon Quest)',
-    description: 'A young nomad girl named Sintel rescues and bonds with a baby dragon whom she names Scales. When Scales is abducted, she embarks on a dangerous journey.',
+    description: `A young nomad girl named Sintel rescues and bonds with a baby dragon whom she names Scales. When Scales is abducted, she embarks on a dangerous journey.
+
+Chapters:
+00:00 Desert Blizzard & Intro
+00:15 The Memory of Scales
+00:32 Mountain Ruins Confrontation
+00:45 The Quest Continues`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
     poster: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-blender',
@@ -37,7 +52,16 @@ export const SAMPLE_VIDEOS: VideoItem[] = [
   {
     id: 'sample-tears-of-steel',
     title: 'Tears of Steel',
-    description: 'Sci-fi post-apocalyptic VFX short film exploring a dystopian future in Amsterdam where scientists battle robotic organisms.',
+    description: `Sci-fi post-apocalyptic VFX short film exploring a dystopian future in Amsterdam where scientists battle robotic organisms.
+
+Chapters:
+00:00 Amsterdam Under Siege
+01:45 The Secret Bunker at Oude Kerk
+03:20 Memory Capture & Holographic Calibration
+05:10 Robot Sentry Breach
+07:35 Emotional Reconciliation
+09:50 Final Defense & Rocket Launch
+11:20 Aftermath & Horizon`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
     poster: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-scifi',
@@ -53,7 +77,15 @@ export const SAMPLE_VIDEOS: VideoItem[] = [
   {
     id: 'sample-elephants-dream',
     title: 'Elephants Dream',
-    description: 'The world\'s first open-source computer-animated film exploring surreal machinery, cables, and human perception.',
+    description: `The world's first open-source computer-animated film exploring surreal machinery, cables, and human perception.
+
+Chapters:
+00:00 Entering the Endless Machine
+01:25 Proog's Explanation
+03:10 The Bridge of Living Wires
+05:40 Emo's Skepticism & Disruption
+07:55 The Machine Awakens
+09:40 The Final Stand`,
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
     poster: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-openfilm',

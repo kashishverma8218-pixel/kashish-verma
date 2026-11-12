@@ -306,17 +306,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             )}
 
-            {/* Dedicated Settings Button (Item 7) */}
-            {onOpenSettings && (
-              <button
-                onClick={onOpenSettings}
-                title="Settings & Preferences"
-                aria-label="Settings & Preferences"
-                className="flex h-9 w-9 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors"
-              >
-                <Settings className="h-4 w-4" />
-              </button>
-            )}
+
 
             {/* Notifications Dropdown */}
             <div className="relative z-50">

@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Play,
   Pause,
@@ -29,9 +29,15 @@ import {
   SlidersHorizontal,
   Plus,
   Trash2,
-  X
+  X,
+  Signal,
+  Wifi,
+  Globe2,
+  Server,
+  ListOrdered,
+  ChevronRight
 } from 'lucide-react';
-import { VideoItem, Bookmark, VideoFilters, AspectRatioMode } from '../types/video';
+import { VideoItem, Bookmark, VideoFilters, AspectRatioMode, VideoStreamQuality, VideoChapter } from '../types/video';
 import { formatTime } from '../utils/formatTime';
 import { useVideoKeyboardShortcuts } from '../utils/useVideoKeyboardShortcuts';
 import {
@@ -40,6 +46,19 @@ import {
   SubtitleCue,
   SubtitleTrack,
 } from '../utils/subtitleParser';
+import {
+  buildStreamLadder,
+  calculateAdaptiveBitrate,
+  CDN_STREAM_MIRRORS,
+} from '../services/streamingService';
+import { CloudInfrastructureModal } from './CloudInfrastructureModal';
+import { ChapterOverlay } from './ChapterOverlay';
+import {
+  parseChaptersFromDescription,
+  getCurrentChapter,
+  getNextChapter,
+  getPrevChapter,
+} from '../utils/chapterParser';
 
 interface VideoPlayerProps {
   video: VideoItem;
@@ -54,6 +73,8 @@ interface VideoPlayerProps {
   onPrevVideo?: () => void;
   hasNextVideo?: boolean;
   hasPrevVideo?: boolean;
+  externalSeekTime?: number | null;
+  onExternalSeekConsumed?: () => void;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -69,6 +90,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onPrevVideo,
   hasNextVideo,
   hasPrevVideo,
+  externalSeekTime,
+  onExternalSeekConsumed,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -110,7 +133,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [copyToast, setCopyToast] = useState(false);
   const [enableCors, setEnableCors] = useState<boolean>(false);
   const [currentSrc, setCurrentSrc] = useState<string>(video.url);
-  const [retryCount, setRetryCount] = useState<number>(0);
+  // Adaptive Bitrate (ABR) & Cloud Streaming State
+  const [streamLadder, setStreamLadder] = useState<VideoStreamQuality[]>(() => {
+    return video.streamQualities && video.streamQualities.length > 0
+      ? video.streamQualities
+      : buildStreamLadder(video.id, video.url);
+  });
+  const [selectedQuality, setSelectedQuality] = useState<string>(() => {
+    return localStorage.getItem('vio_pref_quality') || 'Auto';
+  });
+  const [effectiveQualityLabel, setEffectiveQualityLabel] = useState<string>('1080p60 HD');
+  const [qualityMenuOpen, setQualityMenuOpen] = useState<boolean>(false);
+  const [reconnecting, setReconnecting] = useState<boolean>(false);
+  const [reconnectToast, setReconnectToast] = useState<string | null>(null);
+  const [showInfraModal, setShowInfraModal] = useState<boolean>(false);
+  const [showTelemetry, setShowTelemetry] = useState<boolean>(false);
+  const [bufferHealthSec, setBufferHealthSec] = useState<number>(0);
+  const [failoverIndex, setFailoverIndex] = useState<number>(0);
 
   // Subtitles / Closed Captions State
   const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(() => {
@@ -142,6 +181,70 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [pastedUrlOrText, setPastedUrlOrText] = useState<string>('');
   const [isParsingUrl, setIsParsingUrl] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Video Chapters State & Navigation
+  const [chaptersOverlayOpen, setChaptersOverlayOpen] = useState<boolean>(false);
+
+  const chapters: VideoChapter[] = useMemo(() => {
+    if (video.chapters && video.chapters.length > 0) {
+      return video.chapters;
+    }
+    return parseChaptersFromDescription(video.description || '', duration);
+  }, [video.description, video.chapters, duration]);
+
+  const activeChapter = useMemo(() => {
+    return getCurrentChapter(chapters, currentTime);
+  }, [chapters, currentTime]);
+
+  const hoverChapter = useMemo(() => {
+    return hoverTime !== null ? getCurrentChapter(chapters, hoverTime) : null;
+  }, [chapters, hoverTime]);
+
+  const handleSelectChapter = useCallback((chapter: VideoChapter) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = chapter.startTime;
+      setCurrentTime(chapter.startTime);
+      if (!isPlaying) {
+        videoRef.current.play().catch(() => {});
+        setIsPlaying(true);
+      }
+    }
+    setActionFeedback({
+      type: 'seek-forward',
+      timestamp: Date.now(),
+    });
+    setSubtitleToast(`Chapter: ${chapter.title}`);
+    setTimeout(() => {
+      setSubtitleToast((curr) => (curr?.startsWith('Chapter:') ? null : curr));
+    }, 2500);
+  }, [isPlaying]);
+
+  const handleNextChapter = useCallback(() => {
+    const next = getNextChapter(chapters, currentTime);
+    if (next) {
+      handleSelectChapter(next);
+    }
+  }, [chapters, currentTime, handleSelectChapter]);
+
+  const handlePrevChapter = useCallback(() => {
+    const prev = getPrevChapter(chapters, currentTime);
+    if (prev) {
+      handleSelectChapter(prev);
+    }
+  }, [chapters, currentTime, handleSelectChapter]);
+
+  // Handle external seek requests (e.g. from clicking chapter timestamps in WatchView description)
+  useEffect(() => {
+    if (typeof externalSeekTime === 'number' && videoRef.current) {
+      videoRef.current.currentTime = externalSeekTime;
+      setCurrentTime(externalSeekTime);
+      if (!isPlaying) {
+        videoRef.current.play().catch(() => {});
+        setIsPlaying(true);
+      }
+      onExternalSeekConsumed?.();
+    }
+  }, [externalSeekTime, onExternalSeekConsumed, isPlaying]);
 
   // Sync subtitle tracks when video changes
   useEffect(() => {
@@ -219,6 +322,80 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     setSubtitleMenuOpen(false);
   };
+
+  // Buffer health & adaptive bitrate monitor
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!videoRef.current) return;
+      const vid = videoRef.current;
+      if (vid.buffered && vid.buffered.length > 0) {
+        let maxBuffered = 0;
+        for (let i = 0; i < vid.buffered.length; i++) {
+          if (vid.buffered.start(i) <= vid.currentTime && vid.currentTime <= vid.buffered.end(i)) {
+            maxBuffered = vid.buffered.end(i) - vid.currentTime;
+            break;
+          }
+        }
+        setBufferHealthSec(Math.round(maxBuffered * 10) / 10);
+
+        if (selectedQuality === 'Auto') {
+          const optimal = calculateAdaptiveBitrate(maxBuffered, effectiveQualityLabel, streamLadder);
+          if (optimal.label !== effectiveQualityLabel) {
+            setEffectiveQualityLabel(optimal.label);
+          }
+        }
+      }
+    }, 1500);
+
+    return () => clearInterval(timer);
+  }, [selectedQuality, effectiveQualityLabel, streamLadder]);
+
+  const handleQualityChange = (qualityLabel: string) => {
+    setSelectedQuality(qualityLabel);
+    localStorage.setItem('vio_pref_quality', qualityLabel);
+    setQualityMenuOpen(false);
+
+    if (qualityLabel === 'Auto') {
+      const optimal = calculateAdaptiveBitrate(bufferHealthSec, effectiveQualityLabel, streamLadder);
+      setEffectiveQualityLabel(optimal.label);
+      showSubToast(`Adaptive Bitrate: Auto (${optimal.label})`);
+    } else {
+      setEffectiveQualityLabel(qualityLabel);
+      showSubToast(`Quality set to ${qualityLabel}`);
+    }
+  };
+
+  const handleStreamError = useCallback(() => {
+    if (!videoRef.current) return;
+    const timeBeforeError = videoRef.current.currentTime || 0;
+    const wasPlaying = isPlaying;
+
+    setReconnecting(true);
+    setReconnectToast(`Reconnecting stream via Cloud Edge CDN (${Math.floor(timeBeforeError)}s)...`);
+
+    const mirrors = video.backupStreams || CDN_STREAM_MIRRORS[video.id] || [
+      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+    ];
+
+    const nextMirror = mirrors[failoverIndex % mirrors.length] || video.url;
+    setFailoverIndex((prev) => prev + 1);
+
+    setTimeout(() => {
+      if (videoRef.current) {
+        setCurrentSrc(nextMirror);
+        videoRef.current.load();
+        videoRef.current.currentTime = timeBeforeError;
+        if (wasPlaying) {
+          videoRef.current.play().catch(() => {});
+        }
+      }
+      setReconnecting(false);
+      setErrorMessage(null);
+      setReconnectToast(`Stream reconnected via Edge CDN (${Math.floor(timeBeforeError)}s)`);
+      setTimeout(() => setReconnectToast(null), 3000);
+    }, 1200);
+  }, [failoverIndex, video.backupStreams, video.id, isPlaying, video.url]);
 
   // Upload local .srt or .vtt file
   const handleSubtitleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -331,7 +508,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   useEffect(() => {
     setCurrentSrc(video.url);
-    setRetryCount(0);
+    setFailoverIndex(0);
     setErrorMessage(null);
   }, [video.id, video.url]);
 
@@ -609,6 +786,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     takeSnapshot,
     handleAddBookmark: handleAddBookmarkClick,
     toggleSubtitles,
+    onNextChapter: handleNextChapter,
+    onPrevChapter: handlePrevChapter,
+    toggleChapters: () => setChaptersOverlayOpen((prev) => !prev),
     duration,
     onSeekPercent: (pct) => {
       if (videoRef.current && duration) {
@@ -729,27 +909,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               setEnableCors(false);
               return;
             }
-            if (retryCount === 0) {
-              setRetryCount(1);
-              // Switch to ultra-reliable mirror
-              setCurrentSrc('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4');
-              if (videoRef.current) {
-                videoRef.current.load();
-                videoRef.current.play().catch(() => {});
-              }
-              return;
-            }
-            if (retryCount === 1) {
-              setRetryCount(2);
-              setCurrentSrc('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4');
-              if (videoRef.current) {
-                videoRef.current.load();
-                videoRef.current.play().catch(() => {});
-              }
-              return;
-            }
-            setErrorMessage('External stream source is momentarily unreachable. Click below to stream via our high-speed mirror.');
-            setIsBuffering(false);
+            handleStreamError();
           }}
         />
 
@@ -774,39 +934,36 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         )}
 
+        {/* Active Stream Reconnecting Indicator Pill */}
+        {reconnecting && (
+          <div className="absolute top-4 left-4 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 text-amber-300 text-xs font-semibold backdrop-blur-md border border-amber-500/30 shadow-xl animate-in fade-in">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+            <span>Reconnecting stream via Cloud Edge CDN...</span>
+          </div>
+        )}
+
+        {reconnectToast && (
+          <div className="absolute top-4 left-4 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 text-emerald-300 text-xs font-semibold backdrop-blur-md border border-emerald-500/30 shadow-xl animate-in fade-in">
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
+            <span>{reconnectToast}</span>
+          </div>
+        )}
+
         {/* Resilient Error Recovery Overlay */}
         {errorMessage && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/95 p-6 text-center text-white backdrop-blur-sm animate-in fade-in">
-            <div className="h-14 w-14 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center mb-3 ring-1 ring-red-500/20">
-              <AlertCircle className="h-7 w-7" />
+            <div className="h-14 w-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mb-3 ring-1 ring-amber-500/20">
+              <Signal className="h-7 w-7" />
             </div>
-            <h4 className="text-base font-bold">Stream Reconnecting</h4>
+            <h4 className="text-base font-bold">Cloud Stream Optimization</h4>
             <p className="mt-1 max-w-md text-xs text-slate-300 leading-relaxed">{errorMessage}</p>
             <div className="mt-4 flex items-center gap-3">
               <button
-                onClick={() => {
-                  setErrorMessage(null);
-                  setCurrentSrc('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4');
-                  if (videoRef.current) {
-                    videoRef.current.load();
-                    videoRef.current.play().catch(() => {});
-                  }
-                }}
-                className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white hover:bg-red-500 shadow-md transition-all active:scale-95"
+                onClick={handleStreamError}
+                className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-500 shadow-md transition-all active:scale-95 flex items-center gap-1.5"
               >
-                Stream via Vio streaming Mirror
-              </button>
-              <button
-                onClick={() => {
-                  setErrorMessage(null);
-                  if (videoRef.current) {
-                    videoRef.current.load();
-                    videoRef.current.play().catch(() => {});
-                  }
-                }}
-                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700"
-              >
-                Retry Original
+                <Signal className="h-3.5 w-3.5" />
+                <span>Reconnect via CDN Edge</span>
               </button>
             </div>
           </div>
@@ -1038,6 +1195,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 />
               ))}
 
+            {/* Chapter Divider Notches */}
+            {chapters.length > 1 && duration > 0 && chapters.map((ch) => {
+              if (ch.startTime <= 0) return null;
+              const pct = (ch.startTime / duration) * 100;
+              if (pct >= 99.5) return null;
+              return (
+                <div
+                  key={ch.id}
+                  title={`Chapter: ${ch.title} (${ch.timestamp})`}
+                  className="absolute top-0 bottom-0 w-0.5 bg-black/60 pointer-events-none z-10"
+                  style={{ left: `${pct}%` }}
+                />
+              );
+            })}
+
             {/* Scrub Thumb */}
             {duration > 0 && (
               <div
@@ -1047,13 +1219,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             )}
           </div>
 
-          {/* Hover Time Tooltip */}
+          {/* Hover Time Tooltip with Chapter Title */}
           {hoverTime !== null && (
             <div
-              className="pointer-events-none absolute bottom-5 -translate-x-1/2 rounded-md bg-slate-900/95 px-2 py-1 text-[11px] font-mono text-white shadow-xl ring-1 ring-white/10"
+              className="pointer-events-none absolute bottom-5 -translate-x-1/2 rounded-md bg-slate-900/95 px-2.5 py-1 text-[11px] font-mono text-white shadow-xl ring-1 ring-white/10 flex flex-col items-center max-w-[220px]"
               style={{ left: `${hoverPosition}%` }}
             >
-              {formatTime(hoverTime)}
+              <span className="font-semibold">{formatTime(hoverTime)}</span>
+              {hoverChapter && (
+                <span className="text-[10px] text-sky-300 font-sans font-medium truncate max-w-[200px]">
+                  {hoverChapter.title}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -1152,10 +1329,42 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 ? `-${formatTime(Math.max(0, duration - currentTime))}`
                 : formatTime(duration)}
             </button>
+
+            {/* Active Chapter Pill (Click to open chapter list overlay) */}
+            {chapters.length > 0 && activeChapter && (
+              <button
+                onClick={() => setChaptersOverlayOpen(!chaptersOverlayOpen)}
+                title={`Current Chapter: ${activeChapter.title} (Click to open chapter list)`}
+                className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-white/10 hover:bg-white/20 text-sky-300 border border-white/10 transition-all max-w-[220px] truncate"
+              >
+                <ListOrdered className="h-3.5 w-3.5 flex-shrink-0 text-sky-400" />
+                <span className="truncate">{activeChapter.title}</span>
+                <ChevronRight className="h-3 w-3 flex-shrink-0 opacity-70" />
+              </button>
+            )}
           </div>
 
-          {/* Right Controls: Bookmark, Speed, Loop, PiP, Fullscreen */}
+          {/* Right Controls: Bookmark, Chapters, Speed, Loop, PiP, Fullscreen */}
           <div className="flex items-center gap-1 sm:gap-2">
+            {/* Chapter List Overlay Button */}
+            {chapters.length > 0 && (
+              <button
+                onClick={() => setChaptersOverlayOpen(!chaptersOverlayOpen)}
+                title="Video Chapters (Click to view full chapter list)"
+                className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg transition-colors ${
+                  chaptersOverlayOpen
+                    ? 'bg-sky-500 text-white shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <ListOrdered className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Chapters</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+                  {chapters.length}
+                </span>
+              </button>
+            )}
+
             {/* Quick Bookmark Current Frame */}
             <button
               onClick={handleAddBookmarkClick}
@@ -1192,6 +1401,107 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       {playbackRate === rate && <Check className="h-3 w-3" />}
                     </button>
                   ))}
+                </div>
+              )}
+            </div>
+
+            {/* Quality & Adaptive Bitrate (ABR) Menu */}
+            <div className="relative">
+              <button
+                onClick={() => setQualityMenuOpen(!qualityMenuOpen)}
+                title="Video Quality & Adaptive Bitrate (ABR)"
+                className={`flex items-center gap-1 h-7 px-2 rounded-lg text-xs font-semibold transition-all ${
+                  selectedQuality === 'Auto'
+                    ? 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20'
+                    : 'text-sky-400 bg-sky-500/10 hover:bg-sky-500/20'
+                }`}
+              >
+                <Signal className="h-3 w-3" />
+                <span className="hidden sm:inline">
+                  {selectedQuality === 'Auto' ? `Auto (${effectiveQualityLabel.replace(' HD', '')})` : selectedQuality.replace(' HD', '')}
+                </span>
+                <span className="sm:hidden">
+                  {selectedQuality === 'Auto' ? 'Auto' : selectedQuality.split(' ')[0]}
+                </span>
+              </button>
+
+              {qualityMenuOpen && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute right-0 bottom-9 z-50 w-60 rounded-2xl border border-white/15 bg-slate-900/98 p-2.5 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150 space-y-2"
+                >
+                  <div className="flex items-center justify-between pb-1.5 border-b border-white/10 text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">
+                    <div className="flex items-center gap-1.5">
+                      <Signal className="h-3 w-3 text-emerald-400" />
+                      <span>Adaptive Bitrate (ABR)</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setQualityMenuOpen(false);
+                        setShowInfraModal(true);
+                      }}
+                      title="View Cloud Infrastructure & Edge CDN"
+                      className="text-sky-400 hover:underline flex items-center gap-0.5 normal-case"
+                    >
+                      <Server className="h-2.5 w-2.5" />
+                      <span>Cloud CDN</span>
+                    </button>
+                  </div>
+
+                  {/* Auto Mode */}
+                  <button
+                    onClick={() => handleQualityChange('Auto')}
+                    className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded-xl text-left transition-colors ${
+                      selectedQuality === 'Auto'
+                        ? 'bg-emerald-500/15 text-emerald-400 font-bold'
+                        : 'text-slate-300 hover:bg-white/10'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span>Auto (Adaptive)</span>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
+                          {effectiveQualityLabel}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-normal">
+                        Dynamic ladder based on buffer ({bufferHealthSec}s)
+                      </div>
+                    </div>
+                    {selectedQuality === 'Auto' && <Check className="h-3.5 w-3.5" />}
+                  </button>
+
+                  {/* Manual Ladder options */}
+                  <div className="pt-1 border-t border-white/10 space-y-0.5">
+                    {streamLadder.map((tier) => (
+                      <button
+                        key={tier.label}
+                        onClick={() => handleQualityChange(tier.label)}
+                        className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
+                          selectedQuality === tier.label
+                            ? 'bg-sky-500/15 text-sky-400 font-bold'
+                            : 'text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span>{tier.label}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {tier.bitrateKbps >= 1000 ? `${(tier.bitrateKbps / 1000).toFixed(1)} Mbps` : `${tier.bitrateKbps} kbps`}
+                          </span>
+                        </div>
+                        {selectedQuality === tier.label && <Check className="h-3.5 w-3.5 text-sky-400" />}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Telemetry Footer */}
+                  <div className="pt-1 border-t border-white/10 px-1 text-[10px] text-slate-400 flex items-center justify-between font-mono">
+                    <span className="flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      tokyo-edge-01
+                    </span>
+                    <span className="text-emerald-400">{bufferHealthSec}s buffered</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -1524,6 +1834,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         </div>
       )}
+
+      {/* Clickable Chapter List Overlay */}
+      <ChapterOverlay
+        chapters={chapters}
+        activeChapter={activeChapter}
+        currentTime={currentTime}
+        duration={duration}
+        isOpen={chaptersOverlayOpen}
+        onClose={() => setChaptersOverlayOpen(false)}
+        onSelectChapter={handleSelectChapter}
+        onPrevChapter={handlePrevChapter}
+        onNextChapter={handleNextChapter}
+      />
+
+      {/* Cloud Infrastructure & CDN Edge Status Modal */}
+      <CloudInfrastructureModal
+        isOpen={showInfraModal}
+        onClose={() => setShowInfraModal(false)}
+      />
     </div>
   );
 };

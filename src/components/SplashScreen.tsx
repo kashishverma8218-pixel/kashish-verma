@@ -42,7 +42,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
         <div className="relative mb-5">
           <div className="h-28 w-28 sm:h-36 sm:w-36 rounded-3xl p-2 bg-white/5 border border-white/10 shadow-2xl backdrop-blur-xl flex items-center justify-center overflow-hidden ring-1 ring-white/20">
             <img
-              src="/assets/aistudio/1793796587457_f8bfaa4c.png"
+              src="/assets/logo.png"
               alt="Vio Streaming Logo"
               className="w-full h-full object-contain filter drop-shadow-lg"
             />

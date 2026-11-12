@@ -10,6 +10,9 @@ export interface VideoKeyboardShortcutsOptions {
   takeSnapshot?: () => void;
   handleAddBookmark?: () => void;
   toggleSubtitles?: () => void;
+  onNextChapter?: () => void;
+  onPrevChapter?: () => void;
+  toggleChapters?: () => void;
   duration?: number;
   onSeekPercent?: (pct: number) => void;
   enabled?: boolean;
@@ -37,6 +40,9 @@ export function useVideoKeyboardShortcuts({
   takeSnapshot,
   handleAddBookmark,
   toggleSubtitles,
+  onNextChapter,
+  onPrevChapter,
+  toggleChapters,
   duration,
   onSeekPercent,
   enabled = true,
@@ -129,6 +135,20 @@ export function useVideoKeyboardShortcuts({
           }
           break;
 
+        case '[':
+          if (onPrevChapter) {
+            e.preventDefault();
+            onPrevChapter();
+          }
+          break;
+
+        case ']':
+          if (onNextChapter) {
+            e.preventDefault();
+            onNextChapter();
+          }
+          break;
+
         case '0':
         case '1':
         case '2':
@@ -162,6 +182,9 @@ export function useVideoKeyboardShortcuts({
     takeSnapshot,
     handleAddBookmark,
     toggleSubtitles,
+    onNextChapter,
+    onPrevChapter,
+    toggleChapters,
     duration,
     onSeekPercent,
   ]);

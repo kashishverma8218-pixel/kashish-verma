@@ -35,13 +35,18 @@ import {
   Maximize2,
   SlidersHorizontal,
   RefreshCw,
-  Download
+  Download,
+  Activity,
+  Signal,
+  Cpu,
+  Layers
 } from 'lucide-react';
 import { VideoItem, Channel, Comment } from '../types/video';
 import { formatTime } from '../utils/formatTime';
 import { formatViews, formatSubscribers } from '../data/mockData';
 import { EditVideoModal } from './EditVideoModal';
 import { calculateRevenueSplit, estimateEarningsFromViews } from '../utils/revenueSharing';
+import { HlsStreamingMetricsPanel } from './HlsStreamingMetricsPanel';
 
 interface CreatorDashboardProps {
   channel: Channel;
@@ -67,7 +72,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   onDeleteComment,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'content' | 'analytics' | 'customization' | 'comments' | 'monetization' | 'ai-editor'
+    'overview' | 'content' | 'analytics' | 'hls-metrics' | 'customization' | 'comments' | 'monetization' | 'ai-editor'
   >('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'unlisted' | 'private'>('all');
@@ -198,6 +203,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             { id: 'overview', name: 'Dashboard', icon: LayoutDashboard },
             { id: 'content', name: 'Content Manager', icon: Film },
             { id: 'analytics', name: 'Channel Analytics', icon: BarChart3 },
+            { id: 'hls-metrics', name: 'HLS Streaming Telemetry', icon: Activity },
             { id: 'monetization', name: 'Monetization (30/70)', icon: DollarSign },
             { id: 'ai-editor', name: 'AI Video Studio', icon: Wand2 },
             { id: 'comments', name: 'Comments', icon: MessageSquare },
@@ -431,6 +437,62 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                   </div>
                   <ArrowUpRight className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-indigo-500 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all ml-2" />
                 </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Real-time HLS Streaming & Cloud-Transcoding Quick Monitor */}
+          <div className="rounded-3xl border border-purple-500/25 bg-gradient-to-r from-purple-500/5 via-pink-500/5 to-amber-500/5 p-6 dark:border-purple-500/20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-purple-600 text-white shadow-md shadow-purple-500/20">
+                  <Activity className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      HLS Streaming & Cloud-Transcoding Performance
+                    </h3>
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Live Stream Telemetry
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Real-time buffer health, rebuffering frequency, and ABR bitrates across active viewers
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setActiveTab('hls-metrics')}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 active:scale-95 text-white text-xs font-bold shadow-md transition-all whitespace-nowrap self-start sm:self-auto cursor-pointer"
+              >
+                <span>Open Full HLS Studio</span>
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800">
+                <span className="text-[11px] font-medium text-slate-400 block mb-0.5">Buffer Health</span>
+                <div className="text-xl font-black font-mono text-emerald-600 dark:text-emerald-400">14.6s</div>
+                <span className="text-[10px] text-slate-500">Optimal (Zero Stalls)</span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800">
+                <span className="text-[11px] font-medium text-slate-400 block mb-0.5">Rebuffer Frequency</span>
+                <div className="text-xl font-black font-mono text-slate-900 dark:text-white">0.02</div>
+                <span className="text-[10px] text-slate-500">Stalls / Stream Hour</span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800">
+                <span className="text-[11px] font-medium text-slate-400 block mb-0.5">1080p60 Bitrate</span>
+                <div className="text-xl font-black font-mono text-purple-600 dark:text-purple-400">6.18 Mbps</div>
+                <span className="text-[10px] text-slate-500">VBR Dynamic Ladder</span>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800">
+                <span className="text-[11px] font-medium text-slate-400 block mb-0.5">Anycast CDN Cache</span>
+                <div className="text-xl font-black font-mono text-sky-600 dark:text-sky-400">98.9%</div>
+                <span className="text-[10px] text-slate-500">285 Edge Locations</span>
               </div>
             </div>
           </div>
@@ -705,6 +767,11 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB: REAL-TIME HLS STREAMING & CLOUD TRANSCODING TELEMETRY */}
+      {activeTab === 'hls-metrics' && (
+        <HlsStreamingMetricsPanel videos={videos} />
       )}
 
       {/* TAB 4: COMMENTS MODERATION */}

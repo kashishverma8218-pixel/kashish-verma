@@ -69,6 +69,40 @@ export interface VideoItem {
   allowRemix?: boolean;
   ageRestricted?: boolean;
   createdAt?: number;
+  streamQualities?: VideoStreamQuality[];
+  hlsManifestUrl?: string;
+  backupStreams?: string[];
+  transcodingStatus?: 'ready' | 'processing' | 'failed';
+  chapters?: VideoChapter[];
+}
+
+export interface VideoChapter {
+  id: string;
+  title: string;
+  startTime: number; // in seconds
+  endTime: number;   // in seconds
+  timestamp: string; // e.g. "01:23"
+}
+
+export interface VideoStreamQuality {
+  label: string;
+  resolution: string;
+  bitrateKbps: number;
+  fps: number;
+  url: string;
+  isMaster?: boolean;
+}
+
+export interface TranscodingJob {
+  id: string;
+  videoId: string;
+  status: 'queued' | 'analyzing' | 'transcoding' | 'generating_manifest' | 'ready' | 'failed';
+  progress: number;
+  currentStep: string;
+  targetLadder: string[];
+  codec: string;
+  createdAt: number;
+  completedAt?: number;
 }
 
 export interface Bookmark {

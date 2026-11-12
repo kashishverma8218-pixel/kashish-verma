@@ -378,6 +378,11 @@ export const WatchView: React.FC<WatchViewProps> = ({
                     <img
                       src={rec.poster}
                       alt={rec.title}
+                      onError={(e) => {
+                        const target = e.currentTarget as HTMLImageElement;
+                        const fallback = 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80';
+                        if (target.src !== fallback) target.src = fallback;
+                      }}
                       className="h-full w-full object-cover group-hover:scale-105 transition-transform"
                     />
                     <div className="absolute bottom-1 right-1 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-mono text-white">

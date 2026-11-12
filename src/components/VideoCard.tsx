@@ -85,9 +85,16 @@ export const VideoCard: React.FC<VideoCardProps> = ({
         className="relative aspect-video w-full overflow-hidden rounded-2xl bg-slate-900 shadow-xs ring-1 ring-black/5 dark:ring-white/10"
       >
         <img
-          src={video.poster}
+          src={video.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80'}
           alt={displayTitle}
           referrerPolicy="no-referrer"
+          onError={(e) => {
+            const target = e.currentTarget as HTMLImageElement;
+            const fallback = 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80';
+            if (target.src !== fallback) {
+              target.src = fallback;
+            }
+          }}
           className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
 

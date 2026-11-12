@@ -23,6 +23,22 @@ import { AskVioBar } from './components/AskVioBar';
 import { AIAssistantButton } from './components/AIAssistantButton';
 import { CustomFeedView } from './components/CustomFeedView';
 import { SettingsModal } from './components/SettingsModal';
+import {
+  seedInitialFirestoreData,
+  subscribeVideos,
+  subscribeReels,
+  subscribeNotifications,
+  toggleLike,
+  toggleSubscription,
+  addCommentDoc,
+  incrementVideoViews,
+  recordWatchHistory,
+  recordSearchQuery,
+  recordStreamAnalytics,
+  deleteVideoDoc,
+  fetchUserSubscriptions,
+  fetchUserLikes,
+} from './services/firebaseDatabaseService';
 
 import {
   CHANNELS,
@@ -220,6 +236,79 @@ function MainApp() {
     }
   }, [isDarkMode]);
 
+  // Firestore Real-Time Subscriptions: Videos & Reels
+  useEffect(() => {
+    // Seed initial database collections on first boot if empty
+    seedInitialFirestoreData();
+
+    // Live real-time sync for videos collection
+    const unsubVideos = subscribeVideos((firestoreVideos) => {
+      if (firestoreVideos && firestoreVideos.length > 0) {
+        setVideos(firestoreVideos);
+      }
+    });
+
+    // Live real-time sync for reels collection
+    const unsubReels = subscribeReels((firestoreReels) => {
+      if (firestoreReels && firestoreReels.length > 0) {
+        setReels(firestoreReels);
+      }
+    });
+
+    return () => {
+      unsubVideos();
+      unsubReels();
+    };
+  }, []);
+
+  // Firestore User Subscriptions, Likes, and Notifications
+  useEffect(() => {
+    if (currentUser?.uid) {
+      // Live notifications
+      const unsubNotifs = subscribeNotifications(currentUser.uid, (userNotifs) => {
+        if (userNotifs && userNotifs.length > 0) {
+          setNotifications(userNotifs);
+        }
+      });
+
+      // User subscriptions from Firestore
+      fetchUserSubscriptions(currentUser.uid)
+        .then((subChannels) => {
+          if (subChannels && subChannels.size > 0) {
+            setChannels((prev) => {
+              const next = { ...prev };
+              for (const chId in next) {
+                if (subChannels.has(chId)) {
+                  next[chId] = { ...next[chId], isSubscribed: true };
+                }
+              }
+              return next;
+            });
+          }
+        })
+        .catch(() => {});
+
+      // User likes from Firestore
+      fetchUserLikes(currentUser.uid)
+        .then((likedIds) => {
+          if (likedIds && likedIds.size > 0) {
+            setLikedVideoIds(Array.from(likedIds));
+            setVideos((prev) =>
+              prev.map((v) => ({
+                ...v,
+                userLiked: likedIds.has(v.id),
+              }))
+            );
+          }
+        })
+        .catch(() => {});
+
+      return () => {
+        unsubNotifs();
+      };
+    }
+  }, [currentUser]);
+
   // Sync LocalStorage
   useEffect(() => {
     localStorage.setItem('vio_streaming_channels', JSON.stringify(channels));
@@ -267,6 +356,13 @@ function MainApp() {
       prev.map((v) => (v.id === video.id ? { ...v, views: v.views + 1 } : v))
     );
 
+    // Sync views, watch history, and analytics to Firestore
+    incrementVideoViews(video.id);
+    if (currentUser?.uid) {
+      recordWatchHistory(currentUser.uid, video, 15);
+    }
+    recordStreamAnalytics(video.id, { views: 1, watchTimeSeconds: 15 });
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -281,6 +377,11 @@ function MainApp() {
       const current = prev[channelId];
       if (!current) return prev;
       const nextSub = !current.isSubscribed;
+
+      if (currentUser?.uid) {
+        toggleSubscription(currentUser.uid, channelId, current.name, current.avatar).catch(() => {});
+      }
+
       return {
         ...prev,
         [channelId]: {
@@ -310,6 +411,10 @@ function MainApp() {
   };
 
   const handleToggleLike = (videoId: string) => {
+    if (currentUser?.uid) {
+      toggleLike(currentUser.uid, videoId, 'video', 'like').catch(() => {});
+    }
+
     setVideos((prev) =>
       prev.map((v) => {
         if (v.id === videoId) {
@@ -372,6 +477,11 @@ function MainApp() {
       userLiked: false,
       replies: [],
     };
+
+    // Persist comment to Firestore
+    addCommentDoc(videoId, content, authorName, authorAvatar).catch((err) => {
+      console.warn('Could not persist comment to Firestore:', err);
+    });
 
     setCommentsMap((prev) => ({
       ...prev,
@@ -436,7 +546,24 @@ function MainApp() {
   };
 
   const handlePublishVideo = (newVideo: VideoItem) => {
-    setVideos((prev) => [newVideo, ...prev]);
+    if (!newVideo || !newVideo.id || !newVideo.url) {
+      console.warn('handlePublishVideo: Skipped invalid video payload', newVideo);
+      return;
+    }
+
+    // Deduplicate: filter out any existing item with the same ID, prepend new video to top
+    setVideos((prev) => {
+      const remaining = prev.filter((v) => v.id !== newVideo.id);
+      const updated = [newVideo, ...remaining];
+      try {
+        localStorage.setItem('vio_streaming_videos', JSON.stringify(updated.slice(0, 50)));
+      } catch {
+        // ignore storage quota
+      }
+      return updated;
+    });
+
+    setActiveVideoId(newVideo.id);
     handlePlayVideo(newVideo);
   };
 
@@ -445,6 +572,7 @@ function MainApp() {
   };
 
   const handleDeleteVideo = (videoId: string) => {
+    deleteVideoDoc(videoId).catch(() => {});
     setVideos((prev) => prev.filter((v) => v.id !== videoId));
     if (activeVideoId === videoId) {
       setActiveVideoId(videos[0]?.id || INITIAL_VIDEOS[0].id);
@@ -573,6 +701,9 @@ function MainApp() {
 
   // Reel Actions
   const handleToggleLikeReel = (reelId: string) => {
+    if (currentUser?.uid) {
+      toggleLike(currentUser.uid, reelId, 'reel', 'like').catch(() => {});
+    }
     setReels((prev) =>
       prev.map((r) =>
         r.id === reelId
@@ -696,7 +827,11 @@ function MainApp() {
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         onSearchSubmit={() => {
-          setActiveSearchTerm(searchQuery.trim());
+          const q = searchQuery.trim();
+          setActiveSearchTerm(q);
+          if (currentUser?.uid && q) {
+            recordSearchQuery(currentUser.uid, q);
+          }
           if (currentPage !== 'home') setCurrentPage('home');
         }}
         onNavigateHome={() => {

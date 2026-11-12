@@ -1,35 +1,362 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isAuthenticated() {
+    // -------------------------------------------------------------------------
+    // AUTH & ROLE HELPERS
+    // -------------------------------------------------------------------------
+    function signedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
     }
 
-    // User profile documents
-    match /users/{userId} {
+    // 4. Admin की पहचान केवल Firebase Custom Claims से (Email fallback हटाया गया)
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    // -------------------------------------------------------------------------
+    // COUNTER VALIDATION HELPERS (3. फर्जी Views, Likes और Dislikes रोकने के नियम)
+    // -------------------------------------------------------------------------
+    function isValidVideoInteraction() {
+      let diff = request.resource.data.diff(resource.data);
+      let affected = diff.affectedKeys();
+      
+      // केवल views, likes, dislikes ही दर्शकों द्वारा अपडेट किए जा सकते हैं
+      let allowedKeys = affected.hasOnly(['views', 'likes', 'dislikes']);
+
+      // ownerId या userId को किसी भी इंटरैक्शन में बदला नहीं जा सकता (Immutability)
+      let immutableOwner = !affected.hasAny(['ownerId', 'userId']);
+
+      // Views: धनात्मक पूर्णांक, एक रिक्वेस्ट में अधिकतम 0 या +1 ही बढ़ सकता है
+      let currentViews = ('views' in resource.data) ? resource.data.views : 0;
+      let validViews = !affected.hasAny(['views']) || (
+        request.resource.data.views is int &&
+        request.resource.data.views >= currentViews &&
+        request.resource.data.views <= currentViews + 1
+      );
+
+      // Likes: शून्य या धनात्मक पूर्णांक, केवल +1 या -1 का अंतर संभव (नेगेटिव नहीं हो सकता)
+      let currentLikes = ('likes' in resource.data) ? resource.data.likes : 0;
+      let validLikes = !affected.hasAny(['likes']) || (
+        request.resource.data.likes is int &&
+        request.resource.data.likes >= 0 &&
+        request.resource.data.likes >= currentLikes - 1 &&
+        request.resource.data.likes <= currentLikes + 1
+      );
+
+      // Dislikes: शून्य या धनात्मक पूर्णांक, केवल +1 या -1 का अंतर संभव
+      let currentDislikes = ('dislikes' in resource.data) ? resource.data.dislikes : 0;
+      let validDislikes = !affected.hasAny(['dislikes']) || (
+        request.resource.data.dislikes is int &&
+        request.resource.data.dislikes >= 0 &&
+        request.resource.data.dislikes >= currentDislikes - 1 &&
+        request.resource.data.dislikes <= currentDislikes + 1
+      );
+
+      return allowedKeys && immutableOwner && validViews && validLikes && validDislikes;
+    }
+
+    function isValidReelInteraction() {
+      let diff = request.resource.data.diff(resource.data);
+      let affected = diff.affectedKeys();
+      let allowedKeys = affected.hasOnly(['views', 'likes', 'commentsCount', 'sharesCount']);
+      let immutableOwner = !affected.hasAny(['ownerId', 'userId']);
+
+      let currentViews = ('views' in resource.data) ? resource.data.views : 0;
+      let validViews = !affected.hasAny(['views']) || (
+        request.resource.data.views is int &&
+        request.resource.data.views >= currentViews &&
+        request.resource.data.views <= currentViews + 1
+      );
+
+      let currentLikes = ('likes' in resource.data) ? resource.data.likes : 0;
+      let validLikes = !affected.hasAny(['likes']) || (
+        request.resource.data.likes is int &&
+        request.resource.data.likes >= 0 &&
+        request.resource.data.likes >= currentLikes - 1 &&
+        request.resource.data.likes <= currentLikes + 1
+      );
+
+      let currentComments = ('commentsCount' in resource.data) ? resource.data.commentsCount : 0;
+      let validComments = !affected.hasAny(['commentsCount']) || (
+        request.resource.data.commentsCount is int &&
+        request.resource.data.commentsCount >= 0 &&
+        request.resource.data.commentsCount >= currentComments - 1 &&
+        request.resource.data.commentsCount <= currentComments + 1
+      );
+
+      let currentShares = ('sharesCount' in resource.data) ? resource.data.sharesCount : 0;
+      let validShares = !affected.hasAny(['sharesCount']) || (
+        request.resource.data.sharesCount is int &&
+        request.resource.data.sharesCount >= currentShares &&
+        request.resource.data.sharesCount <= currentShares + 1
+      );
+
+      return allowedKeys && immutableOwner && validViews && validLikes && validComments && validShares;
+    }
+
+    function isValidCommentInteraction() {
+      let diff = request.resource.data.diff(resource.data);
+      let affected = diff.affectedKeys();
+      let allowedKeys = affected.hasOnly(['likes', 'dislikes', 'repliesCount']);
+      let immutableAuthor = !affected.hasAny(['userId', 'authorName', 'content', 'text']);
+
+      let currentLikes = ('likes' in resource.data) ? resource.data.likes : 0;
+      let validLikes = !affected.hasAny(['likes']) || (
+        request.resource.data.likes is int &&
+        request.resource.data.likes >= 0 &&
+        request.resource.data.likes >= currentLikes - 1 &&
+        request.resource.data.likes <= currentLikes + 1
+      );
+
+      let currentDislikes = ('dislikes' in resource.data) ? resource.data.dislikes : 0;
+      let validDislikes = !affected.hasAny(['dislikes']) || (
+        request.resource.data.dislikes is int &&
+        request.resource.data.dislikes >= 0 &&
+        request.resource.data.dislikes >= currentDislikes - 1 &&
+        request.resource.data.dislikes <= currentDislikes + 1
+      );
+
+      let currentReplies = ('repliesCount' in resource.data) ? resource.data.repliesCount : 0;
+      let validReplies = !affected.hasAny(['repliesCount']) || (
+        request.resource.data.repliesCount is int &&
+        request.resource.data.repliesCount >= 0 &&
+        request.resource.data.repliesCount >= currentReplies - 1 &&
+        request.resource.data.repliesCount <= currentReplies + 1
+      );
+
+      return allowedKeys && immutableAuthor && validLikes && validDislikes && validReplies;
+    }
+
+    // =========================================================================
+    // 1. USER PROFILES
+    // =========================================================================
+    match /users/{uid} {
       allow read: if true;
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isOwner(userId);
-      allow delete: if isOwner(userId);
+      allow create: if isOwner(uid);
+      allow update, delete: if isOwner(uid) || isAdmin();
     }
 
-    // Videos collection
+    // =========================================================================
+    // 2. VIDEOS (5. Public Query सुरक्षा + 6. पुराने बिना visibility वाले वीडियो संगत)
+    // =========================================================================
     match /videos/{videoId} {
-      allow read: if resource.data.visibility == 'public' || resource.data.visibility == 'unlisted' || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes', 'dislikes']));
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      // Single Document (Playback):
+      // - पुराने वीडियो जिनमें visibility नहीं है, वे भी चलेंगे
+      // - public और unlisted वीडियो कोई भी देख सकता है
+      // - private वीडियो केवल असली मालिक या Custom Claim Admin देख सकते हैं
+      allow get: if (!('visibility' in resource.data) || resource.data.visibility != 'private')
+                 || (signedIn() && resource.data.ownerId == request.auth.uid)
+                 || isAdmin();
+
+      // Collection Queries (Home Feed / Search):
+      // - केवल वही वीडियो सूची में आएंगे जो public हैं या पुराने हैं (जिनमें visibility फ़ील्ड नहीं है)
+      // - मालिक अपने private वीडियो भी query कर सकता है
+      // - Admin सभी वीडियो query कर सकता है
+      allow list: if (!('visibility' in resource.data) || resource.data.visibility == 'public')
+                  || (signedIn() && resource.data.ownerId == request.auth.uid)
+                  || isAdmin();
+
+      // Create: केवल लॉगिन यूज़र अपनी UID से वीडियो बना सकता है; प्रारंभिक Views/Likes 0 अनिवार्य
+      allow create: if signedIn()
+                    && request.resource.data.ownerId == request.auth.uid
+                    && (!('views' in request.resource.data) || request.resource.data.views == 0)
+                    && (!('likes' in request.resource.data) || request.resource.data.likes == 0)
+                    && (!('dislikes' in request.resource.data) || request.resource.data.dislikes == 0);
+
+      // Update:
+      // - मालिक metadata बदल सकता है (पर ownerId कभी नहीं बदल सकता)
+      // - अन्य यूज़र केवल कड़े सत्यापन (isValidVideoInteraction) से views/likes बदल सकते हैं
+      // - Custom Claim Admin पूर्ण नियंत्रण रखता है
+      allow update: if (signedIn() && (
+                      (resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == resource.data.ownerId) ||
+                      isValidVideoInteraction()
+                    )) || isAdmin();
+
+      // Delete: केवल सत्यापित मालिक या Custom Claim Admin ही वीडियो डिलीट कर सकता है
+      allow delete: if (signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
     }
 
-    // Default test connection
+    // =========================================================================
+    // 3. REELS
+    // =========================================================================
+    match /reels/{reelId} {
+      allow get: if !('visibility' in resource.data)
+                 || resource.data.visibility != 'private'
+                 || (signedIn() && resource.data.ownerId == request.auth.uid)
+                 || isAdmin();
+
+      allow list: if !('visibility' in resource.data)
+                  || resource.data.visibility == 'public'
+                  || (signedIn() && resource.data.ownerId == request.auth.uid)
+                  || isAdmin();
+
+      allow create: if signedIn()
+                    && request.resource.data.ownerId == request.auth.uid
+                    && (!('views' in request.resource.data) || request.resource.data.views == 0)
+                    && (!('likes' in request.resource.data) || request.resource.data.likes == 0);
+
+      allow update: if (signedIn() && (
+                      (resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == resource.data.ownerId) ||
+                      isValidReelInteraction()
+                    )) || isAdmin();
+
+      allow delete: if (signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 4. COMMENTS
+    // =========================================================================
+    match /comments/{commentId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && (!('likes' in request.resource.data) || request.resource.data.likes == 0);
+
+      allow update: if (signedIn() && (
+                      (resource.data.userId == request.auth.uid && request.resource.data.userId == resource.data.userId) ||
+                      isValidCommentInteraction()
+                    )) || isAdmin();
+
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 5. LIKES (3. डुप्लीकेट और फर्जी Like रोकने के लिए Doc ID बाँधना)
+    // =========================================================================
+    match /likes/{likeId} {
+      allow read: if true;
+      // likeId अनिवार्य रूप से `${request.auth.uid}_${targetId}` होना चाहिए
+      allow create: if signedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && likeId == request.auth.uid + '_' + request.resource.data.targetId;
+      allow update: if false;
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 6. SUBSCRIPTIONS
+    // =========================================================================
+    match /subscriptions/{subscriptionId} {
+      allow read: if true;
+      allow create: if signedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && subscriptionId == request.auth.uid + '_' + request.resource.data.channelId;
+      allow update: if false;
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 7. FOLLOWERS (7. Follow Button के लिए 100% सुरक्षित और संगत व्यवस्था)
+    // =========================================================================
+    match /followers/{followerId} {
+      allow read: if true;
+      // followerId अनिवार्य रूप से `${request.auth.uid}_${creatorId}` होना चाहिए
+      allow create: if signedIn()
+                    && request.resource.data.followerId == request.auth.uid
+                    && followerId == request.auth.uid + '_' + request.resource.data.creatorId;
+      allow update: if false;
+      allow delete: if (signedIn() && resource.data.followerId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 8. NOTIFICATIONS (2. केवल अधिकृत प्रेषक ही Notification बना सकता है)
+    // =========================================================================
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+
+      // प्रेषक (sender) का UID लॉगिन यूज़र से मेल खाना चाहिए; कोई फर्जी नाम से नहीं भेज सकता
+      allow create: if (signedIn() && (
+        request.resource.data.senderId == request.auth.uid ||
+        request.resource.data.fromUserId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid
+      )) || isAdmin();
+
+      // केवल प्राप्तकर्ता ही पढ़ सकता है और 'read' मार्क कर सकता है
+      allow update: if signedIn()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 9. WATCH HISTORY
+    // =========================================================================
+    match /watchHistory/{historyId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 10. PLAYLISTS
+    // =========================================================================
+    match /playlists/{playlistId} {
+      allow read: if resource.data.isPublic == true
+                  || resource.data.isPrivate == false
+                  || (signedIn() && resource.data.userId == request.auth.uid)
+                  || isAdmin();
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 11. ANALYTICS
+    // =========================================================================
+    match /analytics/{analyticsId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if signedIn() || isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 12. REPORTS
+    // =========================================================================
+    match /reports/{reportId} {
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
+    // =========================================================================
+    // 13. CATEGORIES
+    // =========================================================================
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // 14. SEARCH HISTORY
+    // =========================================================================
+    match /searchHistory/{searchId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // =========================================================================
+    // 15. TEST CONNECTION (1. सार्वजनिक Read/Write बंद, सुरक्षित प्रमाणीकरण अनिवार्य)
+    // =========================================================================
     match /test/{docId} {
-      allow read, write: if true;
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // =========================================================================
+    // DEFAULT DENY CATCH-ALL (9. बिना अनुमति के किसी भी Collection का एक्सेस ब्लॉक)
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

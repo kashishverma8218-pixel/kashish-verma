@@ -13,38 +13,289 @@
         "bannerURL": { "type": "string", "description": "Channel header banner image URL" },
         "bio": { "type": "string", "description": "User bio or channel description" },
         "subscribersCount": { "type": "number", "description": "Total subscriber count" },
+        "role": { "type": "string", "description": "User role: user, creator, admin" },
         "createdAt": { "type": "number", "description": "Account creation timestamp" }
       },
       "required": ["uid", "email"]
     },
     "Video": {
       "title": "Video",
-      "description": "Uploaded video record",
+      "description": "Video document record with streaming qualities and metadata",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Video unique identifier" },
-        "userId": { "type": "string", "description": "Creator user UID" },
+        "id": { "type": "string", "description": "Unique video ID" },
+        "ownerId": { "type": "string", "description": "Creator user UID" },
         "title": { "type": "string", "description": "Video title" },
         "description": { "type": "string", "description": "Video description" },
-        "url": { "type": "string", "description": "Video streaming source URL" },
-        "poster": { "type": "string", "description": "Thumbnail poster URL" },
+        "url": { "type": "string", "description": "Primary stream URL" },
+        "poster": { "type": "string", "description": "Video thumbnail poster" },
+        "duration": { "type": "number", "description": "Video duration in seconds" },
         "category": { "type": "string", "description": "Content category" },
-        "views": { "type": "number", "description": "View count" },
-        "likes": { "type": "number", "description": "Like count" },
-        "visibility": { "type": "string", "description": "public, unlisted, or private" },
+        "tags": { "type": "string", "description": "Comma-separated or JSON list of tags" },
+        "views": { "type": "number", "description": "View counter" },
+        "likes": { "type": "number", "description": "Like counter" },
+        "dislikes": { "type": "number", "description": "Dislike counter" },
+        "status": { "type": "string", "description": "published, draft, unlisted, archived" },
+        "visibility": { "type": "string", "description": "public, unlisted, private" },
+        "channelId": { "type": "string", "description": "Channel identifier" },
         "createdAt": { "type": "number", "description": "Upload timestamp" }
       },
-      "required": ["id", "userId", "title", "url"]
+      "required": ["id", "ownerId", "title", "url"]
+    },
+    "Reel": {
+      "title": "Reel",
+      "description": "Vertical short video document",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique reel ID" },
+        "ownerId": { "type": "string", "description": "Creator user UID" },
+        "title": { "type": "string", "description": "Reel caption / title" },
+        "description": { "type": "string", "description": "Reel description" },
+        "videoUrl": { "type": "string", "description": "Vertical video stream URL" },
+        "poster": { "type": "string", "description": "Reel poster thumbnail" },
+        "duration": { "type": "number", "description": "Duration in seconds" },
+        "audioTrack": { "type": "string", "description": "Background audio track name" },
+        "channelId": { "type": "string", "description": "Channel identifier" },
+        "views": { "type": "number", "description": "View counter" },
+        "likes": { "type": "number", "description": "Like counter" },
+        "commentsCount": { "type": "number", "description": "Comments counter" },
+        "sharesCount": { "type": "number", "description": "Share counter" },
+        "status": { "type": "string", "description": "published, draft" },
+        "visibility": { "type": "string", "description": "public, unlisted, private" },
+        "createdAt": { "type": "number", "description": "Creation timestamp" }
+      },
+      "required": ["id", "ownerId", "videoUrl"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Interactive comment on videos or reels",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique comment ID" },
+        "targetId": { "type": "string", "description": "Parent videoId or reelId" },
+        "targetType": { "type": "string", "description": "video or reel" },
+        "userId": { "type": "string", "description": "Author UID" },
+        "userName": { "type": "string", "description": "Author display name" },
+        "userAvatar": { "type": "string", "description": "Author avatar URL" },
+        "text": { "type": "string", "description": "Comment text content" },
+        "likes": { "type": "number", "description": "Number of likes" },
+        "repliesCount": { "type": "number", "description": "Number of replies" },
+        "createdAt": { "type": "number", "description": "Creation timestamp" }
+      },
+      "required": ["id", "targetId", "userId", "text"]
+    },
+    "Like": {
+      "title": "Like",
+      "description": "Like record on video, reel, or comment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID composed of userId_targetId" },
+        "userId": { "type": "string", "description": "Liker UID" },
+        "targetId": { "type": "string", "description": "Video, reel, or comment ID" },
+        "targetType": { "type": "string", "description": "video, reel, or comment" },
+        "type": { "type": "string", "description": "like or dislike" },
+        "createdAt": { "type": "number", "description": "Creation timestamp" }
+      },
+      "required": ["id", "userId", "targetId", "type"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "User subscription to a creator channel",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID composed of userId_channelId" },
+        "userId": { "type": "string", "description": "Subscriber UID" },
+        "channelId": { "type": "string", "description": "Creator channel ID" },
+        "channelName": { "type": "string", "description": "Channel display name" },
+        "channelAvatar": { "type": "string", "description": "Channel avatar image URL" },
+        "createdAt": { "type": "number", "description": "Subscription timestamp" }
+      },
+      "required": ["id", "userId", "channelId"]
+    },
+    "Follower": {
+      "title": "Follower",
+      "description": "Social follower relation for creators and reels",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID composed of followerId_creatorId" },
+        "followerId": { "type": "string", "description": "Follower user UID" },
+        "creatorId": { "type": "string", "description": "Followed creator UID or channel ID" },
+        "createdAt": { "type": "number", "description": "Follow timestamp" }
+      },
+      "required": ["id", "followerId", "creatorId"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Real-time user notification event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique notification ID" },
+        "userId": { "type": "string", "description": "Recipient user UID" },
+        "actorId": { "type": "string", "description": "Triggering user UID" },
+        "actorName": { "type": "string", "description": "Triggering user name" },
+        "actorAvatar": { "type": "string", "description": "Triggering user avatar" },
+        "type": { "type": "string", "description": "subscribe, like, comment, video_upload" },
+        "message": { "type": "string", "description": "Notification message summary" },
+        "targetId": { "type": "string", "description": "Target video or reel ID" },
+        "read": { "type": "boolean", "description": "Whether notification has been viewed" },
+        "createdAt": { "type": "number", "description": "Notification timestamp" }
+      },
+      "required": ["id", "userId", "type", "message"]
+    },
+    "WatchHistory": {
+      "title": "WatchHistory",
+      "description": "User watch progress and playback history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID composed of userId_videoId" },
+        "userId": { "type": "string", "description": "Viewer user UID" },
+        "videoId": { "type": "string", "description": "Video identifier" },
+        "videoTitle": { "type": "string", "description": "Video title" },
+        "videoPoster": { "type": "string", "description": "Video poster image" },
+        "videoDuration": { "type": "number", "description": "Video duration in seconds" },
+        "progressSeconds": { "type": "number", "description": "Last playback position in seconds" },
+        "completed": { "type": "boolean", "description": "Whether playback reached completion" },
+        "watchedAt": { "type": "number", "description": "Timestamp of viewing" }
+      },
+      "required": ["id", "userId", "videoId"]
+    },
+    "Playlist": {
+      "title": "Playlist",
+      "description": "Curated collection of videos",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique playlist ID" },
+        "userId": { "type": "string", "description": "Owner user UID" },
+        "title": { "type": "string", "description": "Playlist title" },
+        "description": { "type": "string", "description": "Playlist description" },
+        "isPublic": { "type": "boolean", "description": "Public visibility flag" },
+        "isPrivate": { "type": "boolean", "description": "Private visibility flag" },
+        "videoIds": { "type": "string", "description": "JSON array of contained video IDs" },
+        "thumbnailUrl": { "type": "string", "description": "Playlist preview thumbnail" },
+        "videoCount": { "type": "number", "description": "Count of videos" },
+        "createdAt": { "type": "number", "description": "Creation timestamp" },
+        "updatedAt": { "type": "number", "description": "Last update timestamp" }
+      },
+      "required": ["id", "userId", "title"]
+    },
+    "Analytics": {
+      "title": "Analytics",
+      "description": "Streaming performance metrics and telemetry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique metric ID" },
+        "videoId": { "type": "string", "description": "Target video ID" },
+        "userId": { "type": "string", "description": "Creator or viewer UID" },
+        "views": { "type": "number", "description": "View counts" },
+        "watchTimeSeconds": { "type": "number", "description": "Total watched seconds" },
+        "impressions": { "type": "number", "description": "Total impressions" },
+        "engagementRate": { "type": "number", "description": "Engagement ratio percentage" },
+        "bufferEvents": { "type": "number", "description": "Count of buffer stall events" },
+        "rebufferingDurationMs": { "type": "number", "description": "Total rebuffering wait time in ms" },
+        "timestamp": { "type": "number", "description": "Timestamp of metric entry" }
+      },
+      "required": ["id", "timestamp"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Content moderation report submitted by users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique report ID" },
+        "userId": { "type": "string", "description": "Reporter UID" },
+        "targetId": { "type": "string", "description": "Reported video, reel, or comment ID" },
+        "targetType": { "type": "string", "description": "video, reel, comment, or user" },
+        "reason": { "type": "string", "description": "Categorized reason" },
+        "details": { "type": "string", "description": "Additional user explanation" },
+        "status": { "type": "string", "description": "pending, reviewed, resolved, rejected" },
+        "createdAt": { "type": "number", "description": "Submission timestamp" }
+      },
+      "required": ["id", "userId", "targetId", "reason"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Video genre categorization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique category slug or ID" },
+        "name": { "type": "string", "description": "Display name of category" },
+        "slug": { "type": "string", "description": "URL-safe slug" },
+        "description": { "type": "string", "description": "Category description" },
+        "icon": { "type": "string", "description": "Icon name or symbol" },
+        "videoCount": { "type": "number", "description": "Total videos in category" },
+        "sortOrder": { "type": "number", "description": "Display sort priority" }
+      },
+      "required": ["id", "name"]
+    },
+    "SearchHistory": {
+      "title": "SearchHistory",
+      "description": "User search query history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique query record ID" },
+        "userId": { "type": "string", "description": "Searching user UID" },
+        "query": { "type": "string", "description": "Search text query" },
+        "timestamp": { "type": "number", "description": "Search timestamp" }
+      },
+      "required": ["id", "userId", "query"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
-      "description": "User profiles readable publicly and editable by the authenticated owner"
+      "description": "User profile records with public read and owner-restricted write"
     },
     "/videos/{videoId}": {
       "schema": "Video",
-      "description": "Video records readable publicly and editable by the creator"
+      "description": "Full-length video documents with streaming metadata and creator ownership"
+    },
+    "/reels/{reelId}": {
+      "schema": "Reel",
+      "description": "Vertical short video documents with creator ownership and view updates"
+    },
+    "/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "User comments on videos and reels with author-restricted edits"
+    },
+    "/likes/{likeId}": {
+      "schema": "Like",
+      "description": "User like and dislike records keyed by userId_targetId"
+    },
+    "/subscriptions/{subscriptionId}": {
+      "schema": "Subscription",
+      "description": "Channel subscriptions keyed by userId_channelId"
+    },
+    "/followers/{followerId}": {
+      "schema": "Follower",
+      "description": "User follower relations for channels and creators"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications with read status and actor metadata"
+    },
+    "/watchHistory/{historyId}": {
+      "schema": "WatchHistory",
+      "description": "User video watch progress and history records"
+    },
+    "/playlists/{playlistId}": {
+      "schema": "Playlist",
+      "description": "Curated user video playlists with public/private visibility"
+    },
+    "/analytics/{analyticsId}": {
+      "schema": "Analytics",
+      "description": "Platform telemetry and stream performance metrics"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Content moderation reports submitted by authenticated users"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Content categorization and genre tags"
+    },
+    "/searchHistory/{searchId}": {
+      "schema": "SearchHistory",
+      "description": "User search queries for personalized recommendations"
     }
   }
 }
