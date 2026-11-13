@@ -6,34 +6,94 @@
 
 import { VideoStreamQuality, TranscodingJob } from '../types/video';
 
-// Standard high-reliability fallback CDN endpoints
+export const DEFAULT_PLAYABLE_VIDEO_URL =
+  'https://media.w3.org/2010/05/bunny/movie.mp4';
+
+export const DEFAULT_PLAYABLE_REEL_URL =
+  'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
+
+// Verified HTTP 200 high-reliability fallback CDN endpoints
 export const CDN_STREAM_MIRRORS: Record<string, string[]> = {
   'video-bbb': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    'https://media.w3.org/2010/05/bunny/movie.mp4',
     'https://archive.org/download/BigBuckBunny_124/Content/big_buck_bunny_720p_surround.mp4',
+    'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4',
   ],
   'video-sintel': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-    'https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+    'https://download.blender.org/durian/trailer/sintel_trailer-720p.mp4',
+    'https://media.w3.org/2010/05/sintel/trailer.mp4',
+    'https://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_1MB.mp4',
   ],
   'video-tears-of-steel': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-    'https://storage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+    'https://archive.org/download/Tears-of-Steel/tears_of_steel_720p.mp4',
+    'https://media.w3.org/2010/05/sintel/trailer.mp4',
   ],
   'video-elephants-dream': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    'https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+    'https://archive.org/download/ElephantsDream/ed_hd.mp4',
+    'https://media.w3.org/2010/05/bunny/movie.mp4',
   ],
   'video-escapes': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+    'https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_1MB.mp4',
   ],
   'video-blazes': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    'https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_1MB.mp4',
+    'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+  ],
+  'video-joyrides': [
+    'https://media.w3.org/2010/05/bunny/trailer.mp4',
+    'https://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_1MB.mp4',
+  ],
+  'video-we-are-going': [
+    'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4',
+    'https://media.w3.org/2010/05/bunny/trailer.mp4',
   ],
 };
+
+const LEGACY_SAMPLE_FILENAME_MAP: Record<string, string> = {
+  'BigBuckBunny.mp4': 'https://media.w3.org/2010/05/bunny/movie.mp4',
+  'Sintel.mp4': 'https://download.blender.org/durian/trailer/sintel_trailer-720p.mp4',
+  'TearsOfSteel.mp4': 'https://archive.org/download/Tears-of-Steel/tears_of_steel_720p.mp4',
+  'ElephantsDream.mp4': 'https://archive.org/download/ElephantsDream/ed_hd.mp4',
+  'ForBiggerEscapes.mp4': 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+  'ForBiggerBlazes.mp4': 'https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_1MB.mp4',
+  'ForBiggerJoyBlazes.mp4': 'https://media.w3.org/2010/05/bunny/trailer.mp4',
+  'ForBiggerJoyrides.mp4': 'https://media.w3.org/2010/05/bunny/trailer.mp4',
+  'WeAreGoingOnBullrun.mp4': 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4',
+};
+
+/**
+ * Normalizes legacy broken/403 sample URLs (gtv-videos-bucket) and optionally rejects stale blob URLs
+ * loaded from Firestore or localStorage so <video> always receives a playable source.
+ */
+export function sanitizePlayableVideoUrl(
+  url?: string | null,
+  itemId?: string,
+  kind: 'video' | 'reel' = 'video',
+  rejectBlob: boolean = false
+): string {
+  const defaultFallback = kind === 'reel' ? DEFAULT_PLAYABLE_REEL_URL : DEFAULT_PLAYABLE_VIDEO_URL;
+  const trimmed = typeof url === 'string' ? url.trim() : '';
+
+  if (!trimmed) {
+    return (itemId && CDN_STREAM_MIRRORS[itemId]?.[0]) || defaultFallback;
+  }
+
+  if (trimmed.startsWith('blob:')) {
+    return rejectBlob ? ((itemId && CDN_STREAM_MIRRORS[itemId]?.[0]) || defaultFallback) : trimmed;
+  }
+
+  if (trimmed.includes('gtv-videos-bucket/sample/')) {
+    const fileName = trimmed.split('/').pop()?.split('?')[0] || '';
+    if (fileName && LEGACY_SAMPLE_FILENAME_MAP[fileName]) {
+      return LEGACY_SAMPLE_FILENAME_MAP[fileName];
+    }
+    return (itemId && CDN_STREAM_MIRRORS[itemId]?.[0]) || defaultFallback;
+  }
+
+  return trimmed;
+}
+
 
 /**
  * Builds standard adaptive bitrate ladder for any given source URL

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   User,
@@ -10,13 +10,8 @@ import {
   Check,
   Moon,
   Sun,
-  Volume2,
   Trash2,
-  Lock,
-  Eye,
   LogOut,
-  ExternalLink,
-  Sparkles,
   Server
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -30,6 +25,7 @@ interface SettingsModalProps {
   onClearHistory?: () => void;
   onOpenProfile?: () => void;
   onOpenAuth?: () => void;
+  onPreferencesChange?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -40,6 +36,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClearHistory,
   onOpenProfile,
   onOpenAuth,
+  onPreferencesChange,
 }) => {
   const { currentUser, userProfile, signOutUser } = useAuth();
   const [activeTab, setActiveTab] = useState<'account' | 'playback' | 'notifications' | 'privacy' | 'appearance'>('account');
@@ -59,21 +56,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   });
 
   // Notification settings
-  const [notifyUploads, setNotifyUploads] = useState<boolean>(true);
-  const [notifyReplies, setNotifyReplies] = useState<boolean>(true);
-  const [notifyMilestones, setNotifyMilestones] = useState<boolean>(true);
-  const [notifySound, setNotifySound] = useState<boolean>(true);
+  const [notifyUploads, setNotifyUploads] = useState<boolean>(() => {
+    return localStorage.getItem('vio_pref_notify_uploads') !== 'false';
+  });
+  const [notifyReplies, setNotifyReplies] = useState<boolean>(() => {
+    return localStorage.getItem('vio_pref_notify_replies') !== 'false';
+  });
+  const [notifyMilestones, setNotifyMilestones] = useState<boolean>(() => {
+    return localStorage.getItem('vio_pref_notify_milestones') !== 'false';
+  });
+  const [notifySound, setNotifySound] = useState<boolean>(() => {
+    return localStorage.getItem('vio_pref_notify_sound') !== 'false';
+  });
 
   // Privacy settings
-  const [saveHistory, setSaveHistory] = useState<boolean>(true);
-  const [restrictedMode, setRestrictedMode] = useState<boolean>(false);
+  const [saveHistory, setSaveHistory] = useState<boolean>(() => {
+    return localStorage.getItem('vio_pref_save_history') !== 'false';
+  });
+  const [restrictedMode, setRestrictedMode] = useState<boolean>(() => {
+    return localStorage.getItem('vio_pref_restricted_mode') === 'true';
+  });
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
   const [showInfra, setShowInfra] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !showInfra) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, showInfra, onClose]);
 
   if (!isOpen) return null;
 
   const showSavedBadge = (msg = 'Preference saved') => {
     setSavedFeedback(msg);
+    onPreferencesChange?.();
     setTimeout(() => setSavedFeedback(null), 2000);
   };
 
@@ -114,21 +135,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       />
 
       {/* Settings Modal Window */}
-      <div className="relative z-10 flex flex-col md:flex-row w-full max-w-3xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+      <div className="relative z-10 flex flex-col md:flex-row w-full max-w-3xl max-h-[92vh] bg-[var(--surface)] rounded-3xl border border-[var(--ink-faint)] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 text-[var(--ink)]">
         
         {/* Left Navigation Tabs (YouTube style) */}
-        <aside className="w-full md:w-64 bg-slate-50/80 dark:bg-slate-950/60 border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-800 p-4 shrink-0 flex flex-col justify-between">
+        <aside className="w-full md:w-64 bg-[var(--bg)] border-b md:border-b-0 md:border-r border-[var(--ink-faint)] p-4 shrink-0 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between pb-3 mb-2 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between pb-3 mb-2 border-b border-[var(--ink-faint)]">
               <div className="flex items-center gap-2">
                 <Sliders className="h-5 w-5 text-red-500" />
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">Settings</h2>
+                <h2 className="text-base font-bold text-[var(--ink)]">Settings</h2>
               </div>
               <button
+                type="button"
                 onClick={onClose}
-                className="md:hidden p-1.5 rounded-full text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800"
+                aria-label="Close settings"
+                className="md:hidden h-10 w-10 flex items-center justify-center rounded-xl text-[var(--ink-medium)] hover:bg-[var(--ink-faint)] hover:text-[var(--ink)] cursor-pointer"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
@@ -221,9 +244,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </span>
               )}
               <button
+                type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="hidden md:flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                className="hidden md:flex h-9 w-9 items-center justify-center rounded-full text-[var(--ink-medium)] hover:bg-[var(--ink-faint)] hover:text-[var(--ink)] transition-colors cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -234,45 +258,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {activeTab === 'account' && (
             <div className="space-y-5">
               {currentUser ? (
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)]">
+                  <div className="flex items-center gap-3 min-w-0">
                     <img
                       src={userProfile?.photoURL || currentUser.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80'}
                       alt="Avatar"
-                      className="h-14 w-14 rounded-full object-cover ring-2 ring-red-500/20"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.currentTarget.style.opacity = '0.4';
+                      }}
+                      className="h-14 w-14 rounded-full object-cover ring-2 ring-[#FF0000]/40 shrink-0"
                     />
-                    <div>
-                      <div className="font-bold text-sm text-slate-900 dark:text-white">
+                    <div className="min-w-0">
+                      <div className="font-bold text-sm text-[var(--ink)] truncate">
                         {userProfile?.displayName || currentUser.displayName || 'Vio Creator'}
                       </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                      <div className="text-xs text-[var(--ink-medium)] truncate">
                         {userProfile?.handle || '@creator'} · {currentUser.email}
                       </div>
-                      <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md">
+                      <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md">
                         <Check className="h-3 w-3" />
                         Verified Creator
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {onOpenProfile && (
                       <button
+                        type="button"
                         onClick={() => {
                           onClose();
                           onOpenProfile();
                         }}
-                        className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[var(--ink-faint)] text-xs font-semibold text-[var(--ink)] hover:bg-[var(--ink-faint)] cursor-pointer"
                       >
                         Edit Profile
                       </button>
                     )}
                     <button
+                      type="button"
                       onClick={() => {
                         signOutUser();
                         showSavedBadge('Signed out successfully');
                       }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                      className="min-h-[40px] flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-rose-500 hover:bg-rose-500/10 cursor-pointer"
                     >
                       <LogOut className="h-3.5 w-3.5" />
                       Sign Out
@@ -284,16 +314,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="h-12 w-12 mx-auto mb-3 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg">
                     <User className="h-6 w-6" />
                   </div>
-                  <h4 className="text-base font-bold text-slate-900 dark:text-white">Sign in to your Vio streaming account</h4>
-                  <p className="mt-1 max-w-sm mx-auto text-xs text-slate-500 dark:text-slate-400">
+                  <h4 className="text-base font-bold text-[var(--ink)]">Sign in to your Vio streaming account</h4>
+                  <p className="mt-1 max-w-sm mx-auto text-xs text-[var(--ink-medium)]">
                     Follow channels, save favorites to watch later, like videos, and upload 4K content to Vio streaming Studio.
                   </p>
                   <button
+                    type="button"
                     onClick={() => {
                       onClose();
                       onOpenAuth?.();
                     }}
-                    className="mt-4 px-5 py-2 rounded-full bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-md transition-all active:scale-95"
+                    className="mt-4 min-h-[42px] px-5 py-2 rounded-full bg-[#FF0000] hover:bg-[#CC0000] text-white text-xs font-bold shadow-md transition-all active:scale-95 cursor-pointer"
                   >
                     Sign in to Vio streaming
                   </button>
@@ -305,7 +336,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center justify-between p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                   <div>
                     <div className="text-xs font-semibold text-slate-900 dark:text-white">Channel Membership & Revenue</div>
-                    <div className="text-[11px] text-slate-500">Track 30% creator payouts & subscriber perks</div>
+                    <div className="text-[11px] text-slate-500">Track 30% creator payouts & follower perks</div>
                   </div>
                   <span className="text-xs font-bold text-red-600 dark:text-red-400">Active</span>
                 </div>
@@ -350,15 +381,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="text-xs font-bold text-slate-900 dark:text-white">Default Video Streaming Quality</div>
                   <div className="text-[11px] text-slate-500">Preferred playback resolution on Wi-Fi and high-speed broadband</div>
                 </div>
-                <div className="grid grid-cols-4 gap-2 pt-1">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                   {['Auto', '1080p', '1440p', '4K UHD'].map((q) => (
                     <button
                       key={q}
+                      type="button"
                       onClick={() => handleQualityChange(q)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                      className={`min-h-[40px] px-3 py-2 rounded-xl text-xs font-semibold transition-all border cursor-pointer ${
                         defaultQuality === q
-                          ? 'border-red-500 bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400'
-                          : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          ? 'border-red-500 bg-red-500/10 text-red-500'
+                          : 'border-[var(--ink-faint)] text-[var(--ink)] hover:bg-[var(--ink-faint)]'
                       }`}
                     >
                       {q}
@@ -408,17 +440,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {/* Cloud Infrastructure & CDN Edge Status */}
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <Server className="h-3.5 w-3.5 text-purple-500" />
+                  <div className="text-xs font-bold text-[var(--ink)] flex items-center gap-1.5">
+                    <Server className="h-3.5 w-3.5 text-purple-500 shrink-0" />
                     <span>Cloud Streaming, Auto-Scale & Global CDN</span>
                   </div>
-                  <div className="text-[11px] text-slate-500">Auto-scale pods, Anycast CDN edge (285 PoPs) & HLS Transcoding</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Auto-scale pods, Anycast CDN edge (285 PoPs) & HLS Transcoding</div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setShowInfra(true)}
-                  className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-xs transition-colors shrink-0"
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-xs transition-colors shrink-0 cursor-pointer"
                 >
                   View Cloud Stats
                 </button>
@@ -436,7 +469,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    setNotifyUploads(!notifyUploads);
+                    const next = !notifyUploads;
+                    setNotifyUploads(next);
+                    localStorage.setItem('vio_pref_notify_uploads', String(next));
                     showSavedBadge();
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -458,7 +493,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    setNotifyReplies(!notifyReplies);
+                    const next = !notifyReplies;
+                    setNotifyReplies(next);
+                    localStorage.setItem('vio_pref_notify_replies', String(next));
                     showSavedBadge();
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -480,7 +517,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    setNotifyMilestones(!notifyMilestones);
+                    const next = !notifyMilestones;
+                    setNotifyMilestones(next);
+                    localStorage.setItem('vio_pref_notify_milestones', String(next));
                     showSavedBadge();
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -502,7 +541,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    setNotifySound(!notifySound);
+                    const next = !notifySound;
+                    setNotifySound(next);
+                    localStorage.setItem('vio_pref_notify_sound', String(next));
                     showSavedBadge();
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -529,7 +570,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    setSaveHistory(!saveHistory);
+                    const next = !saveHistory;
+                    setSaveHistory(next);
+                    localStorage.setItem('vio_pref_save_history', String(next));
                     showSavedBadge();
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -551,11 +594,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 {onClearHistory && (
                   <button
+                    type="button"
                     onClick={() => {
                       onClearHistory();
                       showSavedBadge('History cleared');
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-300 dark:border-rose-800/60 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                    className="min-h-[40px] flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-rose-500/40 text-xs font-semibold text-rose-500 hover:bg-rose-500/10 shrink-0 cursor-pointer"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Clear All
@@ -570,7 +614,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    setRestrictedMode(!restrictedMode);
+                    const next = !restrictedMode;
+                    setRestrictedMode(next);
+                    localStorage.setItem('vio_pref_restricted_mode', String(next));
                     showSavedBadge();
                   }}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${

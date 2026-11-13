@@ -44,6 +44,7 @@ import {
 import { db, auth, storage } from '../firebase';
 import { VideoItem, Channel, Comment, ReelItem, ReelComment, NotificationItem } from '../types/video';
 import { INITIAL_VIDEOS, CHANNELS, INITIAL_REELS, CATEGORIES } from '../data/mockData';
+import { sanitizePlayableVideoUrl } from './streamingService';
 
 // ----------------------------------------------------
 // Error Handling conforming to Firebase Skill Guidelines
@@ -234,8 +235,9 @@ export function subscribeVideos(
         const data = d.data();
 
         // 2. बिना URL वाले अधूरे/ड्राफ्ट वीडियो छोड़ें
-        const videoUrl = typeof data.url === 'string' ? data.url.trim() : '';
-        if (!videoUrl) return;
+        const rawUrl = typeof data.url === 'string' ? data.url.trim() : '';
+        if (!rawUrl) return;
+        const videoUrl = sanitizePlayableVideoUrl(rawUrl, d.id, 'video', true);
 
         // 3. Private वीडियो केवल उसके मालिक और अधिकृत Custom Claim Admin को दिखें
         const isPrivate = data.visibility === 'private';
@@ -262,6 +264,9 @@ export function subscribeVideos(
           tags: Array.isArray(data.tags) ? data.tags : [],
           isTrending: data.isTrending ?? false,
           visibility: data.visibility || 'public',
+          hideLikes: data.hideLikes ?? false,
+          commentsControl: data.commentsControl || 'allow_all',
+          ageRestricted: data.ageRestricted ?? false,
           createdAt: getCreatedAtMillis(data.createdAt),
           streamQualities: data.streamQualities,
           hlsManifestUrl: data.hlsManifestUrl,
@@ -276,7 +281,7 @@ export function subscribeVideos(
       callback(vids, lastDoc);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, COLLECTIONS.VIDEOS);
+      console.warn(`Firestore listener warning (${COLLECTIONS.VIDEOS}):`, error?.message || error);
     }
   );
 }
@@ -337,8 +342,9 @@ export async function fetchMoreVideos(
 
   snap.forEach((d) => {
     const data = d.data();
-    const videoUrl = typeof data.url === 'string' ? data.url.trim() : '';
-    if (!videoUrl) return;
+    const rawUrl = typeof data.url === 'string' ? data.url.trim() : '';
+    if (!rawUrl) return;
+    const videoUrl = sanitizePlayableVideoUrl(rawUrl, d.id, 'video', true);
 
     const isPrivate = data.visibility === 'private';
     const isOwner = Boolean(currentUid && (data.ownerId === currentUid || data.userId === currentUid));
@@ -360,6 +366,9 @@ export async function fetchMoreVideos(
       tags: Array.isArray(data.tags) ? data.tags : [],
       isTrending: data.isTrending ?? false,
       visibility: data.visibility || 'public',
+      hideLikes: data.hideLikes ?? false,
+      commentsControl: data.commentsControl || 'allow_all',
+      ageRestricted: data.ageRestricted ?? false,
       createdAt: getCreatedAtMillis(data.createdAt),
       streamQualities: data.streamQualities,
       hlsManifestUrl: data.hlsManifestUrl,
@@ -406,6 +415,9 @@ export async function addVideoDoc(video: VideoItem): Promise<void> {
     tags: video.tags || [],
     isTrending: video.isTrending ?? false,
     visibility: video.visibility || 'public',
+    hideLikes: video.hideLikes ?? false,
+    commentsControl: video.commentsControl || 'allow_all',
+    ageRestricted: video.ageRestricted ?? false,
     status: 'published',
     createdAt: Date.now(),
     streamQualities: video.streamQualities || [],
@@ -462,6 +474,26 @@ export async function backfillLegacyVideosVisibility(): Promise<{ updated: numbe
   }
 }
 
+export async function updateVideoDoc(
+  videoId: string,
+  updates: Partial<VideoItem>
+): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    const cleanUpdates: Record<string, any> = {};
+    if (updates.title !== undefined) cleanUpdates.title = updates.title;
+    if (updates.description !== undefined) cleanUpdates.description = updates.description;
+    if (updates.category !== undefined) cleanUpdates.category = updates.category;
+    if (updates.visibility !== undefined) cleanUpdates.visibility = updates.visibility;
+    if (updates.poster !== undefined) cleanUpdates.poster = updates.poster;
+    if (updates.tags !== undefined) cleanUpdates.tags = updates.tags;
+
+    await updateDoc(doc(db, COLLECTIONS.VIDEOS, videoId), cleanUpdates);
+  } catch (error) {
+    console.warn(`Could not sync video update for ${videoId} to Firestore:`, error);
+  }
+}
+
 export async function deleteVideoDoc(videoId: string): Promise<void> {
   const path = `${COLLECTIONS.VIDEOS}/${videoId}`;
   try {
@@ -488,7 +520,7 @@ export function subscribeReels(callback: (reels: ReelItem[]) => void): Unsubscri
           id: d.id,
           title: data.title || '',
           description: data.description || '',
-          videoUrl: data.videoUrl || '',
+          videoUrl: sanitizePlayableVideoUrl(data.videoUrl, d.id, 'reel', true),
           poster: data.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80',
           channelId: data.channelId || 'channel-blender',
           views: data.views || 0,
@@ -502,15 +534,19 @@ export function subscribeReels(callback: (reels: ReelItem[]) => void): Unsubscri
       callback(reelList);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, COLLECTIONS.REELS);
+      console.warn(`Firestore listener warning (${COLLECTIONS.REELS}):`, error?.message || error);
     }
   );
 }
 
 export async function addReelDoc(reel: ReelItem): Promise<void> {
+  const currentUser = auth.currentUser;
+  if (!currentUser?.uid) {
+    throw new Error('Please sign in with Google to publish reels to cloud.');
+  }
   const reelId = reel.id || `reel-${Date.now()}`;
   const path = `${COLLECTIONS.REELS}/${reelId}`;
-  const ownerId = auth.currentUser?.uid || 'anonymous-creator';
+  const ownerId = currentUser.uid;
 
   const docData = {
     id: reelId,
@@ -569,7 +605,7 @@ export function subscribeComments(
       callback(comms);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, `${COLLECTIONS.COMMENTS}?targetId=${targetId}`);
+      console.warn(`Firestore listener warning (${COLLECTIONS.COMMENTS}?targetId=${targetId}):`, error?.message || error);
     }
   );
 }
@@ -578,9 +614,10 @@ export async function addCommentDoc(
   targetId: string,
   content: string,
   authorName: string,
-  authorAvatar: string
+  authorAvatar: string,
+  customId?: string
 ): Promise<void> {
-  const commentId = `comment-${Date.now()}`;
+  const commentId = customId || `comment-${Date.now()}`;
   const path = `${COLLECTIONS.COMMENTS}/${commentId}`;
   const userId = auth.currentUser?.uid || 'guest';
 
@@ -602,6 +639,15 @@ export async function addCommentDoc(
     await setDoc(doc(db, COLLECTIONS.COMMENTS, commentId), docData);
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function deleteCommentDoc(commentId: string): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.COMMENTS, commentId));
+  } catch (error) {
+    console.warn(`Could not delete comment ${commentId}:`, error);
   }
 }
 
@@ -746,6 +792,10 @@ export function subscribeNotifications(
   userId: string,
   callback: (notifications: NotificationItem[]) => void
 ): Unsubscribe {
+  if (!auth.currentUser || auth.currentUser.uid !== userId) {
+    return () => {};
+  }
+
   const colRef = collection(db, COLLECTIONS.NOTIFICATIONS);
   const q = query(colRef, where('userId', '==', userId), limit(30));
 
@@ -772,7 +822,11 @@ export function subscribeNotifications(
       callback(items);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, `${COLLECTIONS.NOTIFICATIONS}?userId=${userId}`);
+      if (!auth.currentUser) {
+        console.warn('Notifications subscription skipped: user not signed into Firebase Auth.');
+        return;
+      }
+      console.warn(`Firestore listener warning (${COLLECTIONS.NOTIFICATIONS}):`, error?.message || error);
     }
   );
 }
@@ -1074,6 +1128,75 @@ export async function uploadFileToStorage(
       }
     );
   });
+}
+
+/**
+ * Shared image asset processor & uploader for profile avatars, banners, and video thumbnails.
+ * Uploads directly to Firebase Storage when Firebase Auth is active; otherwise compresses
+ * cleanly on canvas into a persistent Data URL for local/offline sessions.
+ */
+export async function compressImageToDataUrl(
+  file: File,
+  maxWidth: number = 960,
+  quality: number = 0.82
+): Promise<string> {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Please select a valid image file (PNG, JPG, WebP, or GIF).');
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the selected image file.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Selected file could not be decoded as an image.'));
+      img.onload = () => {
+        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+        const width = Math.max(1, Math.round(img.width * scale));
+        const height = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Image processing canvas is unavailable.'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function uploadImageAsset(
+  file: File,
+  folder: 'profileImages' | 'thumbnails' = 'thumbnails',
+  onProgress?: (progressPct: number) => void
+): Promise<{ url: string; storage: 'cloud' | 'local' }> {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Please choose a valid image file (.jpg, .png, .webp).');
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error(`Image file (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 5 MB maximum limit.`);
+  }
+
+  if (auth.currentUser?.uid) {
+    const downloadUrl = await uploadFileToStorage(
+      file,
+      folder,
+      (pct) => onProgress?.(pct),
+      { visibility: 'public' }
+    );
+    return { url: downloadUrl, storage: 'cloud' };
+  }
+
+  const maxWidth = folder === 'profileImages' ? 512 : 1280;
+  const dataUrl = await compressImageToDataUrl(file, maxWidth, 0.8);
+  onProgress?.(100);
+  return { url: dataUrl, storage: 'local' };
 }
 
 // ----------------------------------------------------

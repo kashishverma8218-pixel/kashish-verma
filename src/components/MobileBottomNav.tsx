@@ -18,24 +18,24 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   return (
     <nav
       aria-label="Mobile Navigation"
-      className="fixed bottom-0 inset-x-0 z-40 md:hidden border-t border-slate-200/90 bg-white/95 backdrop-blur-xl px-2 py-1.5 shadow-2xl dark:border-slate-800/90 dark:bg-slate-950/95 transition-colors"
+      className="fixed bottom-0 inset-x-0 z-40 md:hidden border-t border-[var(--ink-faint)] bg-[var(--bg)]/95 backdrop-blur-xl px-2 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] transition-colors"
     >
       <div className="flex items-center justify-around max-w-md mx-auto">
         {/* 1. Home Tab */}
         <button
           onClick={() => onNavigate('home')}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 min-w-[56px] min-h-[48px] rounded-2xl transition-all ${
+          className={`flex flex-col items-center justify-center py-1 px-2 min-w-[56px] min-h-[46px] rounded-lg transition-colors ${
             currentPage === 'home'
-              ? 'text-red-600 dark:text-red-500 font-bold bg-red-500/10'
-              : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 font-medium'
+              ? 'text-[var(--ink)] font-semibold'
+              : 'text-[var(--ink-medium)] hover:text-[var(--ink)] font-medium'
           }`}
         >
           <Home
-            className={`h-5 w-5 transition-transform ${
-              currentPage === 'home' ? 'scale-110 text-red-600 dark:text-red-500 fill-red-600/20' : ''
+            className={`h-5 w-5 ${
+              currentPage === 'home' ? 'text-[var(--ink)]' : ''
             }`}
           />
-          <span className="mt-1.5 text-[10px] tracking-tight leading-none font-semibold">
+          <span className="mt-1 text-[10px] leading-none">
             Home
           </span>
         </button>
@@ -43,52 +43,49 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
         {/* 2. Reels Tab */}
         <button
           onClick={() => onNavigate('reels')}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 min-w-[56px] min-h-[48px] rounded-2xl transition-all ${
+          className={`flex flex-col items-center justify-center py-1 px-2 min-w-[56px] min-h-[46px] rounded-lg transition-colors ${
             currentPage === 'reels'
-              ? 'text-red-600 dark:text-red-500 font-bold bg-red-500/10'
-              : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 font-medium'
+              ? 'text-[var(--ink)] font-semibold'
+              : 'text-[var(--ink-medium)] hover:text-[var(--ink)] font-medium'
           }`}
         >
           <Sparkles
-            className={`h-5 w-5 transition-transform ${
-              currentPage === 'reels' ? 'scale-110 text-red-600 dark:text-red-500' : ''
+            className={`h-5 w-5 ${
+              currentPage === 'reels' ? 'text-[var(--ink)]' : ''
             }`}
           />
-          <span className="mt-1.5 text-[10px] tracking-tight leading-none font-semibold">
+          <span className="mt-1 text-[10px] leading-none">
             Reels
           </span>
         </button>
 
-        {/* 3. Center Create Action */}
+        {/* 3. Center + Create Action */}
         <button
           onClick={onOpenCreate}
           aria-label="Create Content"
           title="Create Content"
-          className="flex flex-col items-center justify-center group active:scale-95 transition-transform px-2 py-0.5"
+          className="flex flex-col items-center justify-center active:scale-95 transition-transform px-2 py-0.5 min-w-[56px] min-h-[46px]"
         >
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-tr from-red-600 via-rose-600 to-red-500 text-white shadow-lg shadow-red-600/30 ring-2 ring-white/30 dark:ring-black/40 group-hover:scale-105 transition-all">
-            <Plus className="h-5 w-5 stroke-[2.75] text-white" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--card-hover)] border border-[var(--ink-faint)] text-[var(--ink)] transition-colors">
+            <Plus className="h-5 w-5" />
           </div>
-          <span className="mt-1 text-[9px] font-bold text-red-600 dark:text-red-400 tracking-tight leading-none uppercase">
-            Create
-          </span>
         </button>
 
         {/* 4. Following Tab */}
         <button
           onClick={() => onNavigate('subscriptions')}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 min-w-[56px] min-h-[48px] rounded-2xl transition-all ${
+          className={`flex flex-col items-center justify-center py-1 px-2 min-w-[56px] min-h-[46px] rounded-lg transition-colors ${
             currentPage === 'subscriptions'
-              ? 'text-red-600 dark:text-red-500 font-bold bg-red-500/10'
-              : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 font-medium'
+              ? 'text-[var(--ink)] font-semibold'
+              : 'text-[var(--ink-medium)] hover:text-[var(--ink)] font-medium'
           }`}
         >
           <Tv
-            className={`h-5 w-5 transition-transform ${
-              currentPage === 'subscriptions' ? 'scale-110 text-red-600 dark:text-red-500' : ''
+            className={`h-5 w-5 ${
+              currentPage === 'subscriptions' ? 'text-[var(--ink)]' : ''
             }`}
           />
-          <span className="mt-1.5 text-[10px] tracking-tight leading-none font-semibold">
+          <span className="mt-1 text-[10px] leading-none">
             Following
           </span>
         </button>
@@ -96,18 +93,18 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
         {/* 5. Studio Tab */}
         <button
           onClick={onOpenStudio}
-          className={`flex flex-col items-center justify-center py-1 px-2.5 min-w-[56px] min-h-[48px] rounded-2xl transition-all ${
+          className={`flex flex-col items-center justify-center py-1 px-2 min-w-[56px] min-h-[46px] rounded-lg transition-colors ${
             currentPage === 'studio'
-              ? 'text-red-600 dark:text-red-500 font-bold bg-red-500/10'
-              : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 font-medium'
+              ? 'text-[var(--ink)] font-semibold'
+              : 'text-[var(--ink-medium)] hover:text-[var(--ink)] font-medium'
           }`}
         >
           <LayoutDashboard
-            className={`h-5 w-5 transition-transform ${
-              currentPage === 'studio' ? 'scale-110 text-red-600 dark:text-red-500' : ''
+            className={`h-5 w-5 ${
+              currentPage === 'studio' ? 'text-[var(--ink)]' : ''
             }`}
           />
-          <span className="mt-1.5 text-[10px] tracking-tight leading-none font-semibold">
+          <span className="mt-1 text-[10px] leading-none">
             Studio
           </span>
         </button>

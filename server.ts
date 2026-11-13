@@ -116,7 +116,7 @@ async function startServer() {
     const qualities = STREAM_LADDER.map((item) => ({
       ...item,
       streamUrl: `/api/stream/segment/${videoId}/${encodeURIComponent(item.label)}`,
-      fallbackUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+      fallbackUrl: 'https://media.w3.org/2010/05/bunny/movie.mp4',
     }));
 
     if (format === 'hls' || format === 'm3u8') {
@@ -139,7 +139,7 @@ async function startServer() {
       reconnectStrategy: {
         maxRetries: 5,
         backoffMultiplier: 1.5,
-        failoverCdn: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/',
+        failoverCdn: 'https://media.w3.org/2010/05/bunny/',
       },
     });
   });
@@ -150,7 +150,7 @@ async function startServer() {
     const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
     const effectiveVideoId = videoId || `video_${Date.now()}`;
-    const effectiveSource = sourceUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+    const effectiveSource = sourceUrl || 'https://media.w3.org/2010/05/bunny/movie.mp4';
 
     const job = {
       id: jobId,

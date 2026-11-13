@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { CheckCircle2, MoreVertical, Clock, Share2, Play, Copy, Check } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { MoreVertical, Clock, Share2, Copy, Check, CheckCircle2 } from 'lucide-react';
 import { VideoItem, Channel } from '../types/video';
 import { formatTime } from '../utils/formatTime';
 import { formatViews } from '../data/mockData';
@@ -21,7 +21,6 @@ function formatVideoTitle(title: string): string {
   if (!cleaned.includes(' ') && (cleaned.includes('_') || cleaned.includes('-'))) {
     cleaned = cleaned.replace(/[-_]+/g, ' ');
   }
-  // Capitalize clean words if mostly lowercased
   if (cleaned === cleaned.toLowerCase()) {
     cleaned = cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -40,6 +39,27 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setAvatarFailed(false);
+  }, [channel?.avatar]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleOutside = (e: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchstart', handleOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+    };
+  }, [menuOpen]);
 
   const displayTitle = formatVideoTitle(video.title);
 
@@ -79,10 +99,10 @@ export const VideoCard: React.FC<VideoCardProps> = ({
 
   return (
     <div className="group relative flex flex-col cursor-pointer">
-      {/* Thumbnail Area with High Contrast Scrim */}
+      {/* YouTube-style Borderless Rounded-XL Thumbnail */}
       <div
         onClick={() => onPlay(video)}
-        className="relative aspect-video w-full overflow-hidden rounded-2xl bg-slate-900 shadow-xs ring-1 ring-black/5 dark:ring-white/10"
+        className="relative aspect-video w-full overflow-hidden rounded-xl bg-[var(--thumb-bg)]"
       >
         <img
           src={video.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80'}
@@ -95,36 +115,39 @@ export const VideoCard: React.FC<VideoCardProps> = ({
               target.src = fallback;
             }
           }}
-          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
         />
 
-        {/* Contrast Scrim on bottom of thumbnail to guarantee text contrast */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
+        {/* Quick Watch Later Button on Thumbnail Hover */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleWatchLater(video.id);
+          }}
+          title={isWatchLater ? 'Remove from Watch later' : 'Watch later'}
+          aria-label={isWatchLater ? 'Remove from Watch later' : 'Watch later'}
+          className="absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/80 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black"
+        >
+          {isWatchLater ? <Check className="h-4 w-4 text-[#FF0000]" /> : <Clock className="h-4 w-4" />}
+        </button>
 
-        {/* Hover subtle Play Icon */}
-        <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-black/75 text-white shadow-xl backdrop-blur-xs ring-1 ring-white/20">
-            <Play className="h-5 w-5 fill-white ml-0.5" />
-          </div>
-        </div>
-
-        {/* High-Contrast Duration Badge (WCAG AA Compliant) */}
-        <div className="absolute bottom-2 right-2 rounded-md bg-black/90 px-2 py-0.5 text-[11px] font-mono font-semibold text-white shadow-md ring-1 ring-white/20 backdrop-blur-xs">
+        {/* Bottom-Right Duration Timestamp */}
+        <div className="absolute bottom-2 right-2 bg-black/80 px-1.5 py-0.5 text-xs font-semibold text-white tabular-nums rounded-[4px] leading-tight">
           {formatTime(video.duration)}
         </div>
 
-        {/* Watch Progress Bar */}
+        {/* Red Watch Progress Bar */}
         {watchProgress > 0 && (
-          <div className="absolute bottom-0 inset-x-0 h-1 bg-white/30">
+          <div className="absolute bottom-0 inset-x-0 h-1 bg-white/25">
             <div
-              className="h-full bg-red-600 shadow-xs"
+              className="h-full bg-[#FF0000]"
               style={{ width: `${Math.min(100, watchProgress * 100)}%` }}
             />
           </div>
         )}
       </div>
 
-      {/* Metadata Row */}
+      {/* Card Body: 36px Avatar | 3-Line Stack | 3-Dot Menu */}
       <div className="mt-3 flex items-start gap-3">
         {/* Channel Avatar */}
         <button
@@ -132,57 +155,60 @@ export const VideoCard: React.FC<VideoCardProps> = ({
             e.stopPropagation();
             onSelectChannel(video.channelId);
           }}
-          className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full ring-1 ring-slate-200 dark:ring-slate-700 hover:opacity-80 transition-opacity focus:outline-none"
+          aria-label={`Visit ${channel?.name || 'creator'} channel`}
+          className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full bg-[var(--thumb-bg)] transition-opacity hover:opacity-90 focus:outline-none"
         >
-          {channel?.avatar ? (
+          {channel?.avatar && !avatarFailed ? (
             <img
               src={channel.avatar}
               alt={channel.name}
+              referrerPolicy="no-referrer"
+              onError={() => setAvatarFailed(true)}
               className="h-full w-full object-cover"
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center bg-sky-600 text-xs font-bold text-white uppercase">
-              {displayTitle.charAt(0)}
+            <div className="flex h-full w-full items-center justify-center bg-[#FF0000] text-xs font-bold text-white uppercase">
+              {(channel?.name || displayTitle).charAt(0)}
             </div>
           )}
         </button>
 
-        {/* Details: Title, Channel, Views & Time */}
+        {/* Details: Title + Channel Name + Views & PublishedAt */}
         <div className="flex-1 min-w-0" onClick={() => onPlay(video)}>
-          <h3 className="line-clamp-2 text-sm font-semibold text-slate-900 group-hover:text-red-600 dark:text-white dark:group-hover:text-red-400 transition-colors leading-snug">
+          <h3 className="line-clamp-2 text-[15px] font-semibold text-[var(--ink)] leading-[1.35]">
             {displayTitle}
           </h3>
 
-          <div
+          <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onSelectChannel(video.channelId);
             }}
-            className="mt-1 flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-colors"
+            className="mt-1 flex items-center gap-1 text-[13px] text-[var(--ink-medium)] hover:text-[var(--ink)] transition-colors max-w-full"
           >
-            <span className="truncate font-medium">{channel?.name || 'Creator'}</span>
+            <span className="truncate">{channel?.name || 'Creator'}</span>
             {channel?.verified && (
-              <CheckCircle2 className="h-3.5 w-3.5 text-red-500 fill-red-500/20 shrink-0" />
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--ink-medium)]" />
             )}
-          </div>
+          </button>
 
-          {/* Clean Editorial Metadata */}
-          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-            <span className="font-medium text-slate-700 dark:text-slate-300">{formatViews(video.views)}</span>
-            <span aria-hidden="true">·</span>
-            <span>{video.publishedAt}</span>
+          <div className="text-[13px] text-[var(--ink-medium)] tabular-nums truncate">
+            <span>{formatViews(video.views)}</span>
+            <span className="mx-1" aria-hidden="true">·</span>
+            <span>{video.publishedAt || 'Recently'}</span>
           </div>
         </div>
 
         {/* 3-Dot Menu */}
-        <div className="relative shrink-0">
+        <div ref={menuRef} className="relative shrink-0">
           <button
             onClick={(e) => {
               e.stopPropagation();
               setMenuOpen(!menuOpen);
             }}
             aria-label="More options"
-            className="p-1.5 rounded-full text-slate-400 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:text-slate-600 dark:hover:text-slate-200 transition-all focus:opacity-100"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--ink-medium)] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:text-[var(--ink)] hover:bg-[var(--card-hover)] transition-all focus:opacity-100"
           >
             <MoreVertical className="h-4 w-4" />
           </button>
@@ -190,25 +216,24 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           {menuOpen && (
             <div
               onClick={(e) => e.stopPropagation()}
-              className="absolute right-0 top-6 z-30 w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl transition-all dark:border-slate-800 dark:bg-slate-900 text-xs"
+              className="absolute right-0 top-9 z-30 w-52 rounded-xl border border-[var(--ink-faint)] bg-[var(--surface-elevated)] p-1.5 shadow-xl transition-all text-xs"
             >
-              {/* Copy Link Button */}
               <button
                 onClick={handleCopyLink}
-                className="flex w-full items-center gap-2 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors font-medium"
+                className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-[var(--ink)]/90 hover:bg-[var(--card-hover)] transition-colors font-medium"
               >
-                {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5 text-slate-400" />}
-                <span className={copied ? 'text-emerald-500 font-bold' : ''}>
-                  {copied ? 'Link Copied!' : 'Copy Video Link'}
+                {copied ? <Check className="h-4 w-4 text-[var(--accent-ink)]" /> : <Copy className="h-4 w-4 text-[var(--ink-medium)]" />}
+                <span className={copied ? 'text-[var(--accent-ink)] font-semibold' : ''}>
+                  {copied ? 'Link Copied' : 'Copy Video Link'}
                 </span>
               </button>
 
               <button
                 onClick={handleOpenShare}
-                className="flex w-full items-center gap-2 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+                className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-[var(--ink)]/90 hover:bg-[var(--card-hover)] transition-colors"
               >
-                <Share2 className="h-3.5 w-3.5 text-slate-400" />
-                <span>Share & Embed Options</span>
+                <Share2 className="h-4 w-4 text-[var(--ink-medium)]" />
+                <span>Share</span>
               </button>
 
               <button
@@ -216,17 +241,16 @@ export const VideoCard: React.FC<VideoCardProps> = ({
                   onToggleWatchLater(video.id);
                   setMenuOpen(false);
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+                className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-[var(--ink)]/90 hover:bg-[var(--card-hover)] transition-colors"
               >
-                <Clock className="h-3.5 w-3.5 text-slate-400" />
-                <span>{isWatchLater ? 'Remove Watch Later' : 'Save to Watch Later'}</span>
+                <Clock className="h-4 w-4 text-[var(--ink-medium)]" />
+                <span>{isWatchLater ? 'Remove from Watch later' : 'Save to Watch later'}</span>
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Share Modal Dialog */}
       <ShareModal
         isOpen={shareModalOpen}
         onClose={() => setShareModalOpen(false)}

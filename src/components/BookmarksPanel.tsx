@@ -46,36 +46,38 @@ export const BookmarksPanel: React.FC<BookmarksPanelProps> = ({
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+    <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-4 sm:p-5 shadow-xs transition-colors">
+      <div className="flex items-center justify-between pb-3.5 border-b border-[var(--ink-faint)]">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/15 text-amber-500">
             <BookmarkIcon className="h-4 w-4" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+            <h3 className="text-sm font-bold text-[var(--ink)]">
               Video Markers & Notes
             </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-[var(--ink-medium)]">
               {currentBookmarks.length} saved {currentBookmarks.length === 1 ? 'bookmark' : 'bookmarks'}
             </p>
           </div>
         </div>
 
         {currentBookmarks.length > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
+              type="button"
               onClick={exportBookmarks}
               title="Export Bookmarks as JSON"
-              className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors"
+              className="flex min-h-[34px] items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-[var(--ink-medium)] hover:bg-[var(--bg)] hover:text-[var(--ink)] transition-colors"
             >
               <Download className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Export</span>
             </button>
             <button
+              type="button"
               onClick={onClearAllBookmarks}
               title="Clear all"
-              className="rounded-lg px-2.5 py-1 text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+              className="min-h-[34px] rounded-lg px-2.5 py-1 text-xs font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
             >
               Clear
             </button>
@@ -84,25 +86,25 @@ export const BookmarksPanel: React.FC<BookmarksPanelProps> = ({
       </div>
 
       {currentBookmarks.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-10 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 mb-3">
-            <Clock className="h-6 w-6" />
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--bg)] border border-[var(--ink-faint)] text-[var(--ink-medium)] mb-3">
+            <Clock className="h-5 w-5" />
           </div>
-          <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+          <p className="text-sm font-semibold text-[var(--ink)]">
             No bookmarks created yet
           </p>
-          <p className="mt-1 max-w-xs text-xs text-slate-500 dark:text-slate-400">
+          <p className="mt-1 max-w-xs text-xs text-[var(--ink-medium)]">
             Click the <span className="font-semibold text-amber-500">Bookmark</span> button or press{' '}
-            <kbd className="rounded bg-slate-200 px-1 py-0.5 font-mono text-[10px] dark:bg-slate-800">B</kbd> while
+            <kbd className="rounded bg-[var(--bg)] border border-[var(--ink-faint)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ink)]">B</kbd> while
             playing to save key timestamps with notes.
           </p>
         </div>
       ) : (
-        <div className="mt-4 space-y-2.5 max-h-[360px] overflow-y-auto pr-1">
+        <div className="mt-3.5 space-y-2.5 max-h-[320px] overflow-y-auto pr-1">
           {currentBookmarks.map((bm) => (
             <div
               key={bm.id}
-              className="group flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-2.5 transition-all hover:border-slate-200 hover:bg-slate-100 dark:border-slate-800/80 dark:bg-slate-800/40 dark:hover:border-slate-700 dark:hover:bg-slate-800"
+              className="group flex items-center justify-between gap-3 rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] p-2.5 transition-all hover:border-[var(--ink-medium)]/40"
             >
               <div className="flex items-center gap-3 min-w-0">
                 {/* Thumbnail or Fallback */}
@@ -146,18 +148,20 @@ export const BookmarksPanel: React.FC<BookmarksPanelProps> = ({
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-baseline gap-2">
+                    <div className="flex items-center gap-1.5">
                       <h4
                         onClick={() => onJumpToTime(bm.time)}
-                        className="cursor-pointer text-xs font-semibold text-slate-900 hover:text-sky-600 dark:text-white dark:hover:text-sky-400 truncate"
+                        className="cursor-pointer text-xs font-semibold text-[var(--ink)] hover:text-[var(--accent-ink)] truncate"
                       >
                         {bm.label}
                       </h4>
                       <button
+                        type="button"
                         onClick={() => startEdit(bm)}
-                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-opacity"
+                        aria-label="Rename bookmark"
+                        className="p-1 rounded text-[var(--ink-medium)] hover:text-[var(--ink)] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
                       >
-                        <Edit2 className="h-3 w-3" />
+                        <Edit2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   )}
@@ -168,18 +172,22 @@ export const BookmarksPanel: React.FC<BookmarksPanelProps> = ({
               </div>
 
               {/* Actions */}
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
+                  type="button"
                   onClick={() => onJumpToTime(bm.time)}
                   title="Jump to time"
-                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-slate-700 shadow-xs hover:bg-sky-50 hover:text-sky-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 transition-colors"
+                  aria-label="Jump to time"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink)] hover:border-[var(--accent-ink)] hover:text-[var(--accent-ink)] transition-colors"
                 >
                   <Play className="h-3.5 w-3.5 fill-current" />
                 </button>
                 <button
+                  type="button"
                   onClick={() => onDeleteBookmark(bm.id)}
                   title="Delete bookmark"
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950/30 transition-colors"
+                  aria-label="Delete bookmark"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--ink-medium)] hover:bg-rose-500/10 hover:text-rose-500 transition-colors"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

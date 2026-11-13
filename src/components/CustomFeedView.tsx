@@ -145,57 +145,53 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
           </div>
         </div>
 
-        {/* Algorithm Tuning Modes (with 24dp icons) */}
+        {/* Algorithm Tuning Modes */}
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1">
           <button
             onClick={() => setAlgoMode('smart')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-2 min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
               algoMode === 'smart'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
             }`}
           >
-            {/* 24dp icon */}
-            <Sparkles className="h-6 w-6 shrink-0" />
+            <Sparkles className="h-4 w-4 shrink-0" />
             <span>Smart Affinity</span>
           </button>
 
           <button
             onClick={() => setAlgoMode('viral')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-2 min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
               algoMode === 'viral'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
             }`}
           >
-            {/* 24dp icon */}
-            <Flame className="h-6 w-6 shrink-0" />
+            <Flame className="h-4 w-4 shrink-0" />
             <span>Velocity Surge</span>
           </button>
 
           <button
             onClick={() => setAlgoMode('fresh')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-2 min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
               algoMode === 'fresh'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
             }`}
           >
-            {/* 24dp icon */}
-            <Clock className="h-6 w-6 shrink-0" />
+            <Clock className="h-4 w-4 shrink-0" />
             <span>Fresh Drops</span>
           </button>
 
           <button
             onClick={() => setAlgoMode('underrated')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-2 min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
               algoMode === 'underrated'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
             }`}
           >
-            {/* 24dp icon */}
-            <Compass className="h-6 w-6 shrink-0" />
+            <Compass className="h-4 w-4 shrink-0" />
             <span>Hidden Gems</span>
           </button>
         </div>
@@ -203,9 +199,8 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
 
       {/* Filter Chips */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-        <span className="flex items-center gap-1.5 font-bold text-slate-400 uppercase tracking-wider text-[11px] shrink-0 mr-1">
-          {/* 24dp icon */}
-          <SlidersHorizontal className="h-6 w-6 text-purple-500" />
+        <span className="flex items-center gap-1.5 font-bold text-[var(--ink-medium)] uppercase tracking-wider text-[11px] shrink-0 mr-1">
+          <SlidersHorizontal className="h-4 w-4 text-purple-500" />
           Filter:
         </span>
         {['all', 'Animation', 'Sci-Fi', 'Film', 'Tutorial', 'Technology'].map((cat) => (
@@ -225,19 +220,17 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
 
       {/* Video Grid */}
       {visibleVideos.length === 0 ? (
-        <div className="py-20 text-center text-slate-400">
-          {/* 24dp icon */}
-          <Film className="h-6 w-6 mx-auto mb-2 text-purple-500" />
-          <p className="text-base font-bold text-slate-800 dark:text-slate-200">
+        <div className="py-20 text-center text-[var(--ink-medium)]">
+          <Film className="h-8 w-8 mx-auto mb-2 text-purple-500" />
+          <p className="text-base font-bold text-[var(--ink)]">
             No videos match the current algorithmic criteria
           </p>
-          <p className="text-xs text-slate-500 mt-1">Try switching to Smart Affinity or clear filters.</p>
+          <p className="text-xs text-[var(--ink-medium)] mt-1">Try switching to Smart Affinity or clear filters.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
           {visibleVideos.map((video, idx) => (
             <div key={video.id} className="relative group">
-              {/* Algorithmic Rank Badge with 24dp icon */}
               <div className="absolute top-2 left-2 z-20 flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-900/80 backdrop-blur-md text-white text-[10px] font-bold shadow-md">
                 <Sparkles className="h-3 w-3 text-amber-300" />
                 <span>Rank #{idx + 1}</span>
@@ -259,23 +252,20 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
       <div ref={loadMoreRef} className="py-6 flex flex-col items-center justify-center">
         {isLoadingMore ? (
           <div className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-300 text-xs font-bold border border-purple-200 dark:border-purple-800/50 animate-pulse">
-            {/* 24dp icon */}
-            <RefreshCw className="h-6 w-6 animate-spin" />
+            <RefreshCw className="h-4 w-4 animate-spin" />
             <span>Calculating next algorithmic recommendations...</span>
           </div>
         ) : visibleCount < scoredVideos.length ? (
           <button
             onClick={handleLoadMore}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-slate-100 hover:bg-purple-600 hover:text-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold transition-all shadow-xs group"
+            className="flex items-center gap-2 min-h-[42px] px-6 py-2.5 rounded-2xl bg-[var(--surface)] border border-[var(--ink-faint)] hover:bg-purple-600 hover:text-white text-[var(--ink)] text-xs font-bold transition-all shadow-xs group"
           >
-            {/* 24dp icon */}
-            <TrendingUp className="h-6 w-6 text-purple-500 group-hover:text-white transition-colors" />
+            <TrendingUp className="h-4 w-4 text-purple-500 group-hover:text-white transition-colors" />
             <span>Load More ({scoredVideos.length - visibleCount} remaining)</span>
           </button>
         ) : (
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            {/* 24dp icon */}
-            <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+          <div className="flex items-center gap-2 text-xs text-[var(--ink-medium)]">
+            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             <span>You've explored all algorithmic recommendations for now</span>
           </div>
         )}

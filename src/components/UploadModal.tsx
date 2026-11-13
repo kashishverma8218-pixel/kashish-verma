@@ -3,6 +3,7 @@ import { X, Upload, Link as LinkIcon, Film, CheckCircle2, AlertCircle, Sliders }
 import { VideoItem } from '../types/video';
 import { formatFileSize } from '../utils/formatTime';
 import { UploadManager, UploadManagerUnifiedState } from './UploadManager';
+import { DEFAULT_PLAYABLE_VIDEO_URL } from '../services/streamingService';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -64,7 +65,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({ isOpen, onClose, onAdd
       id: `upload-${Date.now()}`,
       title: managerState.title.value.trim() || 'Vio Studio Production',
       description: `Uploaded via Vio Studio. Visibility: ${managerState.privacy.visibility}.`,
-      url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+      url: DEFAULT_PLAYABLE_VIDEO_URL,
       poster: fallbackPoster,
       channelId: 'channel-blender',
       author: 'Creator Studio',

@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Upload,
-  Film,
   Link as LinkIcon,
   CheckCircle2,
   AlertCircle,
@@ -13,80 +12,99 @@ import {
   Sparkles,
   ArrowRight,
   ArrowLeft,
-  Pause,
-  Play,
-  RotateCcw,
-  Sliders,
   Bell,
   MessageSquare,
   ThumbsUp,
   ShieldCheck,
-  Calendar,
-  Clock,
-  Radio,
   FileVideo,
-  Layers,
-  HelpCircle,
   Zap,
-  Loader2
+  Loader2,
+  Copy,
+  ImagePlus,
+  RefreshCw,
+  LogIn
 } from 'lucide-react';
-import { VideoItem, Channel } from '../types/video';
+import { VideoItem, ReelItem, Channel } from '../types/video';
 import { CATEGORIES } from '../data/mockData';
 import { formatFileSize, formatTime } from '../utils/formatTime';
 import { buildStreamLadder, triggerCloudTranscoding } from '../services/streamingService';
-import { addVideoDoc, uploadFileToStorage } from '../services/firebaseDatabaseService';
+import { addVideoDoc, addReelDoc, uploadFileToStorage, uploadImageAsset } from '../services/firebaseDatabaseService';
 import { useAuth } from '../context/AuthContext';
+import { auth } from '../firebase';
 
 interface VideoUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   onPublishVideo: (newVideo: VideoItem) => void;
+  onPublishReel?: (newReel: ReelItem) => void;
+  defaultTarget?: 'video' | 'reel';
   channels: Channel[];
+  onOpenAuth?: () => void;
 }
 
-export type UploadPhase = 'idle' | 'uploading' | 'transcoding' | 'checking' | 'completed';
+export type UploadPhase = 'idle' | 'staged' | 'uploading' | 'transcoding' | 'checking' | 'completed';
+type WizardStep = 'details' | 'elements' | 'checks' | 'visibility';
+
+const STEPS: { id: WizardStep; label: string; number: number }[] = [
+  { id: 'details', label: 'Details', number: 1 },
+  { id: 'elements', label: 'Video elements', number: 2 },
+  { id: 'checks', label: 'Checks', number: 3 },
+  { id: 'visibility', label: 'Visibility', number: 4 },
+];
 
 export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
   isOpen,
   onClose,
   onPublishVideo,
+  onPublishReel,
+  defaultTarget = 'video',
   channels,
+  onOpenAuth,
 }) => {
-  const { currentUser } = useAuth();
-  const [activeTab, setActiveTab] = useState<'upload' | 'details' | 'privacy' | 'checks'>('upload');
-  const [sourceType, setSourceType] = useState<'file' | 'url'>('url');
+  const { currentUser, isFirebaseAuthenticated, signInWithGoogle } = useAuth();
+  const [signingInGoogle, setSigningInGoogle] = useState(false);
+  const [publishTarget, setPublishTarget] = useState<'video' | 'reel'>(defaultTarget);
+  const [activeStep, setActiveStep] = useState<WizardStep>('details');
+  const [showUrlInput, setShowUrlInput] = useState<boolean>(false);
+  const [sourceType, setSourceType] = useState<'file' | 'url'>('file');
   const [file, setFile] = useState<File | null>(null);
   const [url, setUrl] = useState('');
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState('');
   const [videoDuration, setVideoDuration] = useState<number>(120);
-  const [videoResolution, setVideoResolution] = useState<string>('1920x1080 (1080p HD)');
+  const [videoResolution, setVideoResolution] = useState<string>('1920x1080');
+  const [copiedPreviewLink, setCopiedPreviewLink] = useState<boolean>(false);
 
   // Upload Progress & State
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>('idle');
-  const [isPaused, setIsPaused] = useState<boolean>(false);
-  const [uploadSpeed, setUploadSpeed] = useState<string>('12.4 MB/s');
-  const [uploadedBytes, setUploadedBytes] = useState<string>('0 MB');
-  const [totalBytes, setTotalBytes] = useState<string>('84.2 MB');
-  const [etaSeconds, setEtaSeconds] = useState<number>(7);
-  const progressIntervalRef = useRef<number | null>(null);
+  const [uploadSpeed, setUploadSpeed] = useState<string>('Waiting for video file');
+  const [uploadedBytes, setUploadedBytes] = useState<string>('0 B');
+  const [totalBytes, setTotalBytes] = useState<string>('—');
+  const [etaSeconds, setEtaSeconds] = useState<number>(0);
+  const [thumbStorageMode, setThumbStorageMode] = useState<'cloud' | 'local' | null>(null);
+  const [isGeneratingThumbs, setIsGeneratingThumbs] = useState<boolean>(false);
+  const [thumbGenerationStatus, setThumbGenerationStatus] = useState<'idle' | 'generating' | 'generated' | 'fallback'>('idle');
+  const [publishSuccessMessage, setPublishSuccessMessage] = useState<string | null>(null);
 
   // Video Details
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Animation');
-  const [channelId, setChannelId] = useState(channels[0]?.id || 'channel-blender');
+  const preferredChannelId =
+    channels.find((c) => currentUser?.uid && c.id === `channel-${currentUser.uid}`)?.id ||
+    channels[0]?.id ||
+    'channel-blender';
+  const [channelId, setChannelId] = useState(preferredChannelId);
 
   // Thumbnails
-  const [autoThumbnails, setAutoThumbnails] = useState<string[]>([
+  const DEFAULT_THUMBS = [
     'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1200&q=80',
-  ]);
-  const [selectedPoster, setSelectedPoster] = useState<string>(
-    'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80'
-  );
+  ];
+  const [autoThumbnails, setAutoThumbnails] = useState<string[]>(DEFAULT_THUMBS);
+  const [selectedPoster, setSelectedPoster] = useState<string>(DEFAULT_THUMBS[0]);
   const [customThumbnailUrl, setCustomThumbnailUrl] = useState('');
 
   // Tags
@@ -95,26 +113,31 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
 
   // Privacy & Control Settings
   const [visibility, setVisibility] = useState<'public' | 'unlisted' | 'private'>('public');
-  const [hideLikes, setHideLikes] = useState<boolean>(false); // When true: hide like counts from viewers
+  const [hideLikes, setHideLikes] = useState<boolean>(false);
   const [commentsControl, setCommentsControl] = useState<
     'allow_all' | 'hold_inappropriate' | 'hold_all' | 'disabled'
   >('hold_inappropriate');
-  const [notifySubscribers, setNotifySubscribers] = useState<boolean>(true); // Push notification & subscriptions feed
-  const [notifyOnReplies, setNotifyOnReplies] = useState<boolean>(true);
-  const [allowRemix, setAllowRemix] = useState<boolean>(true); // Allow audio & reel reuse
-  const [ageRestricted, setAgeRestricted] = useState<boolean>(false); // 18+ restriction
-  const [scheduleDate, setScheduleDate] = useState<string>('');
+  const [notifySubscribers, setNotifySubscribers] = useState<boolean>(true);
+  const [allowRemix, setAllowRemix] = useState<boolean>(true);
+  const [ageRestricted, setAgeRestricted] = useState<boolean>(false);
 
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingThumb, setIsUploadingThumb] = useState<boolean>(false);
+  const [draftSlugId] = useState<string>(() => Math.random().toString(36).slice(2, 10));
 
-  // Intelligent title cleaner: strips suffixes, extensions, underscores and formats capitalization
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const thumbInputRef = useRef<HTMLInputElement>(null);
+  const closeTimeoutRef = useRef<number | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
+  const publishedBlobUrlsRef = useRef<Set<string>>(new Set());
+
   const cleanTitleFromFileName = (name: string): string => {
     const withoutExt = name.replace(/\.[^/.]+$/, '');
     const humanized = withoutExt
       .replace(/[_-]+/g, ' ')
       .replace(/\b(1080p|720p|480p|4k|hdr|master|final|h264|hevc|x264|v\d+)\b/gi, '')
+      .replace(/\s+/g, ' ')
       .trim();
     if (!humanized) return withoutExt || 'New Video Stream';
     return humanized
@@ -124,85 +147,113 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       .join(' ');
   };
 
-  // Reset state when modal is opened
   useEffect(() => {
     if (isOpen) {
-      setActiveTab('upload');
+      if (closeTimeoutRef.current) {
+        window.clearTimeout(closeTimeoutRef.current);
+        closeTimeoutRef.current = null;
+      }
+      setActiveStep('details');
+      setShowUrlInput(false);
+      setPublishTarget(defaultTarget);
+      setSourceType('file');
+      setFile(null);
+      setUrl('');
+      if (blobUrlRef.current && !publishedBlobUrlsRef.current.has(blobUrlRef.current)) {
+        URL.revokeObjectURL(blobUrlRef.current);
+      }
+      blobUrlRef.current = null;
+      setResolvedVideoUrl('');
+      setTitle('');
+      setDescription('');
+      setCustomThumbnailUrl('');
+      setAutoThumbnails(DEFAULT_THUMBS);
+      setSelectedPoster(DEFAULT_THUMBS[0]);
+      setIsGeneratingThumbs(false);
+      setThumbGenerationStatus('idle');
+      setPublishSuccessMessage(null);
+      setIsPublishing(false);
       setUploadProgress(0);
       setUploadPhase('idle');
-      setIsPaused(false);
+      setUploadSpeed('Waiting for video file');
+      setUploadedBytes('0 B');
+      setTotalBytes('—');
+      setEtaSeconds(0);
+      setThumbStorageMode(null);
+      setCopiedPreviewLink(false);
+      setChannelId(
+        channels.find((c) => currentUser?.uid && c.id === `channel-${currentUser.uid}`)?.id ||
+          channels[0]?.id ||
+          'channel-blender'
+      );
       setError(null);
     }
-  }, [isOpen]);
-
-  // Clean up timers
-  useEffect(() => {
     return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+      if (closeTimeoutRef.current) {
+        window.clearTimeout(closeTimeoutRef.current);
+      }
     };
-  }, []);
+  }, [isOpen, defaultTarget]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isPublishing) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, isPublishing, onClose]);
 
   if (!isOpen) return null;
 
-  // Start simulated realistic upload progress pipeline
-  const startUploadPipeline = (fileName: string, estimatedSizeMB: number = 84.2) => {
-    setUploadPhase('uploading');
-    setUploadProgress(5);
-    setTotalBytes(`${estimatedSizeMB.toFixed(1)} MB`);
-    setUploadedBytes(`4.2 MB`);
-    setEtaSeconds(6);
+  const hasSource = Boolean(file || resolvedVideoUrl);
+  const activePoster = customThumbnailUrl.trim() || selectedPoster || autoThumbnails[0];
+  const currentStepIndex = STEPS.findIndex((s) => s.id === activeStep);
+  const previewShareLink = `${window.location.origin}${window.location.pathname}?v=vio-${draftSlugId}`;
 
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+  const stageSelectedSource = (sizeLabel: string, isLocalFile: boolean) => {
+    setUploadPhase('staged');
+    setUploadProgress(0);
+    setTotalBytes(sizeLabel);
+    setUploadedBytes(isLocalFile ? '0 B' : 'Stream URL');
+    setUploadSpeed(
+      isLocalFile
+        ? 'Ready to upload to Firebase Storage'
+        : 'Stream URL ready to publish'
+    );
+    setEtaSeconds(0);
+  };
 
-    let currentPct = 5;
-    progressIntervalRef.current = window.setInterval(() => {
-      if (isPaused) return;
-
-      currentPct += Math.floor(Math.random() * 8) + 5;
-      if (currentPct < 60) {
-        setUploadPhase('uploading');
-        setUploadProgress(currentPct);
-        const currentMB = ((currentPct / 100) * estimatedSizeMB).toFixed(1);
-        setUploadedBytes(`${currentMB} MB`);
-        setUploadSpeed(`${(11 + Math.random() * 4).toFixed(1)} MB/s`);
-        setEtaSeconds(Math.max(1, Math.round(((100 - currentPct) / 100) * 8)));
-      } else if (currentPct < 85) {
-        setUploadPhase('transcoding');
-        setUploadProgress(currentPct);
-        setUploadedBytes(`${estimatedSizeMB.toFixed(1)} MB`);
-        setUploadSpeed('Adaptive Bitrate Encoding');
-        setEtaSeconds(3);
-      } else if (currentPct < 100) {
-        setUploadPhase('checking');
-        setUploadProgress(currentPct);
-        setUploadSpeed('Audio & Copyright Scan');
-        setEtaSeconds(1);
-      } else {
-        setUploadProgress(100);
-        setUploadPhase('completed');
-        setUploadedBytes(`${estimatedSizeMB.toFixed(1)} MB`);
-        setUploadSpeed('Ready');
-        setEtaSeconds(0);
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-      }
-    }, 400);
+  const applySelectedVideoFile = (selected: File) => {
+    if (!selected.type.startsWith('video/') && !/\.(mp4|mov|webm|mkv|m4v|avi)$/i.test(selected.name)) {
+      setError('Please choose a valid video file (.mp4, .webm, .mov, etc.).');
+      return;
+    }
+    setPublishSuccessMessage(null);
+    setSourceType('file');
+    setFile(selected);
+    if (blobUrlRef.current && !publishedBlobUrlsRef.current.has(blobUrlRef.current)) {
+      URL.revokeObjectURL(blobUrlRef.current);
+    }
+    const blobUrl = URL.createObjectURL(selected);
+    blobUrlRef.current = blobUrl;
+    setResolvedVideoUrl(blobUrl);
+    setTitle(cleanTitleFromFileName(selected.name));
+    setCustomThumbnailUrl('');
+    setThumbStorageMode(null);
+    setError(null);
+    setActiveStep('details');
+    stageSelectedSource(formatFileSize(selected.size), true);
+    extractThumbnails(blobUrl);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const selected = e.target.files[0];
-      if (!selected.type.startsWith('video/')) {
-        setError('Please choose a valid video file (.mp4, .webm, .mov, etc.).');
-        return;
-      }
-      setFile(selected);
-      const blobUrl = URL.createObjectURL(selected);
-      setResolvedVideoUrl(blobUrl);
-      setTitle(cleanTitleFromFileName(selected.name));
-      setError(null);
-      const sizeMB = selected.size / (1024 * 1024);
-      startUploadPipeline(selected.name, sizeMB);
-      extractThumbnails(blobUrl);
+    const selected = e.target.files?.[0];
+    e.target.value = '';
+    if (selected) {
+      applySelectedVideoFile(selected);
     }
   };
 
@@ -220,20 +271,7 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const dropped = e.dataTransfer.files[0];
-      if (!dropped.type.startsWith('video/')) {
-        setError('Please drop a valid video file (.mp4, .webm, .mov, etc.).');
-        return;
-      }
-      setSourceType('file');
-      setFile(dropped);
-      const blobUrl = URL.createObjectURL(dropped);
-      setResolvedVideoUrl(blobUrl);
-      setTitle(cleanTitleFromFileName(dropped.name));
-      setError(null);
-      const sizeMB = dropped.size / (1024 * 1024);
-      startUploadPipeline(dropped.name, sizeMB);
-      extractThumbnails(blobUrl);
+      applySelectedVideoFile(e.dataTransfer.files[0]);
     }
   };
 
@@ -249,29 +287,183 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       setError('Please enter a well-formed URL.');
       return;
     }
+    setPublishSuccessMessage(null);
     setError(null);
+    setSourceType('url');
+    setFile(null);
     setResolvedVideoUrl(targetUrl);
     const inferred = targetUrl.split('/').pop()?.split('?')[0] || 'Uploaded Video Stream';
     setTitle(cleanTitleFromFileName(inferred));
-    startUploadPipeline(targetUrl, 68.5);
+    setActiveStep('details');
+    stageSelectedSource('External CDN / Stream', false);
     extractThumbnails(targetUrl);
   };
 
-  const extractThumbnails = (videoSrc: string) => {
-    const vid = document.createElement('video');
-    vid.src = videoSrc;
-    vid.crossOrigin = 'anonymous';
-    vid.muted = true;
-    vid.playsInline = true;
-
-    vid.onloadedmetadata = () => {
-      setVideoDuration(vid.duration || 120);
-      setVideoResolution(`${vid.videoWidth || 1920}x${vid.videoHeight || 1080} (4K HDR Transcoded)`);
-    };
+  const resetSourceSelection = () => {
+    if (isPublishing) return;
+    if (blobUrlRef.current && !publishedBlobUrlsRef.current.has(blobUrlRef.current)) {
+      URL.revokeObjectURL(blobUrlRef.current);
+    }
+    blobUrlRef.current = null;
+    setFile(null);
+    setResolvedVideoUrl('');
+    setUrl('');
+    setUploadPhase('idle');
+    setUploadProgress(0);
+    setError(null);
+    setPublishSuccessMessage(null);
+    setActiveStep('details');
   };
 
-  const togglePauseUpload = () => {
-    setIsPaused((prev) => !prev);
+  const extractThumbnails = (videoSrc: string) => {
+    const isBlobSrc = videoSrc.startsWith('blob:');
+    setIsGeneratingThumbs(true);
+    setThumbGenerationStatus('generating');
+
+    const cleanupVideo = (vid: HTMLVideoElement) => {
+      vid.onloadedmetadata = null;
+      vid.onloadeddata = null;
+      vid.onerror = null;
+      vid.removeAttribute('src');
+      vid.load();
+    };
+
+    const loadVideoMeta = (withCors: boolean) => {
+      const vid = document.createElement('video');
+      if (withCors && !isBlobSrc) {
+        vid.crossOrigin = 'anonymous';
+      }
+      vid.muted = true;
+      vid.playsInline = true;
+      vid.preload = 'auto';
+
+      let capturedStarted = false;
+
+      vid.onerror = () => {
+        cleanupVideo(vid);
+        if (withCors && !isBlobSrc) {
+          loadVideoMeta(false);
+        } else {
+          setIsGeneratingThumbs(false);
+          setThumbGenerationStatus('fallback');
+        }
+      };
+
+      const captureFrames = async () => {
+        if (capturedStarted) return;
+        capturedStarted = true;
+
+        const dur = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 120;
+        setVideoDuration(dur);
+        if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+          setVideoResolution(`${vid.videoWidth}x${vid.videoHeight}`);
+        }
+
+        if (!withCors && !isBlobSrc) {
+          cleanupVideo(vid);
+          setIsGeneratingThumbs(false);
+          setThumbGenerationStatus('fallback');
+          return;
+        }
+
+        try {
+          const seekTargets =
+            dur < 4
+              ? [Math.min(0.2, dur * 0.2), Math.min(dur * 0.5, dur - 0.1), Math.max(0.1, dur * 0.8)]
+              : [Math.max(0.5, dur * 0.15), dur * 0.5, dur * 0.8];
+          const captured: string[] = [];
+
+          for (const targetTime of seekTargets) {
+            await new Promise<void>((resolve) => {
+              let settled = false;
+              const finish = () => {
+                if (settled) return;
+                settled = true;
+                vid.removeEventListener('seeked', onSeeked);
+                resolve();
+              };
+              const onSeeked = () => {
+                try {
+                  const canvas = document.createElement('canvas');
+                  canvas.width = 640;
+                  canvas.height = 360;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx && vid.readyState >= 2) {
+                    ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                    if (dataUrl && dataUrl.length > 1000) {
+                      captured.push(dataUrl);
+                    }
+                  }
+                } catch {
+                  // ignore CORS/codec errors
+                }
+                finish();
+              };
+              vid.addEventListener('seeked', onSeeked, { once: true });
+              try {
+                vid.currentTime = Math.min(Math.max(0.1, targetTime), Math.max(0.1, dur - 0.1));
+              } catch {
+                finish();
+              }
+              setTimeout(finish, 2200);
+            });
+          }
+
+          if (captured.length > 0) {
+            setAutoThumbnails(captured);
+            setSelectedPoster(captured[0]);
+            setThumbGenerationStatus('generated');
+          } else {
+            setThumbGenerationStatus('fallback');
+          }
+        } catch {
+          setThumbGenerationStatus('fallback');
+        } finally {
+          cleanupVideo(vid);
+          setIsGeneratingThumbs(false);
+        }
+      };
+
+      vid.onloadeddata = () => {
+        captureFrames();
+      };
+
+      vid.onloadedmetadata = () => {
+        const dur = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 120;
+        setVideoDuration(dur);
+        if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+          setVideoResolution(`${vid.videoWidth}x${vid.videoHeight}`);
+        }
+        setTimeout(() => {
+          if (!capturedStarted) captureFrames();
+        }, 700);
+      };
+
+      vid.src = videoSrc;
+      vid.load();
+    };
+
+    loadVideoMeta(!isBlobSrc);
+  };
+
+  const handleCustomThumbnailUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const imgFile = e.target.files?.[0];
+    e.target.value = '';
+    if (!imgFile) return;
+
+    setError(null);
+    setIsUploadingThumb(true);
+    try {
+      const res = await uploadImageAsset(imgFile, 'thumbnails');
+      setCustomThumbnailUrl(res.url);
+      setSelectedPoster(res.url);
+      setThumbStorageMode(res.storage);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load custom thumbnail image.');
+    } finally {
+      setIsUploadingThumb(false);
+    }
   };
 
   const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -289,15 +481,47 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     setTags(tags.filter((t) => t !== tagToRemove));
   };
 
+  const handleCopyPreviewLink = async () => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(previewShareLink);
+      }
+      setCopiedPreviewLink(true);
+      setTimeout(() => setCopiedPreviewLink(false), 1800);
+    } catch {
+      // ignore
+    }
+  };
+
+  const dataUrlToFile = async (dataUrl: string, filename: string): Promise<File> => {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    return new File([blob], filename, { type: blob.type || 'image/jpeg' });
+  };
+
+  const handleInlineGoogleSignIn = async () => {
+    setError(null);
+    setSigningInGoogle(true);
+    try {
+      await signInWithGoogle();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Google sign-in failed. Please try again.');
+    } finally {
+      setSigningInGoogle(false);
+    }
+  };
+
   const handlePublish = async (e?: React.FormEvent) => {
     if (e && e.preventDefault) e.preventDefault();
     setError(null);
+    setPublishSuccessMessage(null);
 
-    // 1. Enforce Authentication - No Guest Uploads
     if (!currentUser?.uid) {
-      setError('Authentication Required: Please sign in to your Vio Streaming account before publishing videos.');
+      setError('Please sign in to your Vio streaming account before publishing.');
       return;
     }
+
+    const hasFirebaseSession = Boolean(auth.currentUser?.uid);
 
     const fallbackTitle = file
       ? cleanTitleFromFileName(file.name)
@@ -306,11 +530,11 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       : 'Vio Stream Video';
     const finalTitle = title.trim() || fallbackTitle;
 
-    const finalPoster =
+    let finalPoster =
       customThumbnailUrl.trim() ||
       selectedPoster ||
       autoThumbnails[0] ||
-      'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80';
+      DEFAULT_THUMBS[0];
 
     const finalVideoId = `studio-${Date.now()}`;
     let effectiveUrl = resolvedVideoUrl || url.trim();
@@ -320,8 +544,7 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     setUploadProgress(0);
 
     try {
-      // 2. Real Upload to Firebase Storage with live 0-100% progress
-      if (file) {
+      if (file && hasFirebaseSession) {
         setTotalBytes(formatFileSize(file.size));
         const startTime = Date.now();
 
@@ -343,66 +566,136 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
           },
           { visibility, title: finalTitle }
         );
+      } else if (file && !hasFirebaseSession) {
+        // Demo/Local session: keep playable local blob URL and animate smooth progress
+        setUploadProgress(65);
+        setUploadSpeed('Saving to local session...');
+        await new Promise((r) => setTimeout(r, 350));
       }
 
       if (!effectiveUrl) {
         throw new Error('Please select a video file or provide a valid video URL.');
       }
 
+      if (effectiveUrl.startsWith('blob:')) {
+        publishedBlobUrlsRef.current.add(effectiveUrl);
+      }
+
       setUploadPhase('transcoding');
       setUploadProgress(90);
 
+      if (hasFirebaseSession && finalPoster.startsWith('data:image/')) {
+        try {
+          const thumbFile = await dataUrlToFile(finalPoster, `${finalVideoId}_thumb.jpg`);
+          const uploadedThumb = await uploadImageAsset(thumbFile, 'thumbnails');
+          if (uploadedThumb.url) {
+            finalPoster = uploadedThumb.url;
+          }
+        } catch {
+          // Keep generated JPEG data URL if Storage thumbnail upload falls back
+        }
+      }
+
       const ladder = buildStreamLadder(finalVideoId, effectiveUrl);
 
-      const newVideo: VideoItem = {
-        id: finalVideoId,
-        title: finalTitle,
-        description: description.trim() || 'Uploaded with Vio streaming Studio.',
-        url: effectiveUrl,
-        poster: finalPoster,
-        channelId: channelId,
-        views: 0,
-        likes: 0,
-        dislikes: 0,
-        publishedAt: 'Just now',
-        duration: Math.round(videoDuration) || 120,
-        category: category,
-        tags: tags.length > 0 ? tags : [category],
-        isLocal: sourceType === 'file',
-        fileSize: file ? formatFileSize(file.size) : totalBytes,
-        visibility,
-        hideLikes,
-        commentsControl,
-        notifySubscribers,
-        allowRemix,
-        ageRestricted,
-        createdAt: Date.now(),
-        streamQualities: ladder,
-        hlsManifestUrl: `/api/stream/manifest/${finalVideoId}?format=hls`,
-        backupStreams: [
-          effectiveUrl,
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-          'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-        ],
-        transcodingStatus: 'ready',
-      };
+      if (publishTarget === 'reel') {
+        const selectedChannel = channels.find((c) => c.id === channelId);
+        const newReel: ReelItem = {
+          id: `reel-${Date.now()}`,
+          title: finalTitle,
+          description: description.trim() || `${finalTitle} on Vio streaming Reels`,
+          videoUrl: effectiveUrl,
+          poster: finalPoster,
+          channelId: channelId,
+          views: 0,
+          likes: 0,
+          commentsCount: 0,
+          audioTrack: `Original Sound · ${selectedChannel?.name || 'Vio Creator'}`,
+          audioArtist: selectedChannel?.name || 'Vio Creator',
+          tags: tags.length > 0 ? tags : [category, 'Reels'],
+          createdAt: 'Just now',
+        };
 
-      // 3. Save to Cloud Firestore ONLY AFTER Firebase Storage upload completes successfully
-      setUploadPhase('checking');
-      setUploadProgress(95);
-      await addVideoDoc(newVideo);
+        setUploadPhase('checking');
+        setUploadProgress(95);
+        if (hasFirebaseSession) {
+          await addReelDoc(newReel);
+        }
 
-      setUploadProgress(100);
-      setUploadPhase('completed');
+        setUploadProgress(100);
+        setUploadPhase('completed');
+        setUploadSpeed(hasFirebaseSession ? 'Upload complete · Saved to Firebase' : 'Published to local session');
+        setEtaSeconds(0);
+        setPublishSuccessMessage(
+          hasFirebaseSession
+            ? `Reel "${finalTitle}" uploaded and published!`
+            : `Reel "${finalTitle}" published to your session!`
+        );
 
-      triggerCloudTranscoding(finalVideoId, finalTitle);
-      onPublishVideo(newVideo);
+        triggerCloudTranscoding(newReel.id, effectiveUrl);
+        onPublishReel?.(newReel);
+      } else {
+        const newVideo: VideoItem = {
+          id: finalVideoId,
+          title: finalTitle,
+          description: description.trim(),
+          url: effectiveUrl,
+          poster: finalPoster,
+          channelId: channelId,
+          views: 0,
+          likes: 0,
+          dislikes: 0,
+          publishedAt: 'Just now',
+          duration: Math.round(videoDuration) || 120,
+          category: category,
+          tags: tags.length > 0 ? tags : [category],
+          isLocal: sourceType === 'file',
+          fileSize: file ? formatFileSize(file.size) : totalBytes,
+          visibility,
+          hideLikes,
+          commentsControl,
+          notifySubscribers,
+          allowRemix,
+          ageRestricted,
+          createdAt: Date.now(),
+          streamQualities: ladder,
+          hlsManifestUrl: `/api/stream/manifest/${finalVideoId}?format=hls`,
+          backupStreams: [
+            effectiveUrl,
+            'https://media.w3.org/2010/05/bunny/movie.mp4',
+            'https://download.blender.org/durian/trailer/sintel_trailer-720p.mp4',
+          ],
+          transcodingStatus: 'ready',
+        };
+
+        setUploadPhase('checking');
+        setUploadProgress(95);
+        if (hasFirebaseSession) {
+          await addVideoDoc(newVideo);
+        }
+
+        setUploadProgress(100);
+        setUploadPhase('completed');
+        setUploadSpeed(hasFirebaseSession ? 'Upload complete · Saved to Firebase' : 'Published to local session');
+        setEtaSeconds(0);
+        setPublishSuccessMessage(
+          hasFirebaseSession
+            ? `"${finalTitle}" uploaded and published!`
+            : `"${finalTitle}" published to your session!`
+        );
+
+        triggerCloudTranscoding(finalVideoId, effectiveUrl);
+        onPublishVideo(newVideo);
+      }
+
       setIsPublishing(false);
-      onClose();
+      closeTimeoutRef.current = window.setTimeout(() => {
+        onClose();
+      }, 1500);
     } catch (err: unknown) {
       console.error('Video upload/publish error:', err);
       setIsPublishing(false);
-      setUploadPhase('idle');
+      setUploadPhase('staged');
       setError(
         err instanceof Error
           ? err.message
@@ -411,980 +704,1163 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-3xl rounded-3xl border border-slate-200 bg-white shadow-2xl transition-colors dark:border-slate-800 dark:bg-slate-900 max-h-[92vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-red-600 to-rose-500 text-white shadow-md shadow-red-500/20">
-              <Film className="h-4 w-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                Creator Studio: Upload Video
-                <span className="rounded-full bg-red-100 text-red-700 dark:bg-red-950/80 dark:text-red-300 text-[10px] px-2 py-0.5 font-bold">
-                  Vio streaming Cloud
-                </span>
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Upload progress, transcoding, metadata & granular privacy controls
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Close upload modal"
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+  const handleNextStep = () => {
+    if (activeStep === 'details' && !title.trim()) {
+      setError('Please enter a video title before continuing.');
+      return;
+    }
+    setError(null);
+    if (currentStepIndex < STEPS.length - 1) {
+      setActiveStep(STEPS[currentStepIndex + 1].id);
+    }
+  };
 
-        {/* Tab Navigation Navigation Bar */}
-        <div className="flex border-b border-slate-200 dark:border-slate-800 px-6 bg-white dark:bg-slate-900">
-          {[
-            { id: 'upload', label: '1. Upload & Progress', icon: Upload },
-            { id: 'details', label: '2. Details & Thumbnail', icon: Layers },
-            { id: 'privacy', label: '3. Privacy & Interaction Settings', icon: ShieldCheck },
-            { id: 'checks', label: '4. Quality Checks & Review', icon: CheckCircle2 },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
+  const handlePrevStep = () => {
+    setError(null);
+    if (currentStepIndex > 0) {
+      setActiveStep(STEPS[currentStepIndex - 1].id);
+    }
+  };
+
+  return (
+    <div
+      onClick={() => {
+        if (!isPublishing) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-150"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-5xl rounded-t-2xl sm:rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface-elevated)] text-[var(--ink)] shadow-2xl max-h-[94dvh] flex flex-col overflow-hidden"
+      >
+        {/* Hidden File Inputs */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="video/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <input
+          ref={thumbInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleCustomThumbnailUpload}
+          className="hidden"
+        />
+
+        {/* YOUTUBE STUDIO MODAL HEADER */}
+        <div className="flex items-center justify-between px-4 sm:px-6 h-14 sm:h-16 border-b border-[var(--ink-faint)] shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <h2 className="text-base sm:text-lg font-semibold text-[var(--ink)] truncate">
+              {hasSource ? title.trim() || 'Untitled video' : 'Upload videos'}
+            </h2>
+            {hasSource && (
+              <span className="hidden sm:inline-flex items-center rounded-md bg-[var(--card-hover)] px-2 py-0.5 text-xs font-medium text-[var(--ink-medium)] capitalize shrink-0">
+                {uploadPhase === 'completed' ? 'Published' : `${visibility} · Draft`}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Quick Target Toggle: Video vs Short/Reel */}
+            <div className="hidden sm:flex items-center rounded-full bg-[var(--card-hover)] p-0.5 text-xs font-medium">
               <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center gap-2 py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                  isActive
-                    ? 'border-red-600 text-red-600 dark:text-red-500'
-                    : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                type="button"
+                disabled={isPublishing}
+                onClick={() => setPublishTarget('video')}
+                className={`px-3 py-1 rounded-full transition-colors ${
+                  publishTarget === 'video'
+                    ? 'bg-[var(--ink)] text-[var(--bg)] font-semibold'
+                    : 'text-[var(--ink-medium)] hover:text-[var(--ink)]'
                 }`}
               >
-                <Icon className={`h-4 w-4 ${isActive ? 'text-red-600' : 'text-slate-400'}`} />
-                <span>{tab.label}</span>
+                Video
               </button>
-            );
-          })}
+              <button
+                type="button"
+                disabled={isPublishing}
+                onClick={() => setPublishTarget('reel')}
+                className={`px-3 py-1 rounded-full transition-colors ${
+                  publishTarget === 'reel'
+                    ? 'bg-[#FF0000] text-white font-semibold'
+                    : 'text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                }`}
+              >
+                Short / Reel
+              </button>
+            </div>
+
+            <button
+              onClick={() => {
+                if (!isPublishing) onClose();
+              }}
+              disabled={isPublishing}
+              aria-label="Close upload dialog"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)] transition-colors disabled:opacity-40"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
-        {/* Modal Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {error && (
-            <div className="flex items-center gap-2.5 rounded-2xl bg-rose-500/10 p-3.5 text-xs text-rose-500 border border-rose-500/20">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
+        {/* STAGE A: YOUTUBE STUDIO DROPZONE (Before file or stream URL is selected) */}
+        {!hasSource ? (
+          <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 sm:py-10 flex flex-col items-center justify-center">
+            {!currentUser && (
+              <div className="w-full max-w-xl mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
+                <div className="flex items-center gap-2.5">
+                  <ShieldCheck className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span>Sign in to your Vio streaming account to upload and publish videos.</span>
+                </div>
+                {onOpenAuth && (
+                  <button
+                    type="button"
+                    onClick={onOpenAuth}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-full bg-amber-400 text-black font-semibold px-3.5 py-1.5 text-xs shrink-0 hover:bg-amber-300 transition-colors"
+                  >
+                    <LogIn className="h-3.5 w-3.5" />
+                    <span>Sign in</span>
+                  </button>
+                )}
+              </div>
+            )}
 
-          {!currentUser && (
-            <div className="flex items-center gap-3 rounded-2xl bg-amber-500/10 p-3.5 text-xs text-amber-700 dark:text-amber-300 border border-amber-500/20">
-              <ShieldCheck className="h-4 w-4 shrink-0 text-amber-500" />
-              <span>
-                <strong>Login Required:</strong> You must sign in to upload videos. Guest/anonymous uploads are disabled to keep your channel and videos secure.
-              </span>
-            </div>
-          )}
+            {error && (
+              <div className="w-full max-w-xl mb-5 flex items-center gap-2.5 rounded-xl bg-rose-500/10 px-4 py-3 text-xs text-rose-700 dark:text-rose-400 border border-rose-500/25">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
 
-          {/* TAB 1: UPLOAD & PROGRESS BAR */}
-          {activeTab === 'upload' && (
-            <div className="space-y-6">
-              {/* Progress Card (Shown whenever an upload or processing starts) */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5 dark:border-slate-800 dark:bg-slate-900/60 shadow-xs space-y-4">
+            {/* Mobile Video/Reel Switcher */}
+            <div className="flex sm:hidden items-center rounded-full bg-[var(--card-hover)] p-1 text-xs font-medium mb-6">
+              <button
+                type="button"
+                onClick={() => setPublishTarget('video')}
+                className={`px-4 py-1.5 rounded-full transition-colors ${
+                  publishTarget === 'video'
+                    ? 'bg-[var(--ink)] text-[var(--bg)] font-semibold'
+                    : 'text-[var(--ink-medium)]'
+                }`}
+              >
+                Video (16:9)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPublishTarget('reel')}
+                className={`px-4 py-1.5 rounded-full transition-colors ${
+                  publishTarget === 'reel'
+                    ? 'bg-[#FF0000] text-white font-semibold'
+                    : 'text-[var(--ink-medium)]'
+                }`}
+              >
+                Short / Reel
+              </button>
+            </div>
+
+            {!showUrlInput ? (
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`w-full max-w-xl flex flex-col items-center justify-center text-center rounded-2xl border-2 border-dashed px-6 py-10 sm:py-14 cursor-pointer transition-all ${
+                  isDragging
+                    ? 'border-[#3EA6FF] bg-[#3EA6FF]/10 scale-[1.01]'
+                    : 'border-[var(--ink-faint)] hover:border-[var(--ink-medium)] bg-[var(--surface)]/50'
+                }`}
+              >
+                {/* Classic YouTube Studio Circular Upload Icon */}
+                <div
+                  className={`flex h-28 w-28 sm:h-32 sm:w-32 items-center justify-center rounded-full mb-6 transition-transform ${
+                    isDragging ? 'bg-[#3EA6FF]/20 scale-105' : 'bg-[var(--card-hover)]'
+                  }`}
+                >
+                  <Upload className={`h-11 w-11 sm:h-12 sm:w-12 ${isDragging ? 'text-[#3EA6FF]' : 'text-[var(--ink-medium)]'}`} />
+                </div>
+
+                <p className="text-base font-medium text-[var(--ink)]">
+                  {isDragging ? 'Drop your video file here' : 'Drag and drop video files to upload'}
+                </p>
+                <p className="mt-1.5 text-xs text-[var(--ink-medium)]">
+                  Your videos will be private until you publish them. Supports MP4, WebM, MOV (max 500 MB).
+                </p>
+
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    fileInputRef.current?.click();
+                  }}
+                  className="mt-6 min-h-[40px] rounded-full bg-[var(--ink)] text-[var(--bg)] px-6 py-2 text-sm font-semibold hover:opacity-90 active:scale-95 transition-all"
+                >
+                  Select files
+                </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowUrlInput(true);
+                  }}
+                  className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-[#3EA6FF] hover:underline"
+                >
+                  <LinkIcon className="h-3.5 w-3.5" />
+                  <span>Or upload via direct stream URL</span>
+                </button>
+              </div>
+            ) : (
+              <div className="w-full max-w-xl rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 sm:p-6 space-y-5">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10 text-red-600 dark:text-red-400">
-                      <FileVideo className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-bold text-slate-900 dark:text-white">
-                        {file ? file.name : title || 'Video Stream Upload'}
-                      </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 mt-0.5">
-                        <span>{uploadedBytes} of {totalBytes}</span>
-                        <span>•</span>
-                        <span>{uploadSpeed}</span>
-                        <span>•</span>
-                        <span>{etaSeconds > 0 ? `ETA ${etaSeconds}s` : 'Completed'}</span>
-                      </div>
-                    </div>
-                  </div>
+                  <h3 className="text-sm font-semibold text-[var(--ink)]">Import from Video / CDN URL</h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowUrlInput(false)}
+                    className="text-xs font-medium text-[#3EA6FF] hover:underline"
+                  >
+                    Back to file upload
+                  </button>
+                </div>
 
-                  {uploadPhase !== 'completed' && uploadPhase !== 'idle' && (
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
+                    <LinkIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--ink-medium)]" />
+                    <input
+                      type="url"
+                      placeholder="https://media.w3.org/2010/05/bunny/movie.mp4"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      className="w-full min-h-[44px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] pl-10 pr-3 text-base sm:text-sm text-[var(--ink)] focus:border-[#3EA6FF] focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUrlProceed()}
+                    className="min-h-[44px] rounded-full bg-[var(--ink)] text-[var(--bg)] px-6 text-sm font-semibold hover:opacity-90 shrink-0"
+                  >
+                    Load URL
+                  </button>
+                </div>
+
+                <div>
+                  <span className="text-xs font-medium text-[var(--ink-medium)]">
+                    Quick sample streams:
+                  </span>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[
+                      { name: 'Big Buck Bunny', url: 'https://media.w3.org/2010/05/bunny/movie.mp4' },
+                      { name: 'Tears of Steel', url: 'https://archive.org/download/Tears-of-Steel/tears_of_steel_720p.mp4' },
+                      { name: 'Flower Meadow', url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4' },
+                    ].map((demo) => (
+                      <button
+                        key={demo.name}
+                        type="button"
+                        onClick={() => {
+                          setUrl(demo.url);
+                          handleUrlProceed(demo.url);
+                        }}
+                        className="rounded-lg bg-[var(--card-hover)] px-3 py-1.5 text-xs font-medium text-[var(--ink)] hover:bg-[var(--ink-faint)] transition-colors"
+                      >
+                        {demo.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <p className="mt-6 text-[11px] text-[var(--ink-medium)] text-center max-w-md">
+              By submitting your videos to Vio streaming, you confirm that your content follows community safety & copyright guidelines.
+            </p>
+          </div>
+        ) : (
+          /* STAGE B: YOUTUBE STUDIO 4-STEP PROCESSOR */
+          <>
+            {/* 4-Step YouTube Studio Stepper */}
+            <div className="px-4 sm:px-8 py-3.5 border-b border-[var(--ink-faint)] bg-[var(--surface)]/60 shrink-0 overflow-x-auto no-scrollbar">
+              <div className="flex items-center justify-between max-w-2xl mx-auto min-w-[420px]">
+                {STEPS.map((step, idx) => {
+                  const isCurrent = activeStep === step.id;
+                  const isCompleted = idx < currentStepIndex || uploadPhase === 'completed';
+                  return (
+                    <React.Fragment key={step.id}>
+                      <button
+                        type="button"
+                        onClick={() => setActiveStep(step.id)}
+                        className="group flex flex-col items-center gap-1.5 focus:outline-none px-2"
+                      >
+                        <span
+                          className={`text-xs font-semibold transition-colors ${
+                            isCurrent
+                              ? 'text-[var(--ink)]'
+                              : isCompleted
+                              ? 'text-[var(--ink)]'
+                              : 'text-[var(--ink-medium)]'
+                          }`}
+                        >
+                          {step.label}
+                        </span>
+                        <div
+                          className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold transition-all ${
+                            isCompleted
+                              ? 'bg-[#3EA6FF] text-black'
+                              : isCurrent
+                              ? 'border-2 border-[#3EA6FF] bg-[var(--bg)] text-[#3EA6FF]'
+                              : 'border-2 border-[var(--ink-faint)] bg-[var(--bg)] text-[var(--ink-medium)] group-hover:border-[var(--ink-medium)]'
+                          }`}
+                        >
+                          {isCompleted ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : step.number}
+                        </div>
+                      </button>
+                      {idx < STEPS.length - 1 && (
+                        <div
+                          className={`h-[2px] flex-1 mx-1 rounded-full transition-colors ${
+                            idx < currentStepIndex ? 'bg-[#3EA6FF]' : 'bg-[var(--ink-faint)]'
+                          }`}
+                        />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Scrollable 2-Column Studio Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              {/* Auth Notice Banner (for unauthenticated or local/demo session users) */}
+              {(!currentUser || !(auth.currentUser?.uid || isFirebaseAuthenticated)) && (
+                <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-300">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <ShieldCheck className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>
+                      {!currentUser
+                        ? 'Sign in with Google to upload and publish your video.'
+                        : 'Demo/local session active: video publishes to this session. Sign in with Google for Firebase Cloud storage.'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
-                      onClick={togglePauseUpload}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      disabled={signingInGoogle}
+                      onClick={handleInlineGoogleSignIn}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-amber-400 hover:bg-amber-300 text-black font-semibold px-3 py-1 text-xs transition-colors disabled:opacity-50"
                     >
-                      {isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-                      <span>{isPaused ? 'Resume' : 'Pause'}</span>
+                      <LogIn className="h-3.5 w-3.5" />
+                      <span>{signingInGoogle ? 'Signing in...' : 'Sign in with Google'}</span>
+                    </button>
+                    {!currentUser && onOpenAuth && (
+                      <button
+                        type="button"
+                        onClick={onOpenAuth}
+                        className="rounded-full border border-amber-500/40 px-3 py-1 text-xs font-medium hover:bg-amber-500/15 transition-colors"
+                      >
+                        Other options
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {error && (
+                <div className="mb-4 flex items-center justify-between gap-3 rounded-xl bg-rose-500/10 px-4 py-3 text-xs text-rose-700 dark:text-rose-400 border border-rose-500/25">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                  {!currentUser && onOpenAuth && (
+                    <button
+                      type="button"
+                      onClick={onOpenAuth}
+                      className="rounded-full bg-rose-600 text-white px-3 py-1 text-xs font-semibold shrink-0 hover:bg-rose-700"
+                    >
+                      Sign in
                     </button>
                   )}
                 </div>
+              )}
 
-                {/* Animated Gradient Progress Bar */}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs font-bold">
-                    <span className="text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      {uploadPhase === 'idle' && 'Ready to select video file'}
-                      {uploadPhase === 'uploading' && '🚀 Uploading chunks to cloud storage...'}
-                      {uploadPhase === 'transcoding' && '⚙️ Generating 4K/1080p adaptive transcoding...'}
-                      {uploadPhase === 'checking' && '🛡️ Checking audio tracks & copyright safety...'}
-                      {uploadPhase === 'completed' && '✅ Upload & processing complete · Ready to stream'}
-                    </span>
-                    <span className="text-red-600 dark:text-red-400 font-mono">{uploadProgress}%</span>
+              {publishSuccessMessage && (
+                <div className="mb-4 flex items-center justify-between gap-3 rounded-xl bg-emerald-500/10 px-4 py-3 text-xs text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    <span className="font-semibold truncate">{publishSuccessMessage}</span>
                   </div>
-
-                  <div className="h-3 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800 p-0.5">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-red-600 via-rose-500 to-amber-500 transition-all duration-300 shadow-sm"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Multi-Stage Checkpoint Badges */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                  {[
-                    { label: 'Upload Chunks', done: uploadProgress >= 50, active: uploadPhase === 'uploading' },
-                    { label: '4K Transcoding', done: uploadProgress >= 80, active: uploadPhase === 'transcoding' },
-                    { label: 'Audio Normalization', done: uploadProgress >= 95, active: uploadPhase === 'checking' },
-                    { label: 'Stream Ready', done: uploadProgress === 100, active: uploadPhase === 'completed' },
-                  ].map((stepItem, idx) => (
-                    <div
-                      key={idx}
-                      className={`flex items-center gap-2 p-2 rounded-xl text-[11px] font-semibold border transition-all ${
-                        stepItem.done
-                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                          : stepItem.active
-                          ? 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400 animate-pulse'
-                          : 'border-slate-200 dark:border-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {stepItem.done ? (
-                        <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                      ) : (
-                        <span className="h-2 w-2 rounded-full bg-current shrink-0" />
-                      )}
-                      <span className="truncate">{stepItem.label}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Source Switcher */}
-              <div className="flex rounded-2xl bg-slate-100 p-1 dark:bg-slate-800/80">
-                <button
-                  type="button"
-                  onClick={() => setSourceType('url')}
-                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all ${
-                    sourceType === 'url'
-                      ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-700 dark:text-white'
-                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
-                  }`}
-                >
-                  Direct Stream (Cloud CDN / MP4)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSourceType('file')}
-                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all ${
-                    sourceType === 'file'
-                      ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-700 dark:text-white'
-                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
-                  }`}
-                >
-                  Upload Local Video File
-                </button>
-              </div>
-
-              {sourceType === 'file' ? (
-                <div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="video/*"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    className={`flex flex-col items-center justify-center rounded-3xl border-2 border-dashed p-8 text-center cursor-pointer transition-all ${
-                      isDragging
-                        ? 'border-red-500 bg-red-500/10 scale-[1.01] shadow-lg shadow-red-500/10'
-                        : 'border-slate-300 hover:border-red-500 hover:bg-red-500/5 dark:border-slate-700 dark:hover:border-red-500'
-                    }`}
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-full bg-emerald-500 px-3.5 py-1 text-xs font-semibold text-black shrink-0"
                   >
-                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10 text-red-500 mb-3">
-                      <Upload className="h-7 w-7" />
-                    </div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">
-                      {isDragging ? 'Drop video file here now' : 'Drag and drop video files to upload'}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      Supports MP4, WebM, MOV, ProRes up to 4K 60fps · Auto-title & thumbnail
-                    </p>
-                    <button
-                      type="button"
-                      className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
-                    >
-                      Select Local File
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                      Direct Video URL or CDN Stream (MP4, WebM, HLS)
-                    </label>
-                    <div className="relative">
-                      <LinkIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                      <input
-                        type="url"
-                        placeholder="https://commondatastorage.googleapis.com/.../video.mp4"
-                        value={url}
-                        onChange={(e) => setUrl(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                      Instant Sample 4K Test Streams
-                    </span>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {[
-                        {
-                          name: 'Big Buck Bunny (Animation)',
-                          url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                        },
-                        {
-                          name: 'Tears of Steel (Sci-Fi VFX)',
-                          url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-                        },
-                        {
-                          name: 'Chromecast Nature 4K',
-                          url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-                        },
-                      ].map((demo) => (
-                        <button
-                          key={demo.name}
-                          type="button"
-                          onClick={() => {
-                            setUrl(demo.url);
-                            handleUrlProceed(demo.url);
-                          }}
-                          className="rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors font-medium cursor-pointer"
-                        >
-                          {demo.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                    Done
+                  </button>
                 </div>
               )}
 
-              {/* Frictionless 1-Click Quick Publish Card (Visible when video source is selected) */}
-              {(file || resolvedVideoUrl || url) && (
-                <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4.5 dark:border-red-500/30 dark:bg-red-950/20 space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-300">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-red-600 dark:text-red-400 flex items-center gap-1.5">
-                      <Zap className="h-4 w-4 fill-current" />
-                      Frictionless 1-Click Publishing
-                    </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Auto-transcoding & thumbnail ready
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Title
-                      </label>
-                      <input
-                        type="text"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        placeholder="Enter video title"
-                        className="w-full rounded-xl border border-slate-200 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-900 dark:text-white focus:border-red-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Category
-                      </label>
-                      <select
-                        value={category}
-                        onChange={(e) => setCategory(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-900 dark:text-white focus:border-red-500 focus:outline-none"
-                      >
-                        {CATEGORIES.filter((c) => c !== 'All').map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Visibility presets */}
-                  <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <span className="text-[11px] font-medium text-slate-500">Visibility:</span>
-                      {(['public', 'unlisted', 'private'] as const).map((vis) => (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* LEFT COLUMN: ACTIVE STEP FORM */}
+                <div className="lg:col-span-7 space-y-5">
+                  {/* STEP 1: DETAILS */}
+                  {activeStep === 'details' && (
+                    <div className="space-y-5">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-bold text-[var(--ink)]">Details</h3>
                         <button
-                          key={vis}
                           type="button"
-                          onClick={() => setVisibility(vis)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold capitalize transition-all ${
-                            visibility === vis
-                              ? 'bg-red-600 text-white shadow-xs'
-                              : 'bg-white/80 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100'
-                          }`}
+                          disabled={isPublishing}
+                          onClick={resetSourceSelection}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium text-[#3EA6FF] hover:underline disabled:opacity-50"
                         >
-                          {vis}
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          <span>Change video</span>
                         </button>
-                      ))}
-                    </div>
+                      </div>
 
-                    <button
-                      type="button"
-                      onClick={handlePublish}
-                      className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-6 py-2.5 text-xs font-bold text-white shadow-md shadow-red-600/30 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
-                    >
-                      <Zap className="h-4 w-4 fill-white" />
-                      <span>⚡ Publish Now (1-Click)</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
-                <span className="text-[11px] text-slate-400">
-                  Want custom tags, thumbnail upload, or scheduling?
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (sourceType === 'url' && url && uploadProgress === 0) {
-                      handleUrlProceed();
-                    }
-                    setActiveTab('details');
-                  }}
-                  className="flex items-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 px-4 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
-                >
-                  <span>Advanced Settings</span>
-                  <ArrowRight className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: DETAILS & THUMBNAILS */}
-          {activeTab === 'details' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Title (required) · <span className="font-mono text-slate-400">{title.length}/100</span>
-                </label>
-                <input
-                  type="text"
-                  maxLength={100}
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Give your video a compelling, searchable title"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Description
-                </label>
-                <textarea
-                  rows={3}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Tell viewers about your video (timestamps, credits, links, hashtags)"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white resize-none"
-                />
-              </div>
-
-              {/* Thumbnails Selection */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Thumbnail (Choose an auto-generated frame or provide custom URL)
-                </label>
-                <div className="grid grid-cols-3 gap-3">
-                  {autoThumbnails.map((thumb, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => {
-                        setSelectedPoster(thumb);
-                        setCustomThumbnailUrl('');
-                      }}
-                      className={`group relative aspect-video cursor-pointer overflow-hidden rounded-xl border-2 transition-all ${
-                        selectedPoster === thumb && !customThumbnailUrl
-                          ? 'border-red-600 ring-2 ring-red-500/20'
-                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-400'
-                      }`}
-                    >
-                      <img src={thumb} alt={`Frame ${idx + 1}`} className="h-full w-full object-cover" />
-                      {selectedPoster === thumb && !customThumbnailUrl && (
-                        <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-white shadow-md">
-                          <Check className="h-3 w-3" />
-                        </div>
-                      )}
-                      <span className="absolute bottom-1 left-1.5 rounded bg-black/70 px-1 text-[9px] font-mono text-white">
-                        Frame {idx + 1}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-2.5">
-                  <input
-                    type="url"
-                    placeholder="Or paste custom thumbnail image URL (e.g. Unsplash / CDN)..."
-                    value={customThumbnailUrl}
-                    onChange={(e) => setCustomThumbnailUrl(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              {/* Category & Channel */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Category
-                  </label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    {CATEGORIES.filter((c) => c !== 'All' && c !== 'Recently Uploaded').map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Creator Channel
-                  </label>
-                  <select
-                    value={channelId}
-                    onChange={(e) => setChannelId(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    {channels.map((ch) => (
-                      <option key={ch.id} value={ch.id}>
-                        {ch.name} ({ch.handle})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Tags Input */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Tags (Press Enter or comma to add)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. 4k, blender, cinematography, tutorial"
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={handleAddTag}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white mb-2"
-                />
-                <div className="flex flex-wrap gap-1.5">
-                  {tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-medium"
-                    >
-                      #{tag}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveTag(tag)}
-                        className="text-slate-400 hover:text-rose-500"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('upload')}
-                  className="flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  <span>Back to Upload</span>
-                </button>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handlePublish}
-                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-red-600/30 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
-                  >
-                    <Zap className="h-3.5 w-3.5 fill-white" />
-                    <span>Publish Now</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!title.trim()) {
-                        setError('Title is required to proceed.');
-                        return;
-                      }
-                      setError(null);
-                      setActiveTab('privacy');
-                    }}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 px-5 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                  >
-                    <span>Next: Privacy</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: PRIVACY SETTINGS, HIDE LIKES, COMMENT CONTROLS & NOTIFICATION TOGGLES */}
-          {activeTab === 'privacy' && (
-            <div className="space-y-6">
-              {/* SECTION A: VISIBILITY */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                    <Globe className="h-3.5 w-3.5" />
-                    <span>Visibility Level</span>
-                  </h4>
-                  <span className="text-[11px] text-slate-400">Who can watch this video</span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    {
-                      id: 'public',
-                      title: 'Public',
-                      desc: 'Everyone can see, search and stream your video.',
-                      icon: Globe,
-                    },
-                    {
-                      id: 'unlisted',
-                      title: 'Unlisted',
-                      desc: 'Anyone with the direct link can stream it.',
-                      icon: EyeOff,
-                    },
-                    {
-                      id: 'private',
-                      title: 'Private',
-                      desc: 'Only you and authorized members can view.',
-                      icon: Lock,
-                    },
-                  ].map((opt) => {
-                    const Icon = opt.icon;
-                    const isSel = visibility === opt.id;
-                    return (
-                      <div
-                        key={opt.id}
-                        onClick={() => setVisibility(opt.id as any)}
-                        className={`flex flex-col p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                          isSel
-                            ? 'border-red-600 bg-red-500/5 ring-1 ring-red-600 text-slate-900 dark:text-white'
-                            : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
+                      {/* Title Box */}
+                      <div className="rounded-xl border border-[var(--ink-faint)] focus-within:border-[#3EA6FF] bg-[var(--surface)] px-3.5 py-2.5 transition-colors">
                         <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <Icon className={`h-4 w-4 ${isSel ? 'text-red-500' : 'text-slate-400'}`} />
-                            <span className="text-xs font-bold">{opt.title}</span>
+                          <label htmlFor="yt-video-title" className="text-xs font-medium text-[var(--ink-medium)]">
+                            Title (required)
+                          </label>
+                          <span className="text-[11px] text-[var(--ink-medium)] tabular-nums">
+                            {title.length}/100
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            id="yt-video-title"
+                            type="text"
+                            maxLength={100}
+                            value={title}
+                            onChange={(e) => setTitle(e.target.value)}
+                            placeholder="Add a title that describes your video"
+                            className="w-full bg-transparent text-base sm:text-sm text-[var(--ink)] placeholder:text-[var(--ink-medium)]/60 focus:outline-none"
+                          />
+                          {title && (
+                            <button
+                              type="button"
+                              aria-label="Clear title"
+                              onClick={() => setTitle('')}
+                              className="p-1 text-[var(--ink-medium)] hover:text-[var(--ink)]"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Description Box (Optional) */}
+                      <div className="rounded-xl border border-[var(--ink-faint)] focus-within:border-[#3EA6FF] bg-[var(--surface)] px-3.5 py-2.5 transition-colors">
+                        <div className="flex items-center justify-between mb-1">
+                          <label htmlFor="yt-video-desc" className="text-xs font-medium text-[var(--ink-medium)]">
+                            Description (optional)
+                          </label>
+                          <span className="text-[11px] text-[var(--ink-medium)] tabular-nums">
+                            {description.length}/5000
+                          </span>
+                        </div>
+                        <textarea
+                          id="yt-video-desc"
+                          rows={4}
+                          maxLength={5000}
+                          value={description}
+                          onChange={(e) => setDescription(e.target.value)}
+                          placeholder="Tell viewers about your video (timestamps, credits, links)"
+                          className="w-full bg-transparent text-base sm:text-sm text-[var(--ink)] placeholder:text-[var(--ink-medium)]/60 focus:outline-none resize-none"
+                        />
+                      </div>
+
+                      {/* Thumbnail Picker (YouTube Studio 4-tile grid) */}
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="text-sm font-semibold text-[var(--ink)]">Thumbnail</h4>
+                            <p className="text-xs text-[var(--ink-medium)]">
+                              Select or upload a picture that shows what's in your video.
+                            </p>
                           </div>
-                          <div
-                            className={`h-4 w-4 rounded-full border flex items-center justify-center ${
-                              isSel ? 'border-red-600 bg-red-600 text-white' : 'border-slate-300 dark:border-slate-600'
+                          <span className="text-[11px] text-[var(--ink-medium)]">
+                            {thumbGenerationStatus === 'generating'
+                              ? 'Generating frames...'
+                              : customThumbnailUrl
+                              ? 'Custom cover'
+                              : thumbGenerationStatus === 'generated'
+                              ? 'Auto-generated'
+                              : 'Default cover'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                          {/* Upload File Tile */}
+                          <button
+                            type="button"
+                            onClick={() => thumbInputRef.current?.click()}
+                            disabled={isUploadingThumb}
+                            className={`aspect-video flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed text-xs transition-colors p-2 ${
+                              customThumbnailUrl
+                                ? 'border-[#3EA6FF] bg-[#3EA6FF]/10 text-[#3EA6FF]'
+                                : 'border-[var(--ink-faint)] hover:border-[var(--ink-medium)] bg-[var(--surface)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
                             }`}
                           >
-                            {isSel && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                            {isUploadingThumb ? (
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                            ) : (
+                              <ImagePlus className="h-5 w-5" />
+                            )}
+                            <span className="font-medium text-[11px]">
+                              {isUploadingThumb ? 'Uploading...' : 'Upload file'}
+                            </span>
+                          </button>
+
+                          {/* 3 Auto-Generated Frame Tiles */}
+                          {autoThumbnails.slice(0, 3).map((thumb, idx) => {
+                            const isSelected = selectedPoster === thumb && !customThumbnailUrl;
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedPoster(thumb);
+                                  setCustomThumbnailUrl('');
+                                }}
+                                className={`relative aspect-video overflow-hidden rounded-xl border-2 transition-all bg-black ${
+                                  isSelected
+                                    ? 'border-[var(--ink)] ring-1 ring-[var(--ink)]'
+                                    : 'border-[var(--ink-faint)] opacity-80 hover:opacity-100'
+                                }`}
+                              >
+                                <img
+                                  src={thumb}
+                                  alt={`Auto frame ${idx + 1}`}
+                                  referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    if (e.currentTarget.src !== DEFAULT_THUMBS[0]) {
+                                      e.currentTarget.src = DEFAULT_THUMBS[0];
+                                    }
+                                  }}
+                                  className="h-full w-full object-cover"
+                                />
+                                {isGeneratingThumbs && (
+                                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                                  </div>
+                                )}
+                                {isSelected && (
+                                  <span className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--ink)] text-[var(--bg)]">
+                                    <Check className="h-3 w-3 stroke-[3]" />
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {customThumbnailUrl && thumbStorageMode && (
+                          <p className="text-[11px] font-medium text-emerald-400">
+                            {thumbStorageMode === 'cloud'
+                              ? 'Custom thumbnail uploaded to Firebase Storage'
+                              : 'Custom thumbnail ready locally'}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Category & Channel */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        <div>
+                          <label htmlFor="yt-category" className="block text-xs font-medium text-[var(--ink-medium)] mb-1.5">
+                            Category
+                          </label>
+                          <select
+                            id="yt-category"
+                            value={category}
+                            onChange={(e) => setCategory(e.target.value)}
+                            className="w-full min-h-[44px] rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] px-3 py-2 text-base sm:text-sm text-[var(--ink)] focus:border-[#3EA6FF] focus:outline-none"
+                          >
+                            {CATEGORIES.filter((c) => c !== 'All' && c !== 'Recently Uploaded' && c !== 'Custom Feed' && c !== 'Reels' && c !== 'Trending').map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label htmlFor="yt-channel" className="block text-xs font-medium text-[var(--ink-medium)] mb-1.5">
+                            Channel
+                          </label>
+                          <select
+                            id="yt-channel"
+                            value={channelId}
+                            onChange={(e) => setChannelId(e.target.value)}
+                            className="w-full min-h-[44px] rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] px-3 py-2 text-base sm:text-sm text-[var(--ink)] focus:border-[#3EA6FF] focus:outline-none"
+                          >
+                            {channels.map((ch) => (
+                              <option key={ch.id} value={ch.id}>
+                                {ch.name} ({ch.handle})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STEP 2: VIDEO ELEMENTS */}
+                  {activeStep === 'elements' && (
+                    <div className="space-y-5">
+                      <div>
+                        <h3 className="text-lg font-bold text-[var(--ink)]">Video elements</h3>
+                        <p className="text-xs text-[var(--ink-medium)]">
+                          Choose format, add discovery tags, and configure viewer interaction controls.
+                        </p>
+                      </div>
+
+                      {/* Publish Format Cards */}
+                      <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-[var(--ink)]">Publish format</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setPublishTarget('video')}
+                            className={`text-left p-3.5 rounded-xl border transition-colors ${
+                              publishTarget === 'video'
+                                ? 'border-[#3EA6FF] bg-[#3EA6FF]/10'
+                                : 'border-[var(--ink-faint)] bg-[var(--surface)] hover:bg-[var(--card-hover)]'
+                            }`}
+                          >
+                            <div className="text-sm font-semibold text-[var(--ink)]">Standard Video (16:9)</div>
+                            <div className="text-xs text-[var(--ink-medium)] mt-0.5">
+                              Appears in Home feed, Watch view & Channel uploads.
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPublishTarget('reel')}
+                            className={`text-left p-3.5 rounded-xl border transition-colors ${
+                              publishTarget === 'reel'
+                                ? 'border-[#FF0000] bg-[#FF0000]/10'
+                                : 'border-[var(--ink-faint)] bg-[var(--surface)] hover:bg-[var(--card-hover)]'
+                            }`}
+                          >
+                            <div className="text-sm font-semibold text-[var(--ink)]">Short / Reel (9:16)</div>
+                            <div className="text-xs text-[var(--ink-medium)] mt-0.5">
+                              Appears in the vertical Reels feed & Home Shorts shelf.
+                            </div>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Tags */}
+                      <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-[var(--ink)]">
+                          Tags (Press Enter or comma to add)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 4k, animation, tutorial"
+                          value={tagInput}
+                          onChange={(e) => setTagInput(e.target.value)}
+                          onKeyDown={handleAddTag}
+                          className="w-full min-h-[44px] rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] px-3.5 py-2 text-base sm:text-sm text-[var(--ink)] focus:border-[#3EA6FF] focus:outline-none"
+                        />
+                        <div className="flex flex-wrap gap-1.5">
+                          {tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="inline-flex items-center gap-1 rounded-full bg-[var(--card-hover)] px-3 py-1 text-xs font-medium text-[var(--ink)]"
+                            >
+                              #{tag}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveTag(tag)}
+                                aria-label={`Remove tag ${tag}`}
+                                className="ml-0.5 text-[var(--ink-medium)] hover:text-rose-400"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Comments & Moderation */}
+                      <div className="rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] p-4 space-y-3">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
+                          <MessageSquare className="h-4 w-4 text-[var(--ink-medium)]" />
+                          <span>Comments</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {[
+                            { id: 'allow_all', label: 'Allow all comments' },
+                            { id: 'hold_inappropriate', label: 'Hold potentially inappropriate' },
+                            { id: 'hold_all', label: 'Hold all comments for review' },
+                            { id: 'disabled', label: 'Disable comments' },
+                          ].map((opt) => (
+                            <label
+                              key={opt.id}
+                              className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer text-xs ${
+                                commentsControl === opt.id
+                                  ? 'border-[#3EA6FF] bg-[#3EA6FF]/10 font-semibold'
+                                  : 'border-[var(--ink-faint)] hover:bg-[var(--card-hover)]'
+                              }`}
+                            >
+                              <input
+                                type="radio"
+                                name="commentsControl"
+                                checked={commentsControl === opt.id}
+                                onChange={() => setCommentsControl(opt.id as any)}
+                                className="accent-[#3EA6FF]"
+                              />
+                              <span>{opt.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Toggles */}
+                      <div className="rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] divide-y divide-[var(--ink-faint)]">
+                        <div className="flex items-center justify-between gap-3 p-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <ThumbsUp className="h-4 w-4 text-[var(--ink-medium)] shrink-0" />
+                            <div>
+                              <div className="text-xs font-semibold">Hide like count from viewers</div>
+                              <div className="text-[11px] text-[var(--ink-medium)]">Only you can see total likes in Studio</div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={hideLikes}
+                            onClick={() => setHideLikes(!hideLikes)}
+                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
+                              hideLikes ? 'bg-[#3EA6FF]' : 'bg-[var(--ink-faint)]'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform mt-0.5 ${
+                                hideLikes ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
+                              }`}
+                            />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 p-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <Sparkles className="h-4 w-4 text-[var(--ink-medium)] shrink-0" />
+                            <div>
+                              <div className="text-xs font-semibold">Allow Shorts & Audio Remixing</div>
+                              <div className="text-[11px] text-[var(--ink-medium)]">Let other creators sample this audio in Reels</div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={allowRemix}
+                            onClick={() => setAllowRemix(!allowRemix)}
+                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
+                              allowRemix ? 'bg-[#3EA6FF]' : 'bg-[var(--ink-faint)]'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform mt-0.5 ${
+                                allowRemix ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
+                              }`}
+                            />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 p-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <ShieldCheck className="h-4 w-4 text-[var(--ink-medium)] shrink-0" />
+                            <div>
+                              <div className="text-xs font-semibold">Age restriction (18+)</div>
+                              <div className="text-[11px] text-[var(--ink-medium)]">Hide when Restricted Mode is enabled</div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={ageRestricted}
+                            onClick={() => setAgeRestricted(!ageRestricted)}
+                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
+                              ageRestricted ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform mt-0.5 ${
+                                ageRestricted ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STEP 3: CHECKS */}
+                  {activeStep === 'checks' && (
+                    <div className="space-y-5">
+                      <div>
+                        <h3 className="text-lg font-bold text-[var(--ink)]">Checks</h3>
+                        <p className="text-xs text-[var(--ink-medium)] mt-0.5">
+                          We check your video for stream compatibility and copyright issues before you publish.
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] divide-y divide-[var(--ink-faint)]">
+                        <div className="p-4 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-[var(--ink)]">Copyright</div>
+                            <div className="text-xs text-[var(--ink-medium)] mt-0.5">
+                              No copyright or audio strike issues found.
+                            </div>
+                          </div>
+                          <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+                        </div>
+
+                        <div className="p-4 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-[var(--ink)]">Video & Codec Quality</div>
+                            <div className="text-xs text-[var(--ink-medium)] mt-0.5">
+                              Resolution {videoResolution} · Duration {formatTime(videoDuration)} · Size {file ? formatFileSize(file.size) : totalBytes}
+                            </div>
+                          </div>
+                          <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+                        </div>
+
+                        <div className="p-4 space-y-2">
+                          <div className="text-sm font-semibold text-[var(--ink)]">Adaptive Streaming Ladder</div>
+                          <p className="text-xs text-[var(--ink-medium)]">
+                            Qualities generated automatically after upload:
+                          </p>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {['1080p60 HD', '720p HD', '480p', '360p', '240p'].map((q) => (
+                              <span
+                                key={q}
+                                className="rounded-md bg-[var(--card-hover)] px-2.5 py-1 text-[11px] font-medium text-[var(--ink)]"
+                              >
+                                {q}
+                              </span>
+                            ))}
                           </div>
                         </div>
-                        <p className="text-[11px] text-slate-400 mt-1 leading-tight">{opt.desc}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* SECTION B: HIDE LIKES TOGGLE */}
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/60 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                      <ThumbsUp className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 dark:text-white">
-                        Hide Likes Count from Viewers
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        When enabled, like counts remain private to creator studio; viewers see only the Like icon without numbers.
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  {/* Toggle Switch */}
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={hideLikes}
-                    onClick={() => setHideLikes(!hideLikes)}
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                      hideLikes ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                        hideLikes ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
+                  {/* STEP 4: VISIBILITY */}
+                  {activeStep === 'visibility' && (
+                    <div className="space-y-5">
+                      <div>
+                        <h3 className="text-lg font-bold text-[var(--ink)]">Visibility</h3>
+                        <p className="text-xs text-[var(--ink-medium)] mt-0.5">
+                          Choose when to publish and who can see your video.
+                        </p>
+                      </div>
 
-              {/* SECTION C: COMMENT CONTROLS */}
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/60 space-y-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400">
-                    <MessageSquare className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                      Comment Controls & Moderation
-                    </h4>
-                    <p className="text-[11px] text-slate-400">
-                      Choose how comments and user discussions are handled on this video
-                    </p>
-                  </div>
-                </div>
+                      <div className="rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] p-4 space-y-3">
+                        <div className="text-sm font-semibold text-[var(--ink)]">Save or publish</div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                  {[
-                    {
-                      id: 'allow_all',
-                      label: 'Allow all comments',
-                      desc: 'Publish all viewer comments immediately.',
-                    },
-                    {
-                      id: 'hold_inappropriate',
-                      label: 'Hold inappropriate for review',
-                      desc: 'Auto-filter toxic remarks, spam & malicious links (Recommended).',
-                    },
-                    {
-                      id: 'hold_all',
-                      label: 'Hold all comments for review',
-                      desc: 'Every comment requires manual creator approval.',
-                    },
-                    {
-                      id: 'disabled',
-                      label: 'Disable comments entirely',
-                      desc: 'Comments are turned off and existing comments hidden.',
-                    },
-                  ].map((option) => {
-                    const isSelected = commentsControl === option.id;
-                    return (
-                      <label
-                        key={option.id}
-                        className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
-                          isSelected
-                            ? 'border-sky-500 bg-sky-500/10 text-slate-900 dark:text-white'
-                            : 'border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="commentsControl"
-                          value={option.id}
-                          checked={isSelected}
-                          onChange={() => setCommentsControl(option.id as any)}
-                          className="mt-0.5 accent-sky-500"
-                        />
-                        <div className="min-w-0">
-                          <div className="text-xs font-bold leading-tight">{option.label}</div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">{option.desc}</div>
+                        <div className="space-y-2.5">
+                          {[
+                            {
+                              id: 'private' as const,
+                              title: 'Private',
+                              desc: 'Only you can watch your video.',
+                              icon: Lock,
+                            },
+                            {
+                              id: 'unlisted' as const,
+                              title: 'Unlisted',
+                              desc: 'Anyone with the video link can watch your video.',
+                              icon: EyeOff,
+                            },
+                            {
+                              id: 'public' as const,
+                              title: 'Public',
+                              desc: 'Everyone can watch your video.',
+                              icon: Globe,
+                            },
+                          ].map((opt) => {
+                            const Icon = opt.icon;
+                            const isSelected = visibility === opt.id;
+                            return (
+                              <label
+                                key={opt.id}
+                                className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'border-[#3EA6FF] bg-[#3EA6FF]/10'
+                                    : 'border-[var(--ink-faint)] hover:bg-[var(--card-hover)]'
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name="visibility"
+                                  checked={isSelected}
+                                  onChange={() => setVisibility(opt.id)}
+                                  className="mt-1 accent-[#3EA6FF]"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
+                                    <Icon className="h-4 w-4 text-[var(--ink-medium)]" />
+                                    <span>{opt.title}</span>
+                                  </div>
+                                  <p className="text-xs text-[var(--ink-medium)] mt-0.5">{opt.desc}</p>
+                                </div>
+                              </label>
+                            );
+                          })}
                         </div>
-                      </label>
-                    );
-                  })}
+                      </div>
+
+                      {/* Notify Followers Toggle */}
+                      <div className="rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] p-4 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <Bell className="h-4 w-4 text-[var(--ink-medium)] shrink-0" />
+                          <div>
+                            <div className="text-xs font-semibold text-[var(--ink)]">Notify Followers</div>
+                            <div className="text-[11px] text-[var(--ink-medium)]">
+                              Publish to Following feed and alert your channel followers
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={notifySubscribers}
+                          onClick={() => setNotifySubscribers(!notifySubscribers)}
+                          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
+                            notifySubscribers ? 'bg-[#3EA6FF]' : 'bg-[var(--ink-faint)]'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform mt-0.5 ${
+                              notifySubscribers ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
 
-              {/* SECTION D: NOTIFICATION TOGGLES & INTERACTION PREFERENCES */}
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/60 space-y-3.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
-                    <Bell className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                      Notification Toggles & Syndication
-                    </h4>
-                    <p className="text-[11px] text-slate-400">
-                      Configure automated follower delivery and community alerts
-                    </p>
-                  </div>
-                </div>
+                {/* RIGHT COLUMN: STICKY YOUTUBE STUDIO VIDEO PREVIEW CARD */}
+                <div className="lg:col-span-5 lg:sticky lg:top-0">
+                  <div className="rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] overflow-hidden">
+                    {/* Live Playable Preview */}
+                    <div className="relative aspect-video w-full bg-black">
+                      {resolvedVideoUrl ? (
+                        <video
+                          key={resolvedVideoUrl}
+                          src={resolvedVideoUrl}
+                          poster={activePoster}
+                          controls
+                          playsInline
+                          muted
+                          className="h-full w-full object-contain"
+                        />
+                      ) : (
+                        <img
+                          src={activePoster}
+                          alt="Video preview"
+                          className="h-full w-full object-cover"
+                        />
+                      )}
+                    </div>
 
-                <div className="space-y-3 pt-1">
-                  {/* Notify Followers Toggle */}
-                  <div className="flex items-center justify-between py-1">
-                    <div>
-                      <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                        Notify Followers
+                    {/* Preview Card Metadata (Exact YouTube Studio Style) */}
+                    <div className="p-4 space-y-3.5 text-xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-[var(--ink-medium)]">Video link</div>
+                          <div className="text-xs font-medium text-[#3EA6FF] truncate mt-0.5">
+                            {previewShareLink}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCopyPreviewLink}
+                          title="Copy video link"
+                          className="p-2 rounded-full hover:bg-[var(--card-hover)] text-[var(--ink-medium)] hover:text-[var(--ink)] shrink-0 transition-colors"
+                        >
+                          {copiedPreviewLink ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+                        </button>
                       </div>
-                      <div className="text-[11px] text-slate-400">
-                        Publish to Following feed and dispatch push notifications to followers
+
+                      <div>
+                        <div className="text-[11px] text-[var(--ink-medium)]">Filename</div>
+                        <div className="text-xs font-medium text-[var(--ink)] truncate mt-0.5 flex items-center gap-1.5">
+                          <FileVideo className="h-3.5 w-3.5 text-[var(--ink-medium)] shrink-0" />
+                          <span className="truncate">{file ? file.name : url || 'External Stream'}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-[var(--ink-faint)]">
+                        <div>
+                          <div className="text-[11px] text-[var(--ink-medium)]">Video quality</div>
+                          <div className="text-xs font-medium text-[var(--ink)] mt-0.5">
+                            {videoResolution} · {formatTime(videoDuration)}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="rounded bg-[var(--card-hover)] px-1.5 py-0.5 text-[10px] font-bold">SD</span>
+                          <span className="rounded bg-[var(--card-hover)] px-1.5 py-0.5 text-[10px] font-bold">HD</span>
+                        </div>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={notifySubscribers}
-                      onClick={() => setNotifySubscribers(!notifySubscribers)}
-                      className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        notifySubscribers ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-700'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                          notifySubscribers ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
                   </div>
-
-                  {/* Comment & Reply Push Alerts */}
-                  <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800">
-                    <div>
-                      <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                        Creator Comment Alerts
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        Send notifications to creator dashboard when viewers post top replies
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={notifyOnReplies}
-                      onClick={() => setNotifyOnReplies(!notifyOnReplies)}
-                      className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        notifyOnReplies ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-700'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                          notifyOnReplies ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
-
-                  {/* Allow Remix & Reels Reuse */}
-                  <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800">
-                    <div>
-                      <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                        Allow Reels & Audio Remixing
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        Allow other creators to sample this audio track for Vio streaming Shorts & Reels
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={allowRemix}
-                      onClick={() => setAllowRemix(!allowRemix)}
-                      className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        allowRemix ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-700'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                          allowRemix ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
-
-                  {/* Age Restriction Toggle */}
-                  <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800">
-                    <div>
-                      <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                        Age Restriction (18+)
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        Limit visibility to registered adult viewers (mature animation/cinematic content)
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={ageRestricted}
-                      onClick={() => setAgeRestricted(!ageRestricted)}
-                      className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        ageRestricted ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                          ageRestricted ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Navigation Actions */}
-              <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('details')}
-                  className="flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  <span>Back to Details</span>
-                </button>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handlePublish}
-                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-red-600/30 hover:brightness-110 active:scale-95 transition-all cursor-pointer"
-                  >
-                    <Zap className="h-3.5 w-3.5 fill-white" />
-                    <span>Publish Now</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('checks')}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 px-5 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                  >
-                    <span>Next: Checks</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
                 </div>
               </div>
             </div>
-          )}
 
-          {/* TAB 4: CHECKS & FINAL PUBLISH REVIEW */}
-          {activeTab === 'checks' && (
-            <div className="space-y-5">
-              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
-                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
-                  <ShieldCheck className="h-4 w-4" />
-                  <span>Automated Copyright & Safety Check: Passed</span>
-                </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                  No copyrighted audio or visual strikes were found on this video. Resolution verified at {videoResolution}.
-                </p>
+            {/* YOUTUBE STUDIO BOTTOM PROGRESS & ACTION BAR */}
+            <div className="shrink-0 border-t border-[var(--ink-faint)] bg-[var(--surface-elevated)]">
+              {/* Thin Live Progress Track along top of footer */}
+              <div className="h-[3px] w-full bg-[var(--ink-faint)] overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    uploadPhase === 'completed'
+                      ? 'bg-emerald-500'
+                      : uploadPhase === 'uploading' || uploadPhase === 'transcoding' || uploadPhase === 'checking'
+                      ? 'bg-[#FF0000]'
+                      : 'bg-[#3EA6FF]'
+                  }`}
+                  style={{
+                    width: `${
+                      uploadPhase === 'uploading' ||
+                      uploadPhase === 'transcoding' ||
+                      uploadPhase === 'checking' ||
+                      uploadPhase === 'completed'
+                        ? uploadProgress
+                        : ((currentStepIndex + 1) / STEPS.length) * 100
+                    }%`,
+                  }}
+                />
               </div>
 
-              {/* Video Preview Card */}
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 p-4 flex flex-col sm:flex-row gap-4">
-                <div className="relative w-full sm:w-48 aspect-video rounded-xl overflow-hidden bg-black shrink-0">
-                  <img
-                    src={customThumbnailUrl || selectedPoster || autoThumbnails[0]}
-                    alt="Thumbnail preview"
-                    className="w-full h-full object-cover"
-                  />
-                  <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-bold text-white">
-                    {formatTime(videoDuration)}
+              <div className="px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                {/* Left Live Upload / Processing Status */}
+                <div className="flex items-center gap-2.5 text-xs text-[var(--ink-medium)] min-w-0">
+                  {uploadPhase === 'uploading' || uploadPhase === 'transcoding' || uploadPhase === 'checking' ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-[#FF0000] shrink-0" />
+                  ) : uploadPhase === 'completed' ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 text-[#3EA6FF] shrink-0" />
+                  )}
+
+                  <span className="truncate font-medium text-[var(--ink)]">
+                    {uploadPhase === 'uploading' &&
+                      `Uploading ${uploadProgress}% (${uploadedBytes} / ${totalBytes}) · ${uploadSpeed}${
+                        etaSeconds > 0 ? ` · ${etaSeconds}s left` : ''
+                      }`}
+                    {uploadPhase === 'transcoding' && `Processing adaptive stream (${uploadProgress}%)...`}
+                    {uploadPhase === 'checking' && `Saving to Firestore (${uploadProgress}%)...`}
+                    {uploadPhase === 'completed' && 'Upload complete · Saved to Vio streaming'}
+                    {(uploadPhase === 'staged' || uploadPhase === 'idle') &&
+                      `${uploadSpeed} · ${file ? formatFileSize(file.size) : totalBytes}`}
                   </span>
                 </div>
 
-                <div className="flex-1 min-w-0 space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 text-[10px] font-bold capitalize">
-                      {visibility}
-                    </span>
-                    <span className="text-[10px] text-slate-400">•</span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      Category: {category}
-                    </span>
-                  </div>
+                {/* Right Stepper & Publish Buttons */}
+                <div className="flex items-center justify-end gap-2 shrink-0">
+                  {currentStepIndex > 0 && (
+                    <button
+                      type="button"
+                      disabled={isPublishing}
+                      onClick={handlePrevStep}
+                      className="min-h-[38px] inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors disabled:opacity-40"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                      <span>Back</span>
+                    </button>
+                  )}
 
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                    {title || 'Untitled Video'}
-                  </h4>
-
-                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
-                    {description || 'No description provided.'}
-                  </p>
-
-                  <div className="pt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400 border-t border-slate-200/50 dark:border-slate-700/50">
-                    <span>Like counts: <strong className="text-slate-700 dark:text-slate-200">{hideLikes ? 'Hidden' : 'Visible'}</strong></span>
-                    <span>Comments: <strong className="text-slate-700 dark:text-slate-200">{commentsControl.replace('_', ' ')}</strong></span>
-                    <span>Followers alert: <strong className="text-slate-700 dark:text-slate-200">{notifySubscribers ? 'Yes' : 'No'}</strong></span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('privacy')}
-                  className="flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  <span>Back to Privacy</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isPublishing || !currentUser}
-                  onClick={handlePublish}
-                  className={`flex items-center gap-2 rounded-xl px-7 py-3 text-xs font-bold text-white shadow-lg transition-all ${
-                    isPublishing || !currentUser
-                      ? 'bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-75'
-                      : 'bg-gradient-to-r from-red-600 via-rose-600 to-red-500 shadow-red-600/30 hover:brightness-110 active:scale-95 cursor-pointer'
-                  }`}
-                >
-                  {isPublishing ? (
+                  {activeStep !== 'visibility' && (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Uploading to Firebase ({uploadProgress}%)...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4" />
-                      <span>{!currentUser ? 'Sign In to Publish' : 'Publish Video to Vio streaming'}</span>
+                      <button
+                        type="button"
+                        disabled={isPublishing || signingInGoogle}
+                        onClick={() => {
+                          if (!currentUser) {
+                            handleInlineGoogleSignIn();
+                          } else {
+                            handlePublish();
+                          }
+                        }}
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-full border border-[var(--ink-faint)] px-4 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors disabled:opacity-40"
+                      >
+                        <Zap className="h-3.5 w-3.5 text-[#FF0000]" />
+                        <span>
+                          {!currentUser
+                            ? signingInGoogle
+                              ? 'Signing in...'
+                              : 'Sign in & Publish'
+                            : publishTarget === 'reel'
+                            ? 'Publish Reel'
+                            : 'Quick Publish'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={isPublishing}
+                        onClick={handleNextStep}
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-full bg-[var(--ink)] text-[var(--bg)] px-5 py-1.5 text-xs font-semibold hover:opacity-90 transition-opacity disabled:opacity-40"
+                      >
+                        <span>Next</span>
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
                     </>
                   )}
-                </button>
+
+                  {activeStep === 'visibility' && (
+                    <button
+                      type="button"
+                      disabled={isPublishing || signingInGoogle}
+                      onClick={() => {
+                        if (!currentUser) {
+                          handleInlineGoogleSignIn();
+                        } else {
+                          handlePublish();
+                        }
+                      }}
+                      className={`min-h-[38px] inline-flex items-center gap-2 rounded-full px-6 py-1.5 text-xs font-semibold text-white transition-all ${
+                        isPublishing || signingInGoogle
+                          ? 'bg-[var(--ink-faint)] text-[var(--ink-medium)] cursor-not-allowed'
+                          : 'bg-[#FF0000] hover:bg-[#CC0000] active:scale-95'
+                      }`}
+                    >
+                      {isPublishing ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <span>Uploading ({uploadProgress}%)</span>
+                        </>
+                      ) : uploadPhase === 'completed' ? (
+                        <>
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Published</span>
+                        </>
+                      ) : (
+                        <span>
+                          {!currentUser
+                            ? signingInGoogle
+                              ? 'Signing in...'
+                              : 'Sign in to Publish'
+                            : visibility === 'private'
+                            ? 'Save'
+                            : publishTarget === 'reel'
+                            ? 'Publish Reel'
+                            : 'Publish'}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -6,13 +6,12 @@ import {
   Bell,
   X,
   User,
-  LogIn,
   LogOut,
   LayoutDashboard,
   ArrowLeft,
   Settings,
   Plus,
-  Radio
+  UserCircle2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { NotificationsPanel } from './NotificationsPanel';
@@ -65,9 +64,26 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [voiceSearchActive, setVoiceSearchActive] = useState(false);
   const [voiceStatusText, setVoiceStatusText] = useState('Listening... Speak now');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  useEffect(() => {
+    if (!showUserMenu) return;
+    const handleOutside = (e: MouseEvent | TouchEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchstart', handleOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+    };
+  }, [showUserMenu]);
 
   const handleSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -148,15 +164,19 @@ export const Navbar: React.FC<NavbarProps> = ({
     currentUser?.photoURL ||
     'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
 
+  useEffect(() => {
+    setAvatarFailed(false);
+  }, [avatarUrl]);
+
   return (
-    <header className="sticky top-0 z-40 w-full min-h-[60px] sm:min-h-[64px] border-b border-slate-200/80 bg-white/95 px-2.5 sm:px-4 py-2 backdrop-blur-md transition-colors dark:border-slate-800/80 dark:bg-slate-950/95 flex items-center">
+    <header className="sticky top-0 z-40 w-full h-14 bg-[var(--bg)]/95 backdrop-blur-md px-3 sm:px-4 transition-colors flex items-center">
       {/* MOBILE SEARCH OVERLAY MODE */}
       {mobileSearchOpen ? (
-        <div className="flex w-full items-center gap-1.5 animate-in fade-in duration-150">
+        <div className="flex w-full items-center gap-2 animate-in fade-in duration-150">
           <button
             onClick={() => setMobileSearchOpen(false)}
             aria-label="Back"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors shrink-0"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--ink-medium)] hover:text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors shrink-0"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
@@ -165,17 +185,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             <input
               type="text"
               autoFocus
-              placeholder="Search Vio streaming videos, reels, channels..."
+              placeholder="Search Vio streaming"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleSearchKey}
-              className="w-full rounded-full border border-slate-300 bg-slate-50 py-2 pl-4 pr-9 text-sm text-slate-900 placeholder:text-slate-400 focus:border-red-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:border-red-500"
+              className="w-full rounded-full border border-[var(--ink-faint)] bg-[var(--surface)] py-2 pl-4 pr-9 text-sm text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[#3EA6FF] focus:outline-none"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
                 aria-label="Clear search"
-                className="absolute right-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+                className="absolute right-2.5 text-[var(--ink-medium)] hover:text-[var(--ink)] p-1"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -188,7 +208,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               setMobileSearchOpen(false);
             }}
             title="Search"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors shrink-0"
+            aria-label="Submit search"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--card-hover)] hover:bg-[var(--ink-faint)] text-[var(--ink)] transition-colors shrink-0"
           >
             <Search className="h-4 w-4" />
           </button>
@@ -196,22 +217,25 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={handleVoiceSearch}
             title="Voice search"
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 transition-all ${
-              voiceSearchActive ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-100 dark:bg-slate-800/60'
+            aria-label="Voice search"
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${
+              voiceSearchActive
+                ? 'bg-[#FF0000] text-white animate-pulse'
+                : 'bg-[var(--card-hover)] text-[var(--ink)] hover:bg-[var(--ink-faint)]'
             }`}
           >
             <Mic className="h-4 w-4" />
           </button>
         </div>
       ) : (
-        <div className="flex w-full items-center justify-between gap-2 sm:gap-6">
-          {/* Left Section: Hamburger & Vio Brand Mark (Never clipped) */}
-          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+        <div className="flex w-full items-center justify-between gap-2 sm:gap-4">
+          {/* Left Section: YouTube-style Hamburger + Vio Logo */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <button
               onClick={onToggleSidebar}
-              aria-label="Open menu drawer"
-              title="Open menu & preferences"
-              className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors"
+              aria-label="Toggle navigation guide"
+              title="Toggle menu"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors"
             >
               <Menu className="h-5 w-5" />
             </button>
@@ -225,43 +249,48 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </div>
 
-          {/* Center Section: Search Bar & Voice Microphone */}
-          <div className="hidden sm:flex flex-1 max-w-2xl items-center justify-center px-1 sm:px-4">
+          {/* Center Section: YouTube Connected Pill Search Bar + Circular Mic */}
+          <div className="hidden sm:flex flex-1 max-w-[620px] items-center justify-center px-2">
             <div className="relative flex w-full items-center">
-              <div className="relative flex w-full items-center">
-                <input
-                  type="text"
-                  placeholder="Search videos, reels, channels on Vio streaming..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={handleSearchKey}
-                  className="w-full rounded-l-full border border-r-0 border-slate-300 bg-slate-50/70 py-2 pl-4 pr-9 text-sm text-slate-900 placeholder:text-slate-400 focus:border-red-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900/60 dark:text-white dark:focus:border-red-500 dark:focus:bg-slate-900"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
+              <div className="flex flex-1 items-center h-10">
+                <div className="flex flex-1 items-center h-full rounded-l-full border border-[var(--ink-faint)] focus-within:border-[#3EA6FF] bg-[var(--bg)] pl-4 pr-2 transition-colors">
+                  <input
+                    type="text"
+                    placeholder="Search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={handleSearchKey}
+                    className="flex-1 bg-transparent text-sm text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:outline-none"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      aria-label="Clear search"
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
 
-              <button
-                onClick={onSearchSubmit}
-                title="Search"
-                className="flex h-[38px] items-center justify-center rounded-r-full border border-slate-300 bg-slate-100 px-5 text-slate-600 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
-              >
-                <Search className="h-4 w-4" />
-              </button>
+                <button
+                  onClick={onSearchSubmit}
+                  title="Search"
+                  aria-label="Search"
+                  className="flex h-full w-16 items-center justify-center rounded-r-full border border-l-0 border-[var(--ink-faint)] bg-[var(--card-hover)] hover:bg-[var(--ink-faint)] text-[var(--ink)] transition-colors shrink-0"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+              </div>
 
               <button
                 onClick={handleVoiceSearch}
                 title="Search with your voice"
-                className={`ml-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all ${
+                aria-label="Search with your voice"
+                className={`ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all ${
                   voiceSearchActive
-                    ? 'bg-red-600 text-white shadow-md animate-pulse ring-2 ring-red-400'
-                    : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 bg-slate-100 dark:bg-slate-800/60'
+                    ? 'bg-[#FF0000] text-white animate-pulse'
+                    : 'bg-[var(--card-hover)] text-[var(--ink)] hover:bg-[var(--ink-faint)]'
                 }`}
               >
                 <Mic className="h-4 w-4" />
@@ -269,44 +298,43 @@ export const Navbar: React.FC<NavbarProps> = ({
 
               {/* Active Voice Search Tooltip */}
               {voiceSearchActive && (
-                <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-slate-900 text-white px-3.5 py-1.5 rounded-full text-xs shadow-xl animate-in fade-in slide-in-from-top-1 whitespace-nowrap">
-                  <span className="h-2 w-2 rounded-full bg-red-500 animate-ping" />
+                <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#212121] text-[#F1F1F1] px-4 py-2 rounded-full border border-white/15 text-xs shadow-xl animate-in fade-in slide-in-from-top-1 whitespace-nowrap">
+                  <span className="h-2 w-2 rounded-full bg-[#FF0000] animate-ping" />
                   <span>{voiceStatusText}</span>
                   <button
                     onClick={() => setVoiceSearchActive(false)}
-                    className="ml-1 text-slate-400 hover:text-white"
+                    className="ml-1 text-white/60 hover:text-white"
                   >
-                    <X className="h-3 w-3" />
+                    <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Right Section: Mobile Search, Create, Settings, Notifications, Profile / Sign In */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Right Section: Mobile Search, + Create Pill, Bell, Avatar / Sign In Pill */}
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {/* Mobile Search Trigger */}
             <button
               onClick={() => setMobileSearchOpen(true)}
               aria-label="Search"
-              className="flex sm:hidden h-9 w-9 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors"
+              className="flex sm:hidden h-10 w-10 items-center justify-center rounded-full text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors"
             >
-              <Search className="h-4 w-4" />
+              <Search className="h-5 w-5" />
             </button>
 
-            {/* Create Video Shortcut */}
+            {/* + Create Pill Button (YouTube style) */}
             {onOpenCreate && (
               <button
                 onClick={onOpenCreate}
-                title="Upload video"
-                aria-label="Upload video"
-                className="hidden sm:flex h-9 w-9 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors"
+                title="Create & Upload"
+                aria-label="Create"
+                className="hidden sm:flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-[var(--card-hover)] hover:bg-[var(--ink-faint)] text-[var(--ink)] text-sm font-medium whitespace-nowrap shrink-0 transition-colors"
               >
-                <Plus className="h-5 w-5" />
+                <Plus className="h-4 w-4" />
+                <span>Create</span>
               </button>
             )}
-
-
 
             {/* Notifications Dropdown */}
             <div className="relative z-50">
@@ -316,11 +344,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                   setShowUserMenu(false);
                 }}
                 title="Notifications"
-                className="relative flex h-9 w-9 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors"
+                aria-label="Notifications"
+                className="relative flex h-10 w-10 items-center justify-center rounded-full text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors"
               >
-                <Bell className="h-4 w-4" />
+                <Bell className="h-5 w-5" />
                 {unreadCount > 0 && (
-                  <span className="absolute right-1 top-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white shadow-xs">
+                  <span className="absolute right-1 top-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-[#FF0000] text-[10px] font-bold text-white leading-none">
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
@@ -340,41 +369,66 @@ export const Navbar: React.FC<NavbarProps> = ({
               />
             </div>
 
-            {/* User Profile or Sign In Button (Tightly grouped with zero excessive gap) */}
+            {/* User Profile or YouTube-style Sign In Pill */}
             {currentUser ? (
-              <div className="relative">
+              <div ref={userMenuRef} className="relative">
                 <button
                   onClick={() => {
                     setShowUserMenu(!showUserMenu);
                     setShowNotifications(false);
                   }}
-                  className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full ring-2 ring-transparent hover:ring-red-500 transition-all focus:outline-none"
+                  aria-label="Account menu"
+                  className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full ring-1 ring-[var(--ink-faint)] hover:ring-[var(--ink-medium)] transition-all focus:outline-none bg-[var(--surface-elevated)] ml-1"
                 >
-                  <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                  {!avatarFailed ? (
+                    <img
+                      src={avatarUrl}
+                      alt="Avatar"
+                      referrerPolicy="no-referrer"
+                      onError={() => setAvatarFailed(true)}
+                      className="h-full w-full rounded-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-xs font-bold text-[var(--accent-ink)] uppercase">
+                      {(userProfile?.displayName || currentUser.displayName || 'V').charAt(0)}
+                    </span>
+                  )}
                 </button>
 
                 {showUserMenu && (
-                  <div className="absolute right-0 top-11 z-50 w-64 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900 text-xs animate-in fade-in slide-in-from-top-2 duration-150">
-                    <div className="flex items-center gap-3 p-2.5 border-b border-slate-100 dark:border-slate-800">
-                      <img src={avatarUrl} alt="Avatar" className="h-10 w-10 rounded-full object-cover shrink-0" />
+                  <div className="absolute right-0 top-11 z-50 w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--ink-faint)] bg-[var(--surface-elevated)] p-2 shadow-2xl transition-all text-xs animate-in fade-in slide-in-from-top-2 duration-150">
+                    <div className="flex items-center gap-3 p-2.5 border-b border-[var(--ink-faint)]">
+                      {!avatarFailed ? (
+                        <img
+                          src={avatarUrl}
+                          alt="Avatar"
+                          referrerPolicy="no-referrer"
+                          onError={() => setAvatarFailed(true)}
+                          className="h-10 w-10 rounded-full object-cover shrink-0 border border-[var(--ink-faint)]"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#FF0000]/15 text-sm font-bold text-[var(--accent-ink)] uppercase">
+                          {(userProfile?.displayName || currentUser.displayName || 'V').charAt(0)}
+                        </div>
+                      )}
                       <div className="min-w-0">
-                        <div className="font-bold text-slate-900 dark:text-white truncate">
+                        <div className="font-semibold text-sm text-[var(--ink)] truncate">
                           {userProfile?.displayName || currentUser.displayName || 'Creator'}
                         </div>
-                        <div className="text-[11px] text-slate-400 truncate">
+                        <div className="text-xs text-[var(--ink-medium)] truncate">
                           {userProfile?.handle || '@creator'}
                         </div>
-                        <div className="text-[10px] text-slate-500 truncate">{currentUser.email}</div>
+                        <div className="text-[11px] text-[var(--ink-medium)] truncate">{currentUser.email}</div>
                       </div>
                     </div>
 
-                    <div className="mt-1 space-y-0.5 text-slate-700 dark:text-slate-300">
+                    <div className="mt-1 space-y-0.5 text-[var(--ink)]">
                       <button
                         onClick={() => {
                           setShowUserMenu(false);
                           onOpenStudio();
                         }}
-                        className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors font-medium text-red-600 dark:text-red-400"
+                        className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--card-hover)] transition-colors font-medium text-[var(--accent-ink)]"
                       >
                         <LayoutDashboard className="h-4 w-4" />
                         <span>Creator Studio Dashboard</span>
@@ -385,9 +439,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                           setShowUserMenu(false);
                           onOpenProfile();
                         }}
-                        className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors font-medium"
+                        className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--card-hover)] transition-colors font-medium"
                       >
-                        <User className="h-4 w-4 text-slate-400" />
+                        <User className="h-4 w-4 text-[var(--ink-medium)]" />
                         <span>Profile Management</span>
                       </button>
 
@@ -397,21 +451,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                             setShowUserMenu(false);
                             onOpenSettings();
                           }}
-                          className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors font-medium"
+                          className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--card-hover)] transition-colors font-medium"
                         >
-                          <Settings className="h-4 w-4 text-slate-400" />
+                          <Settings className="h-4 w-4 text-[var(--ink-medium)]" />
                           <span>Settings & Preferences</span>
                         </button>
                       )}
 
-                      <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+                      <div className="my-1 border-t border-[var(--ink-faint)]" />
 
                       <button
                         onClick={() => {
                           setShowUserMenu(false);
                           signOutUser();
                         }}
-                        className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors font-medium"
+                        className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-colors font-medium"
                       >
                         <LogOut className="h-4 w-4" />
                         <span>Sign Out</span>
@@ -423,9 +477,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             ) : (
               <button
                 onClick={onOpenAuth}
-                className="flex items-center gap-1.5 rounded-full border border-slate-300 dark:border-slate-700 px-3.5 py-1.5 text-xs font-bold text-sky-600 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-slate-800 transition-all active:scale-95 shrink-0"
+                className="flex items-center gap-1.5 h-9 rounded-full border border-[var(--ink-faint)] hover:bg-[#3EA6FF]/10 hover:border-[#3EA6FF]/40 text-[#3EA6FF] px-3.5 text-sm font-medium whitespace-nowrap shrink-0 transition-colors active:scale-95"
               >
-                <LogIn className="h-4 w-4" />
+                <UserCircle2 className="h-5 w-5" />
                 <span>Sign in</span>
               </button>
             )}

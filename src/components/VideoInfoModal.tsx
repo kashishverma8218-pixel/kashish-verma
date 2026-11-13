@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, Info, HardDrive, Monitor, Clock, Tag } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { X, Info } from 'lucide-react';
 import { VideoItem, AspectRatioMode } from '../types/video';
 import { formatTime } from '../utils/formatTime';
 
@@ -16,11 +16,26 @@ export const VideoInfoModal: React.FC<VideoInfoModalProps> = ({
   video,
   aspectRatio,
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl transition-colors dark:border-slate-800 dark:bg-slate-900">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl transition-colors dark:border-slate-800 dark:bg-slate-900"
+      >
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <Info className="h-5 w-5 text-sky-500" />

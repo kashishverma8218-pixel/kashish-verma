@@ -37,6 +37,7 @@ export interface Comment {
   timestamp: string;
   likes: number;
   userLiked: boolean;
+  userDisliked?: boolean;
   replies?: CommentReply[];
 }
 

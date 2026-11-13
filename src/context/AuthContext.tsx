@@ -28,6 +28,7 @@ interface AuthContextType {
   userProfile: UserProfile | null;
   jwtToken: string | null;
   isAuthenticated: boolean;
+  isFirebaseAuthenticated: boolean;
   loading: boolean;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, displayName: string, handle: string) => Promise<void>;
@@ -46,8 +47,9 @@ const DEMO_BANNER = 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?a
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
+      const isLocal = localStorage.getItem('vio_auth_is_local') === 'true';
       const saved = localStorage.getItem('vio_auth_profile');
-      if (saved) {
+      if (isLocal && saved) {
         const p = JSON.parse(saved);
         return {
           uid: p.uid,
@@ -72,14 +74,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
     try {
+      const isLocal = localStorage.getItem('vio_auth_is_local') === 'true';
       const saved = localStorage.getItem('vio_auth_profile');
-      if (saved) return JSON.parse(saved);
+      if (isLocal && saved) return JSON.parse(saved);
     } catch {
       // ignore
     }
     return null;
   });
   const [loading, setLoading] = useState(true);
+  const [isFirebaseAuthenticated, setIsFirebaseAuthenticated] = useState<boolean>(() => Boolean(auth.currentUser?.uid));
 
   // Helper to store JWT token securely
   const storeJwtToken = (token: string) => {
@@ -161,13 +165,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
       if (user) {
+        localStorage.removeItem('vio_auth_is_local');
+        setIsFirebaseAuthenticated(true);
+        setCurrentUser(user);
         await fetchOrCreateProfile(user);
       } else {
-        // If no user in Firebase auth and no offline session, clear
+        setIsFirebaseAuthenticated(false);
+        const isLocal = localStorage.getItem('vio_auth_is_local') === 'true';
         const saved = localStorage.getItem('vio_auth_profile');
-        if (!saved) {
+        if (!isLocal || !saved) {
+          localStorage.removeItem('vio_auth_profile');
+          localStorage.removeItem('vio_auth_is_local');
+          setCurrentUser(null);
           setUserProfile(null);
         }
       }
@@ -211,6 +221,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: Date.now(),
         };
         setUserProfile(profile);
+        localStorage.setItem('vio_auth_is_local', 'true');
         localStorage.setItem('vio_auth_profile', JSON.stringify(profile));
         return;
       }
@@ -255,6 +266,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: Date.now(),
         };
         setUserProfile(profile);
+        localStorage.setItem('vio_auth_is_local', 'true');
         localStorage.setItem('vio_auth_profile', JSON.stringify(profile));
         return;
       }
@@ -265,6 +277,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithGoogle = async () => {
     try {
       const cred = await signInWithPopup(auth, googleProvider);
+      setIsFirebaseAuthenticated(true);
       setCurrentUser(cred.user);
       const token = await cred.user.getIdToken().catch(() => createJwtToken(cred.user.uid, cred.user.email || ''));
       storeJwtToken(token);
@@ -307,6 +320,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: Date.now(),
         };
         setUserProfile(demoProfile);
+        localStorage.setItem('vio_auth_is_local', 'true');
         localStorage.setItem('vio_auth_profile', JSON.stringify(demoProfile));
       }
     }
@@ -319,35 +333,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
     localStorage.removeItem('vio_auth_profile');
+    localStorage.removeItem('vio_auth_is_local');
     localStorage.removeItem('vio_jwt_token');
     sessionStorage.removeItem('vio_jwt_token');
     setJwtToken(null);
     setUserProfile(null);
     setCurrentUser(null);
+    setIsFirebaseAuthenticated(false);
   };
 
   const updateUserProfileData = async (updates: Partial<UserProfile>) => {
-    if (!currentUser) return;
-    const userDocRef = doc(db, 'users', currentUser.uid);
+    if (!currentUser && !userProfile) return;
+    const activeUid = currentUser?.uid || userProfile?.uid || 'local-user';
 
-    try {
-      await updateDoc(userDocRef, updates);
-    } catch {
-      // ignore if offline
-    }
-
-    if (updates.displayName || updates.photoURL) {
+    if (auth.currentUser && auth.currentUser.uid === activeUid) {
+      const userDocRef = doc(db, 'users', activeUid);
       try {
-        await updateProfile(currentUser, {
-          displayName: updates.displayName,
-          photoURL: updates.photoURL,
-        });
-      } catch {
-        // ignore
+        await updateDoc(userDocRef, updates);
+      } catch (err) {
+        console.warn('Could not update Firestore user doc:', err);
+      }
+
+      if (updates.displayName || (updates.photoURL && updates.photoURL.startsWith('http'))) {
+        try {
+          await updateProfile(auth.currentUser, {
+            displayName: updates.displayName,
+            photoURL: updates.photoURL && updates.photoURL.startsWith('http') ? updates.photoURL : undefined,
+          });
+        } catch {
+          // ignore if Firebase Auth rejects data URI or offline
+        }
       }
     }
 
-    setUserProfile((prev) => (prev ? { ...prev, ...updates } : null));
+    setUserProfile((prev) => {
+      const base: UserProfile = prev || {
+        uid: activeUid,
+        email: currentUser?.email || '',
+        displayName: 'Creator',
+        handle: '@creator',
+        photoURL: DEMO_AVATAR,
+        bannerURL: DEMO_BANNER,
+        bio: '',
+        subscribersCount: 0,
+        createdAt: Date.now(),
+      };
+      const merged = { ...base, ...updates };
+      try {
+        localStorage.setItem('vio_auth_profile', JSON.stringify(merged));
+      } catch (err) {
+        console.warn('Could not persist profile locally:', err);
+      }
+      return merged;
+    });
+
+    if (currentUser && (updates.displayName !== undefined || updates.photoURL !== undefined)) {
+      setCurrentUser((prev) =>
+        prev
+          ? ({
+              ...prev,
+              displayName: updates.displayName ?? prev.displayName,
+              photoURL: updates.photoURL ?? prev.photoURL,
+            } as User)
+          : prev
+      );
+    }
   };
 
   const verifyBackendSession = async (): Promise<{ success: boolean; token: string | null }> => {
@@ -375,6 +425,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         userProfile,
         jwtToken,
         isAuthenticated,
+        isFirebaseAuthenticated,
         loading,
         signInWithEmail,
         signUpWithEmail,

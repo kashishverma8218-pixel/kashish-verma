@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard,
   Film,
@@ -43,10 +43,12 @@ import {
 } from 'lucide-react';
 import { VideoItem, Channel, Comment } from '../types/video';
 import { formatTime } from '../utils/formatTime';
+import { DEFAULT_PLAYABLE_VIDEO_URL, sanitizePlayableVideoUrl } from '../services/streamingService';
 import { formatViews, formatSubscribers } from '../data/mockData';
 import { EditVideoModal } from './EditVideoModal';
 import { calculateRevenueSplit, estimateEarningsFromViews } from '../utils/revenueSharing';
 import { HlsStreamingMetricsPanel } from './HlsStreamingMetricsPanel';
+import { uploadImageAsset } from '../services/firebaseDatabaseService';
 
 interface CreatorDashboardProps {
   channel: Channel;
@@ -78,6 +80,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'unlisted' | 'private'>('all');
   const [editingVideo, setEditingVideo] = useState<VideoItem | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Revenue Sharing Calculator State
   const [calcEarningsInput, setCalcEarningsInput] = useState<number>(3500);
@@ -106,6 +109,38 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   const [channelAvatar, setChannelAvatar] = useState(channel.avatar);
   const [channelBanner, setChannelBanner] = useState(channel.banner);
   const [customizationSaved, setCustomizationSaved] = useState(false);
+  const [customUploadError, setCustomUploadError] = useState<string | null>(null);
+  const [customUploading, setCustomUploading] = useState<'avatar' | 'banner' | null>(null);
+  const avatarUploadRef = useRef<HTMLInputElement>(null);
+  const bannerUploadRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setChannelName(channel.name);
+    setChannelHandle(channel.handle);
+    setChannelBio(channel.bio);
+    setChannelAvatar(channel.avatar);
+    setChannelBanner(channel.banner);
+  }, [channel]);
+
+  const handleChannelImageUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    field: 'avatar' | 'banner'
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setCustomUploadError(null);
+    setCustomUploading(field);
+    try {
+      const res = await uploadImageAsset(file, 'profileImages');
+      if (field === 'avatar') setChannelAvatar(res.url);
+      else setChannelBanner(res.url);
+    } catch (err: any) {
+      setCustomUploadError(err?.message || 'Could not process image file.');
+    } finally {
+      setCustomUploading(null);
+    }
+  };
 
   // Channel Specific Videos
   const channelVideos = videos.filter((v) => v.channelId === channel.id);
@@ -165,6 +200,10 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             <img
               src={channel.avatar}
               alt={channel.name}
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                e.currentTarget.style.opacity = '0.4';
+              }}
               className="h-16 w-16 rounded-2xl object-cover ring-2 ring-slate-200 dark:ring-slate-700 shadow-md shrink-0"
             />
             <div>
@@ -311,6 +350,10 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                     <img
                       src={latestVideo.poster}
                       alt={latestVideo.title}
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.currentTarget.style.opacity = '0.4';
+                      }}
                       className="h-full w-full object-cover transition-transform group-hover:scale-105"
                     />
                     <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -512,16 +555,16 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {/* Search in channel */}
-              <div className="relative">
+              <div className="relative flex-1 min-w-[140px] sm:flex-initial">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Filter videos..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:outline-none"
+                  className="w-full min-h-[40px] rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:outline-none"
                 />
               </div>
 
@@ -529,7 +572,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               <select
                 value={visibilityFilter}
                 onChange={(e) => setVisibilityFilter(e.target.value as any)}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:outline-none"
+                className="min-h-[40px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:outline-none"
               >
                 <option value="all">All Visibility</option>
                 <option value="public">Public</option>
@@ -539,7 +582,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
 
               <button
                 onClick={onOpenUpload}
-                className="flex items-center gap-1.5 rounded-xl bg-red-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-red-500 shrink-0"
+                className="min-h-[40px] flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-red-500 shrink-0 cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Upload</span>
@@ -604,7 +647,15 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                               onClick={() => onPlayVideo(vid)}
                               className="relative h-14 w-24 shrink-0 overflow-hidden rounded-xl bg-black cursor-pointer group/thumb"
                             >
-                              <img src={vid.poster} alt={vid.title} className="h-full w-full object-cover" />
+                              <img
+                                src={vid.poster}
+                                alt={vid.title}
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  e.currentTarget.style.opacity = '0.4';
+                                }}
+                                className="h-full w-full object-cover"
+                              />
                               <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover/thumb:opacity-100 transition-opacity">
                                 <Play className="h-4 w-4 fill-white text-white" />
                               </div>
@@ -665,40 +716,66 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
 
                         {/* Quick Actions */}
                         <td className="py-3 px-2 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => onPlayVideo(vid)}
-                              title="Play Video"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-sky-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                            >
-                              <Play className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => setEditingVideo(vid)}
-                              title="Edit Details"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                            >
-                              <Edit3 className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => handleCopyLink(vid.id)}
-                              title="Copy Link"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                            >
-                              {isCopied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (window.confirm(`Are you sure you want to delete "${vid.title}"?`)) {
+                          {confirmDeleteId === vid.id ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
                                   onDeleteVideo(vid.id);
-                                }
-                              }}
-                              title="Delete Video"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
+                                  setConfirmDeleteId(null);
+                                }}
+                                className="min-h-[34px] rounded-lg bg-rose-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-rose-500 cursor-pointer"
+                              >
+                                Confirm Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="min-h-[34px] rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => onPlayVideo(vid)}
+                                title="Play Video"
+                                aria-label={`Play ${vid.title}`}
+                                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                              >
+                                <Play className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingVideo(vid)}
+                                title="Edit Details"
+                                aria-label={`Edit ${vid.title}`}
+                                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-slate-400 hover:text-amber-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                              >
+                                <Edit3 className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyLink(vid.id)}
+                                title="Copy Link"
+                                aria-label={`Copy link for ${vid.title}`}
+                                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-slate-400 hover:text-emerald-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                              >
+                                {isCopied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(vid.id)}
+                                title="Delete Video"
+                                aria-label={`Delete ${vid.title}`}
+                                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -802,6 +879,10 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                     <img
                       src={comment.authorAvatar}
                       alt={comment.authorName}
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.currentTarget.style.opacity = '0.4';
+                      }}
                       className="h-9 w-9 rounded-full object-cover shrink-0 ring-1 ring-slate-200 dark:ring-slate-700"
                     />
                     <div className="min-w-0">
@@ -896,34 +977,103 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               />
             </div>
 
+            {customUploadError && (
+              <div className="rounded-xl bg-rose-500/10 p-3 text-xs text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                {customUploadError}
+              </div>
+            )}
+
             <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Profile Avatar URL
-              </label>
-              <input
-                type="url"
-                value={channelAvatar}
-                onChange={(e) => setChannelAvatar(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Profile Photo / Avatar
+                </label>
+                <button
+                  type="button"
+                  onClick={() => avatarUploadRef.current?.click()}
+                  disabled={customUploading !== null}
+                  className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:border-red-500 hover:text-red-500 transition-colors cursor-pointer"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>{customUploading === 'avatar' ? 'Uploading...' : 'Upload Photo'}</span>
+                </button>
+                <input
+                  ref={avatarUploadRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleChannelImageUpload(e, 'avatar')}
+                  className="hidden"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <img
+                  src={channelAvatar || channel.avatar}
+                  alt="Avatar preview"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.style.opacity = '0.4';
+                  }}
+                  className="h-12 w-12 rounded-full object-cover ring-1 ring-slate-300 dark:ring-slate-700 shrink-0"
+                />
+                <input
+                  type="url"
+                  value={channelAvatar.startsWith('data:') ? '' : channelAvatar}
+                  placeholder="Or paste avatar image URL..."
+                  onChange={(e) => setChannelAvatar(e.target.value)}
+                  className="w-full min-h-[42px] rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-base sm:text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Panoramic Banner URL
-              </label>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Panoramic Banner
+                </label>
+                <button
+                  type="button"
+                  onClick={() => bannerUploadRef.current?.click()}
+                  disabled={customUploading !== null}
+                  className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:border-red-500 hover:text-red-500 transition-colors cursor-pointer"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>{customUploading === 'banner' ? 'Uploading...' : 'Upload Banner'}</span>
+                </button>
+                <input
+                  ref={bannerUploadRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleChannelImageUpload(e, 'banner')}
+                  className="hidden"
+                />
+              </div>
+              {(channelBanner || channel.banner) && (
+                <div className="mb-2 h-24 w-full overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-900">
+                  <img
+                    src={channelBanner || channel.banner}
+                    alt="Channel banner preview"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      e.currentTarget.style.opacity = '0.35';
+                    }}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+              )}
               <input
                 type="url"
-                value={channelBanner}
+                value={channelBanner.startsWith('data:') ? '' : channelBanner}
+                placeholder="Or paste banner image URL..."
                 onChange={(e) => setChannelBanner(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className="w-full min-h-[42px] rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-base sm:text-xs text-slate-900 focus:border-red-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
             </div>
 
             <div className="pt-2 flex justify-end">
               <button
                 type="submit"
-                className="flex items-center gap-2 rounded-xl bg-red-600 px-6 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-red-500 active:scale-95 transition-all"
+                disabled={customUploading !== null}
+                className="min-h-[44px] w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-red-600 px-6 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-red-500 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
               >
                 <Save className="h-4 w-4" />
                 <span>Save Channel Changes</span>
@@ -1138,6 +1288,10 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                                 <img
                                   src={v.poster}
                                   alt=""
+                                  referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    e.currentTarget.style.opacity = '0.4';
+                                  }}
                                   className="h-10 w-16 rounded-lg object-cover ring-1 ring-slate-200 dark:ring-slate-700 shrink-0"
                                 />
                                 <span className="font-bold text-slate-900 dark:text-white line-clamp-1 max-w-[200px]">
@@ -1248,15 +1402,24 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                   <div
                     className={`relative overflow-hidden rounded-2xl bg-slate-900 transition-all duration-300 ${
                       aiTools.shortsFormat
-                        ? 'w-[280px] h-[480px] aspect-[9/16]'
+                        ? 'w-[min(280px,100%)] aspect-[9/16] max-h-[65vh]'
                         : 'w-full aspect-video max-h-[460px]'
                     }`}
                   >
                     <video
-                      key={currentEditVideo?.id}
-                      src={currentEditVideo?.url}
+                      key={currentEditVideo?.id || 'studio-preview'}
+                      src={sanitizePlayableVideoUrl(currentEditVideo?.url, currentEditVideo?.id, 'video', false)}
                       poster={currentEditVideo?.poster}
                       controls
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (target.dataset.fallbackApplied === 'true') return;
+                        if (target.src !== DEFAULT_PLAYABLE_VIDEO_URL) {
+                          target.dataset.fallbackApplied = 'true';
+                          target.src = DEFAULT_PLAYABLE_VIDEO_URL;
+                          target.load();
+                        }
+                      }}
                       className={`w-full h-full object-cover transition-all ${
                         aiTools.lutGrade ? 'saturate-125 contrast-110 brightness-105' : ''
                       }`}

@@ -237,7 +237,7 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
               >
                 {videos.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {v.title.slice(0, 32)}...
+                    {v.title.length > 32 ? `${v.title.slice(0, 32)}...` : v.title}
                   </option>
                 ))}
               </select>

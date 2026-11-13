@@ -24,32 +24,25 @@ export const VioLogo: React.FC<VioLogoProps> = ({
   };
 
   return (
-    <div className={`flex items-center gap-2 select-none shrink-0 ${className}`}>
-      {/* User-submitted Vio Brand Logo Mark */}
-      <div className={`relative ${iconSizes[size]} shrink-0 flex items-center justify-center overflow-hidden rounded-xl bg-slate-900/10 dark:bg-white/10 ring-1 ring-black/5 dark:ring-white/10 shadow-xs`}>
+    <div className={`flex items-center gap-2.5 select-none shrink-0 ${className}`}>
+      {/* Official Vio Brand Logo Mark */}
+      <div className={`relative ${iconSizes[size]} shrink-0 flex items-center justify-center overflow-hidden rounded-[4px] border border-[var(--ink-faint)] bg-[#141416] shadow-xs`}>
         <img
           src="/assets/logo.png"
           alt="Vio streaming"
+          referrerPolicy="no-referrer"
           className="h-full w-full object-contain p-0.5 transition-transform group-hover:scale-105"
         />
       </div>
 
       {showWordmark && (
-        <div className="flex flex-col leading-none">
-          <div className="flex items-center tracking-tight">
-            <span
-              className={`font-black ${textSizes[size]} bg-gradient-to-r from-purple-600 via-pink-600 to-amber-500 bg-clip-text text-transparent`}
-              style={{ fontFamily: "'Outfit', 'Plus Jakarta Sans', sans-serif" }}
-            >
-              Vio
-            </span>
-            <span className="ml-1 text-[11px] sm:text-[13px] font-bold tracking-tight text-slate-800 dark:text-slate-100 lowercase">
-              streaming
-            </span>
-            <span className="ml-1.5 hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-red-500/10 text-red-500 dark:bg-red-950/60 dark:text-red-400">
-              Live
-            </span>
-          </div>
+        <div className="flex items-center gap-2 leading-none whitespace-nowrap">
+          <span className={`font-display font-extrabold ${textSizes[size]} tracking-[-0.03em] text-[var(--accent-ink)] uppercase`}>
+            VIO
+          </span>
+          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--ink)]/75">
+            streaming
+          </span>
         </div>
       )}
     </div>

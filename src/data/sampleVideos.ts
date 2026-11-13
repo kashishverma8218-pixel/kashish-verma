@@ -14,7 +14,7 @@ Chapters:
 06:05 Retaliation & Forest Chase
 08:20 The Flying Squirrel Showdown
 09:15 Peaceful Meadow & Outro`,
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    url: 'https://media.w3.org/2010/05/bunny/movie.mp4',
     poster: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-blender',
     author: 'Blender Foundation',
@@ -37,7 +37,7 @@ Chapters:
 00:15 The Memory of Scales
 00:32 Mountain Ruins Confrontation
 00:45 The Quest Continues`,
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+    url: 'https://download.blender.org/durian/trailer/sintel_trailer-720p.mp4',
     poster: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-blender',
     author: 'Durian Open Movie Team',
@@ -62,7 +62,7 @@ Chapters:
 07:35 Emotional Reconciliation
 09:50 Final Defense & Rocket Launch
 11:20 Aftermath & Horizon`,
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+    url: 'https://archive.org/download/Tears-of-Steel/tears_of_steel_720p.mp4',
     poster: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-scifi',
     author: 'Mango Open Movie Team',
@@ -86,7 +86,7 @@ Chapters:
 05:40 Emo's Skepticism & Disruption
 07:55 The Machine Awakens
 09:40 The Final Stand`,
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+    url: 'https://archive.org/download/ElephantsDream/ed_hd.mp4',
     poster: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-openfilm',
     author: 'Orange Open Movie Project',
@@ -102,7 +102,7 @@ Chapters:
     id: 'sample-for-bigger-blazes',
     title: 'Chromecast Nature: Blazes',
     description: 'High-definition showcase capturing dramatic campfire embers, thermal lighting, and glowing night outdoor ambiance.',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    url: 'https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_1MB.mp4',
     poster: 'https://images.unsplash.com/photo-1525972385311-b1e06ff4e815?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-nature',
     author: 'Google Demo Reel',
@@ -118,7 +118,7 @@ Chapters:
     id: 'sample-for-bigger-escapes',
     title: 'Chromecast Nature: Escapes',
     description: 'Vivid scenic exploration highlighting high alpine waterways, rushing mountain streams, and majestic wilderness landscapes.',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
     poster: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1200&q=80',
     channelId: 'channel-nature',
     author: 'Google Demo Reel',

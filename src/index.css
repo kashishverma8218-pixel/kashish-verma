@@ -3,18 +3,49 @@
 
 @layer base {
   :root {
-    --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
+    --font-display: 'Syne', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    --bg: #FFFFFF;
+    --surface: #F8F8F8;
+    --surface-elevated: #FFFFFF;
+    --card-hover: #F2F2F2;
+    --thumb-bg: #E5E5E5;
+    --ink: #0F0F0F;
+    --ink-faint: rgba(0, 0, 0, 0.1);
+    --ink-medium: #606060;
+    --accent: #FF0000;
+    --accent-ink: #CC0000;
+  }
+
+  .dark {
+    --bg: #0F0F0F;
+    --surface: #181818;
+    --surface-elevated: #212121;
+    --card-hover: #272727;
+    --thumb-bg: #181818;
+    --ink: #F1F1F1;
+    --ink-faint: rgba(255, 255, 255, 0.1);
+    --ink-medium: #AAAAAA;
+    --accent: #FF0000;
+    --accent-ink: #FF4E45;
   }
 
   body {
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: #0b0f17;
-    color: #f1f5f9;
+    background-color: var(--bg);
+    color: var(--ink);
     overflow-x: hidden;
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
   }
 }
 
@@ -37,15 +68,15 @@ input[type="range"]::-webkit-slider-thumb {
   height: 14px;
   width: 14px;
   border-radius: 9999px;
-  background: #38bdf8;
+  background: #FF0000;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 8px rgba(255, 0, 0, 0.45);
   transition: transform 0.15s ease, background-color 0.15s ease;
 }
 
 input[type="range"]:hover::-webkit-slider-thumb {
   transform: scale(1.25);
-  background: #60a5fa;
+  background: #CC0000;
 }
 
 /* Firefox sliders */
@@ -53,16 +84,16 @@ input[type="range"]::-moz-range-thumb {
   height: 14px;
   width: 14px;
   border-radius: 9999px;
-  background: #38bdf8;
+  background: #FF0000;
   border: none;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 8px rgba(255, 0, 0, 0.45);
   transition: transform 0.15s ease, background-color 0.15s ease;
 }
 
 input[type="range"]:hover::-moz-range-thumb {
   transform: scale(1.25);
-  background: #60a5fa;
+  background: #CC0000;
 }
 
 /* Custom scrollbar */

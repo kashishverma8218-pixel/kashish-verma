@@ -33,26 +33,26 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
   if (subscribedChannels.length === 0) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-12 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 mx-auto mb-4">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] mx-auto mb-4">
           <Tv className="h-8 w-8" />
         </div>
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+        <h2 className="text-xl font-bold text-[var(--ink)]">
           Don't miss new videos
         </h2>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+        <p className="mt-2 text-sm text-[var(--ink-medium)] max-w-md mx-auto">
           Follow your favorite animation studios, VFX laboratories, and nature creators to see their latest releases here.
         </p>
 
         {/* Recommended channels strip */}
         <div className="mt-8 text-left">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)] mb-4">
             Recommended Channels to Follow
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {allChannels.map((ch) => (
               <div
                 key={ch.id}
-                className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-xs dark:border-slate-800 dark:bg-slate-900"
+                className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-3.5 shadow-xs"
               >
                 <div
                   onClick={() => onSelectChannel(ch.id)}
@@ -61,21 +61,26 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
                   <img
                     src={ch.avatar}
                     alt={ch.name}
-                    className="h-10 w-10 rounded-full object-cover shrink-0"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      e.currentTarget.style.opacity = '0.4';
+                    }}
+                    className="h-10 w-10 rounded-full object-cover shrink-0 bg-[var(--bg)]"
                   />
                   <div className="min-w-0">
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                    <h4 className="text-xs font-bold text-[var(--ink)] truncate">
                       {ch.name}
                     </h4>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    <p className="text-[11px] text-[var(--ink-medium)]">
                       {formatSubscribers(ch.subscribersCount)}
                     </p>
                   </div>
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => onToggleSubscribe(ch.id)}
-                  className="rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-red-500 shrink-0 transition-colors shadow-xs active:scale-95"
+                  className="min-h-[40px] rounded-full bg-[#FF0000] px-4 py-2 text-xs font-bold text-white hover:bg-[#CC0000] shrink-0 transition-all shadow-xs active:scale-95 cursor-pointer"
                 >
                   Follow
                 </button>
@@ -91,24 +96,29 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
     <div className="mx-auto max-w-7xl px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
       {/* Subscribed Channels Avatar Bar */}
       <div>
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)] mb-3">
           Channels You Follow ({subscribedChannels.length})
         </h3>
         <div className="flex items-center gap-4 overflow-x-auto pb-2 scrollbar-none">
           {subscribedChannels.map((channel) => (
             <button
               key={channel.id}
+              type="button"
               onClick={() => onSelectChannel(channel.id)}
-              className="group flex flex-col items-center gap-1.5 shrink-0 focus:outline-none"
+              className="group min-w-[68px] flex flex-col items-center gap-1.5 shrink-0 focus:outline-none cursor-pointer"
             >
-              <div className="relative h-14 w-14 rounded-full overflow-hidden ring-2 ring-transparent group-hover:ring-red-500 transition-all">
+              <div className="relative h-14 w-14 rounded-full overflow-hidden ring-2 ring-transparent group-hover:ring-[#FF0000] transition-all bg-[var(--surface)]">
                 <img
                   src={channel.avatar}
                   alt={channel.name}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.style.opacity = '0.4';
+                  }}
                   className="h-full w-full object-cover"
                 />
               </div>
-              <span className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate max-w-[80px] group-hover:text-red-500 transition-colors">
+              <span className="text-xs font-medium text-[var(--ink)] truncate max-w-[80px] group-hover:text-[var(--accent-ink)] transition-colors">
                 {channel.name}
               </span>
             </button>
@@ -118,15 +128,15 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
 
       {/* Latest Uploads Feed */}
       <div>
-        <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+        <div className="flex items-center justify-between pb-4 border-b border-[var(--ink-faint)]">
+          <h2 className="text-lg font-bold text-[var(--ink)]">
             Latest from Followed Channels
           </h2>
-          <span className="text-xs text-slate-500">{subVideos.length} videos</span>
+          <span className="text-xs text-[var(--ink-medium)]">{subVideos.length} videos</span>
         </div>
 
         {subVideos.length === 0 ? (
-          <p className="py-12 text-center text-sm text-slate-400">
+          <p className="py-12 text-center text-sm text-[var(--ink-medium)]">
             No recent uploads from followed channels.
           </p>
         ) : (

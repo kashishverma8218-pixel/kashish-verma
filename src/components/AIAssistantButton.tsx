@@ -189,35 +189,35 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
         onClick={() => setIsOpen(true)}
         title="Open Vio streaming AI Assistant"
         aria-label="Vio streaming AI Assistant"
-        className="fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-40 w-12 h-12 rounded-full shadow-2xl shadow-purple-600/40 flex items-center justify-center bg-gradient-to-tr from-purple-600 via-indigo-600 to-pink-500 text-white hover:scale-110 active:scale-95 transition-all cursor-pointer ring-2 ring-white/20 dark:ring-white/10 group"
+        className="fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-40 w-12 h-12 sm:w-14 sm:h-14 rounded-[4px] flex items-center justify-center bg-[#FF0000] hover:bg-[#CC0000] text-white shadow-[0_12px_30px_rgba(255,0,0,0.28)] hover:scale-105 active:scale-95 transition-all cursor-pointer group"
       >
-        <Sparkles className="h-5 w-5 animate-pulse group-hover:rotate-12 transition-transform" />
+        <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 group-hover:rotate-12 transition-transform" />
       </button>
 
       {/* Assistant Modal / Sliding Panel */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-end sm:justify-end p-0 sm:p-6 bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="relative w-full sm:w-[440px] max-h-[85vh] sm:max-h-[660px] rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-end sm:justify-end p-0 sm:p-6 bg-black/55 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="relative w-full sm:w-[440px] max-h-[85vh] sm:max-h-[660px] rounded-t-xl sm:rounded-[4px] border border-[var(--ink-faint)] bg-[var(--surface)] shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-200">
             {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-purple-600/10 via-pink-600/5 to-transparent">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--ink-faint)] bg-[var(--bg)]">
               <div className="flex items-center gap-2.5">
-                <div className="h-8 w-8 rounded-xl bg-gradient-to-tr from-purple-600 to-pink-500 text-white flex items-center justify-center shadow-md shadow-purple-500/20">
+                <div className="h-8 w-8 rounded-[4px] bg-[#FF0000] text-white flex items-center justify-center shadow-md shadow-[#FF0000]/20">
                   <Sparkles className="h-4 w-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <h3 className="text-sm font-bold text-[var(--ink)] flex items-center gap-1.5">
                     Vio streaming AI Assistant
-                    <span className="rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 text-[10px] px-2 py-0.2 font-semibold">
-                      Search & Pro
+                    <span className="rounded-[2px] border border-[var(--accent-ink)]/40 text-[var(--accent-ink)] font-mono text-[10px] px-1.5 py-0.5 font-bold uppercase tracking-wider">
+                      Discovery
                     </span>
                   </h3>
-                  <p className="text-[10px] text-slate-400">Media Discovery & Creator Intelligence</p>
+                  <p className="text-[10px] text-[var(--ink-medium)]">Media Discovery & Creator Intelligence</p>
                 </div>
               </div>
 
               <button
                 onClick={() => setIsOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                className="p-1.5 rounded-[4px] text-[var(--ink-medium)] hover:text-[var(--ink)] hover:bg-[var(--ink-faint)] transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -233,10 +233,10 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
                   }`}
                 >
                   <div
-                    className={`max-w-[90%] rounded-2xl p-3 leading-relaxed whitespace-pre-wrap ${
+                    className={`max-w-[90%] rounded-[4px] p-3 leading-relaxed whitespace-pre-wrap ${
                       m.role === 'user'
-                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xs'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/50 dark:border-slate-700/50'
+                        ? 'bg-[#FF0000] text-white font-semibold shadow-xs'
+                        : 'bg-[var(--bg)] text-[var(--ink)] border border-[var(--ink-faint)]'
                     }`}
                   >
                     <p>{m.content}</p>
@@ -249,25 +249,26 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
                           return (
                             <div
                               key={vid.id}
-                              className="group/card flex items-center gap-2.5 p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 shadow-xs hover:border-purple-500 transition-all"
+                              className="group/card flex items-center gap-2.5 p-2 rounded-[4px] bg-[var(--surface)] border border-[var(--ink-faint)] shadow-xs hover:border-[var(--accent-ink)] transition-all"
                             >
-                              <div className="relative w-20 h-12 rounded-lg overflow-hidden shrink-0 bg-slate-950">
+                              <div className="relative w-20 h-12 rounded-[2px] overflow-hidden shrink-0 bg-black">
                                 <img
                                   src={vid.poster}
                                   alt={vid.title}
+                                  referrerPolicy="no-referrer"
                                   className="w-full h-full object-cover group-hover/card:scale-105 transition-transform"
                                 />
-                                <span className="absolute bottom-1 right-1 px-1 py-0.2 rounded bg-black/80 text-[9px] font-bold text-white">
+                                <span className="absolute bottom-1 right-1 px-1 py-0.2 rounded-[2px] bg-black/80 text-[9px] font-mono font-bold text-white">
                                   {vid.duration}
                                 </span>
                               </div>
 
                               <div className="flex-1 min-w-0">
-                                <h4 className="font-semibold text-slate-900 dark:text-white truncate text-[11px] leading-tight">
+                                <h4 className="font-semibold text-[var(--ink)] truncate text-[11px] leading-tight">
                                   {vid.title}
                                 </h4>
-                                <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                                  {channel?.name || 'Vio Creator'} • {vid.views.toLocaleString()} views
+                                <p className="text-[10px] text-[var(--ink-medium)] truncate mt-0.5">
+                                  {channel?.name || 'Vio Creator'} · {vid.views.toLocaleString()} views
                                 </p>
                               </div>
 
@@ -279,7 +280,7 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
                                   }
                                 }}
                                 title="Play now"
-                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold shrink-0 transition-colors shadow-xs"
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-[2px] bg-[#FF0000] hover:bg-[#CC0000] text-white text-[10px] font-bold shrink-0 transition-colors shadow-xs"
                               >
                                 <Play className="h-3 w-3 fill-current" />
                                 <span>Play</span>
@@ -295,12 +296,12 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
                         <button
                           onClick={() => handleCopy(m.content, idx)}
                           title="Copy response"
-                          className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors"
+                          className="flex items-center gap-1 text-[10px] text-[var(--ink-medium)] hover:text-[var(--accent-ink)] transition-colors"
                         >
                           {copiedIndex === idx ? (
                             <>
-                              <Check className="h-3 w-3 text-emerald-500" />
-                              <span className="text-emerald-500 font-semibold">Copied</span>
+                              <Check className="h-3 w-3 text-[var(--accent-ink)]" />
+                              <span className="text-[var(--accent-ink)] font-semibold">Copied</span>
                             </>
                           ) : (
                             <>
@@ -320,7 +321,7 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
                         <button
                           key={aIdx}
                           onClick={() => handleSend(act)}
-                          className="rounded-lg bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/50 px-2.5 py-1 text-[11px] font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                          className="rounded-[2px] bg-[var(--bg)] border border-[var(--ink-faint)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ink)]/85 hover:border-[var(--accent-ink)] hover:text-[var(--accent-ink)] transition-colors"
                         >
                           {act}
                         </button>
@@ -331,15 +332,15 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
               ))}
 
               {loading && (
-                <div className="flex items-center gap-2 text-slate-400 italic text-[11px] p-2">
-                  <Sparkles className="h-3.5 w-3.5 animate-spin text-purple-500" />
+                <div className="flex items-center gap-2 text-[var(--ink-medium)] italic text-[11px] p-2">
+                  <Sparkles className="h-3.5 w-3.5 animate-spin text-[var(--accent-ink)]" />
                   <span>Vio AI is parsing media query...</span>
                 </div>
               )}
             </div>
 
             {/* Input Footer */}
-            <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60">
+            <div className="p-3 border-t border-[var(--ink-faint)] bg-[var(--bg)]">
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -352,12 +353,12 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
                   placeholder="Search video clips, ask titles, tags, or revenue..."
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:border-purple-500 focus:outline-none"
+                  className="flex-1 rounded-[2px] border border-[var(--ink-faint)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[var(--accent-ink)] focus:outline-none"
                 />
                 <button
                   type="submit"
                   disabled={!prompt.trim() || loading}
-                  className="h-8 w-8 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white flex items-center justify-center disabled:opacity-50 hover:brightness-110 transition-all shrink-0"
+                  className="h-8 w-8 rounded-[2px] bg-[#FF0000] text-white flex items-center justify-center disabled:opacity-50 hover:bg-[#CC0000] transition-all shrink-0"
                 >
                   <Send className="h-3.5 w-3.5" />
                 </button>

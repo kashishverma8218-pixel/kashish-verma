@@ -5,26 +5,36 @@ import {
   MessageSquare,
   ArrowUpDown,
   Send,
-  MoreVertical,
-  CheckCircle2
+  Trash2
 } from 'lucide-react';
-import { Comment, CommentReply } from '../types/video';
+import { Comment } from '../types/video';
 
 interface CommentSectionProps {
   videoId: string;
   comments: Comment[];
   onAddComment: (videoId: string, content: string) => void;
   onLikeComment: (commentId: string) => void;
+  onDislikeComment?: (commentId: string) => void;
+  onDeleteComment?: (commentId: string) => void;
   onAddReply: (commentId: string, content: string) => void;
+  userAvatar?: string;
+  currentUserHandle?: string;
   disabled?: boolean;
 }
+
+const DEFAULT_COMMENT_AVATAR =
+  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
 
 export const CommentSection: React.FC<CommentSectionProps> = ({
   videoId,
   comments,
   onAddComment,
   onLikeComment,
+  onDislikeComment,
+  onDeleteComment,
   onAddReply,
+  userAvatar,
+  currentUserHandle,
   disabled = false,
 }) => {
   const [newCommentText, setNewCommentText] = useState('');
@@ -96,9 +106,15 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
       {/* Add New Comment Box */}
       <div className="flex items-start gap-3 sm:gap-4 mb-8">
         <img
-          src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80"
+          src={userAvatar || DEFAULT_COMMENT_AVATAR}
           alt="Your profile"
-          className="h-10 w-10 rounded-full object-cover shrink-0 ring-1 ring-slate-200 dark:ring-slate-700"
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            if (e.currentTarget.src !== DEFAULT_COMMENT_AVATAR) {
+              e.currentTarget.src = DEFAULT_COMMENT_AVATAR;
+            }
+          }}
+          className="h-10 w-10 rounded-full object-cover shrink-0 ring-1 ring-[var(--ink-faint)]"
         />
 
         <form onSubmit={handleCommentSubmit} className="flex-1 min-w-0">
@@ -144,6 +160,10 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
             <img
               src={comment.authorAvatar}
               alt={comment.authorName}
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                e.currentTarget.style.opacity = '0.4';
+              }}
               className="h-10 w-10 rounded-full object-cover shrink-0 ring-1 ring-slate-200 dark:ring-slate-700"
             />
 
@@ -168,58 +188,83 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
               </p>
 
               {/* Reaction & Reply Actions */}
-              <div className="mt-2 flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
+              <div className="mt-2 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
                 <button
+                  type="button"
                   onClick={() => onLikeComment(comment.id)}
-                  className={`flex items-center gap-1 hover:text-slate-900 dark:hover:text-white transition-colors ${
-                    comment.userLiked ? 'text-sky-500 font-semibold' : ''
+                  className={`min-h-[36px] px-1.5 flex items-center gap-1.5 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer ${
+                    comment.userLiked ? 'text-[var(--accent-ink)] font-semibold' : ''
                   }`}
                 >
-                  <ThumbsUp className={`h-3.5 w-3.5 ${comment.userLiked ? 'fill-sky-500 text-sky-500' : ''}`} />
+                  <ThumbsUp className={`h-3.5 w-3.5 ${comment.userLiked ? 'fill-current' : ''}`} />
                   <span>{comment.likes}</span>
                 </button>
 
                 <button
+                  type="button"
                   title="Dislike"
-                  className="hover:text-slate-900 dark:hover:text-white transition-colors"
+                  aria-label="Dislike comment"
+                  onClick={() => onDislikeComment?.(comment.id)}
+                  className={`min-h-[36px] min-w-[36px] flex items-center justify-center hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer ${
+                    comment.userDisliked ? 'text-rose-500' : ''
+                  }`}
                 >
-                  <ThumbsDown className="h-3.5 w-3.5" />
+                  <ThumbsDown className={`h-3.5 w-3.5 ${comment.userDisliked ? 'fill-current' : ''}`} />
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => {
                     setReplyingCommentId(replyingCommentId === comment.id ? null : comment.id);
                   }}
-                  className="font-semibold text-slate-700 hover:text-sky-600 dark:text-slate-300 dark:hover:text-sky-400 transition-colors"
+                  className="min-h-[36px] px-2 font-semibold text-slate-700 hover:text-[var(--accent-ink)] dark:text-slate-300 transition-colors cursor-pointer"
                 >
                   Reply
                 </button>
+
+                {onDeleteComment &&
+                  (comment.authorHandle === (currentUserHandle || '@creative_viewer') ||
+                    comment.id.startsWith('c-')) && (
+                    <button
+                      type="button"
+                      title="Delete comment"
+                      aria-label="Delete comment"
+                      onClick={() => onDeleteComment(comment.id)}
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-rose-500 transition-colors cursor-pointer ml-auto"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
               </div>
 
               {/* Reply Input Box */}
               {replyingCommentId === comment.id && (
-                <div className="mt-3 flex items-start gap-3 pl-2 sm:pl-4 border-l-2 border-slate-200 dark:border-slate-700">
+                <div className="mt-3 flex flex-wrap sm:flex-nowrap items-center gap-2 pl-2 sm:pl-4 border-l-2 border-slate-200 dark:border-slate-700">
                   <input
                     type="text"
                     placeholder={`Reply to ${comment.authorHandle}...`}
                     value={replyText}
                     onChange={(e) => setReplyText(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleReplySubmit(comment.id)}
-                    className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="flex-1 min-w-[160px] min-h-[40px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-base sm:text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                     autoFocus
                   />
-                  <button
-                    onClick={() => handleReplySubmit(comment.id)}
-                    className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 transition-colors"
-                  >
-                    Reply
-                  </button>
-                  <button
-                    onClick={() => setReplyingCommentId(null)}
-                    className="rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                  >
-                    Cancel
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleReplySubmit(comment.id)}
+                      className="min-h-[38px] rounded-lg bg-sky-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 transition-colors cursor-pointer"
+                    >
+                      Reply
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReplyingCommentId(null)}
+                      className="min-h-[38px] rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -227,8 +272,9 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
               {comment.replies && comment.replies.length > 0 && (
                 <div className="mt-3">
                   <button
+                    type="button"
                     onClick={() => toggleReplies(comment.id)}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-sky-500 hover:text-sky-400 transition-colors"
+                    className="min-h-[36px] flex items-center gap-1.5 text-xs font-semibold text-sky-500 hover:text-sky-400 transition-colors cursor-pointer"
                   >
                     <MessageSquare className="h-3.5 w-3.5" />
                     <span>
@@ -245,6 +291,10 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                           <img
                             src={reply.authorAvatar}
                             alt={reply.authorName}
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.opacity = '0.4';
+                            }}
                             className="h-7 w-7 rounded-full object-cover shrink-0 ring-1 ring-slate-200 dark:ring-slate-700"
                           />
                           <div className="flex-1 min-w-0">

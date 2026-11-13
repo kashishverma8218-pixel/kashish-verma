@@ -46,13 +46,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   return (
     <div className="mx-auto max-w-7xl px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
       {/* Tab Navigation */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3 overflow-x-auto scrollbar-none">
+      <div className="flex items-center gap-2 border-b border-[var(--ink-faint)] pb-3 overflow-x-auto scrollbar-none">
         <button
+          type="button"
           onClick={() => setActiveTab('history')}
-          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold whitespace-nowrap transition-all ${
+          className={`min-h-[40px] flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
             activeTab === 'history'
-              ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-950 shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+              ? 'bg-[var(--ink)] text-[var(--bg)] shadow-xs'
+              : 'text-[var(--ink-medium)] hover:bg-[var(--ink-faint)] hover:text-[var(--ink)]'
           }`}
         >
           <History className="h-4 w-4" />
@@ -60,11 +61,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveTab('liked')}
-          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold whitespace-nowrap transition-all ${
+          className={`min-h-[40px] flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
             activeTab === 'liked'
-              ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-950 shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+              ? 'bg-[var(--ink)] text-[var(--bg)] shadow-xs'
+              : 'text-[var(--ink-medium)] hover:bg-[var(--ink-faint)] hover:text-[var(--ink)]'
           }`}
         >
           <ThumbsUp className="h-4 w-4" />
@@ -72,11 +74,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveTab('watchLater')}
-          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold whitespace-nowrap transition-all ${
+          className={`min-h-[40px] flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
             activeTab === 'watchLater'
-              ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-950 shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+              ? 'bg-[var(--ink)] text-[var(--bg)] shadow-xs'
+              : 'text-[var(--ink-medium)] hover:bg-[var(--ink-faint)] hover:text-[var(--ink)]'
           }`}
         >
           <Clock className="h-4 w-4" />
@@ -87,14 +90,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* Tab Content */}
       {activeTab === 'history' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+          <div className="flex items-center justify-between gap-2 pb-2 border-b border-[var(--ink-faint)]">
+            <h2 className="text-lg font-bold text-[var(--ink)]">
               Watch History
             </h2>
             {historyVideos.length > 0 && (
               <button
+                type="button"
                 onClick={onClearHistory}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                className="min-h-[40px] flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
               >
                 <Trash2 className="h-4 w-4" />
                 <span>Clear all watch history</span>
@@ -103,10 +107,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           </div>
 
           {historyVideos.length === 0 ? (
-            <div className="py-16 text-center text-slate-400">
+            <div className="py-16 text-center text-[var(--ink-medium)]">
               <History className="h-12 w-12 mx-auto mb-2 opacity-40" />
-              <p className="text-sm font-semibold">No watch history yet</p>
-              <p className="text-xs text-slate-500 mt-1">Videos you watch will show up here.</p>
+              <p className="text-sm font-semibold text-[var(--ink)]">No watch history yet</p>
+              <p className="text-xs mt-1">Videos you watch will show up here.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
@@ -122,9 +126,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     watchProgress={progress}
                   />
                   <button
+                    type="button"
                     onClick={() => onRemoveFromHistory(video.id)}
                     title="Remove from history"
-                    className="absolute top-2 right-2 opacity-0 group-hover/item:opacity-100 p-1.5 rounded-full bg-black/70 text-white hover:bg-rose-600 transition-all z-10"
+                    aria-label={`Remove ${video.title} from history`}
+                    className="absolute top-2 right-2 min-h-[36px] min-w-[36px] flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover/item:opacity-100 p-1.5 rounded-full bg-black/75 text-white hover:bg-rose-600 transition-all z-10 cursor-pointer"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -137,14 +143,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
       {activeTab === 'liked' && (
         <div className="space-y-4">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-lg font-bold text-[var(--ink)] pb-2 border-b border-[var(--ink-faint)]">
             Liked Videos
           </h2>
           {likedVideos.length === 0 ? (
-            <div className="py-16 text-center text-slate-400">
+            <div className="py-16 text-center text-[var(--ink-medium)]">
               <ThumbsUp className="h-12 w-12 mx-auto mb-2 opacity-40" />
-              <p className="text-sm font-semibold">No liked videos yet</p>
-              <p className="text-xs text-slate-500 mt-1">Click the thumbs-up button under any video to save it here.</p>
+              <p className="text-sm font-semibold text-[var(--ink)]">No liked videos yet</p>
+              <p className="text-xs mt-1">Click the thumbs-up button under any video to save it here.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
@@ -166,14 +172,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
       {activeTab === 'watchLater' && (
         <div className="space-y-4">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-lg font-bold text-[var(--ink)] pb-2 border-b border-[var(--ink-faint)]">
             Watch Later
           </h2>
           {watchLaterVideos.length === 0 ? (
-            <div className="py-16 text-center text-slate-400">
+            <div className="py-16 text-center text-[var(--ink-medium)]">
               <Clock className="h-12 w-12 mx-auto mb-2 opacity-40" />
-              <p className="text-sm font-semibold">No videos saved for later</p>
-              <p className="text-xs text-slate-500 mt-1">Hover over any video and click the clock icon to watch it later.</p>
+              <p className="text-sm font-semibold text-[var(--ink)]">No videos saved for later</p>
+              <p className="text-xs mt-1">Use the menu or Watch Later button on any video to save it here.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">

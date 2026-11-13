@@ -53,33 +53,28 @@ export const AskVioBar: React.FC<AskVioBarProps> = ({ onSearch, onOpenStudio, on
 
   return (
     <>
-      {/* Exact 300x50 pixels floating search / Q&A bar placed top center */}
-      <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-40 hidden md:block">
-        <div
-          style={{ width: '300px', height: '50px' }}
-          className="flex items-center px-3.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md rounded-2xl border border-purple-500/30 dark:border-purple-500/40 shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all group"
-        >
-          <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-gradient-to-tr from-purple-600 to-pink-500 text-white shrink-0 mr-2 shadow-xs">
-            <Sparkles className="h-3.5 w-3.5 animate-pulse" />
-          </div>
+      {/* Variation 2 Floating AI Bar */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-40 hidden xl:block">
+        <div className="flex items-center gap-3.5 px-5 py-3 bg-[#212121] text-white rounded-[8px] border border-[#FF0000] shadow-[0_20px_40px_rgba(0,0,0,0.5)] w-[400px] transition-all">
+          <Sparkles className="h-4 w-4 text-[#FF0000] shrink-0" />
 
           <input
             type="text"
-            placeholder="Ask Vio streaming AI or search..."
+            placeholder="Ask Vio AI or search..."
             value={query}
             onFocus={() => setIsOpen(true)}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleAsk();
             }}
-            className="w-full text-xs bg-transparent text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none truncate"
+            className="w-full text-[13px] bg-transparent text-white placeholder:text-white/50 focus:outline-none truncate"
           />
 
           {query ? (
             <button
               onClick={() => handleAsk()}
               title="Submit AI Query"
-              className="p-1 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition-colors shrink-0"
+              className="p-1.5 rounded-[4px] bg-[#FF0000] text-white hover:bg-[#CC0000] transition-colors shrink-0"
             >
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
@@ -87,9 +82,9 @@ export const AskVioBar: React.FC<AskVioBarProps> = ({ onSearch, onOpenStudio, on
             <button
               onClick={() => setIsOpen(!isOpen)}
               title="Quick Suggestions"
-              className="text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 p-1 shrink-0"
+              className="text-white/50 hover:text-white p-1 shrink-0"
             >
-              <HelpCircle className="h-3.5 w-3.5" />
+              <HelpCircle className="h-4 w-4" />
             </button>
           )}
         </div>

@@ -26,7 +26,6 @@ import {
   Captions,
   Upload,
   FileText,
-  SlidersHorizontal,
   Plus,
   Trash2,
   X,
@@ -35,7 +34,10 @@ import {
   Globe2,
   Server,
   ListOrdered,
-  ChevronRight
+  ChevronRight,
+  Settings,
+  SkipBack,
+  SkipForward
 } from 'lucide-react';
 import { VideoItem, Bookmark, VideoFilters, AspectRatioMode, VideoStreamQuality, VideoChapter } from '../types/video';
 import { formatTime } from '../utils/formatTime';
@@ -50,6 +52,8 @@ import {
   buildStreamLadder,
   calculateAdaptiveBitrate,
   CDN_STREAM_MIRRORS,
+  DEFAULT_PLAYABLE_VIDEO_URL,
+  sanitizePlayableVideoUrl,
 } from '../services/streamingService';
 import { CloudInfrastructureModal } from './CloudInfrastructureModal';
 import { ChapterOverlay } from './ChapterOverlay';
@@ -75,6 +79,8 @@ interface VideoPlayerProps {
   hasPrevVideo?: boolean;
   externalSeekTime?: number | null;
   onExternalSeekConsumed?: () => void;
+  onTimeUpdate?: (time: number) => void;
+  ambientMode?: boolean;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -92,11 +98,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   hasPrevVideo,
   externalSeekTime,
   onExternalSeekConsumed,
+  onTimeUpdate,
+  ambientMode = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressTrackRef = useRef<HTMLDivElement>(null);
   const hideControlsTimerRef = useRef<number | null>(null);
+  const pendingSeekRef = useRef<number | null>(null);
 
   // Core Playback State
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -111,16 +120,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isLooping, setIsLooping] = useState<boolean>(false);
   const [showTimeRemaining, setShowTimeRemaining] = useState<boolean>(false);
 
-  // UI Interactivity State: Clean overlay-free mode defaults to true on mobile
-  const [isCleanMode, setIsCleanMode] = useState<boolean>(() => {
-    return typeof window !== 'undefined' && window.innerWidth < 768;
-  });
-  const [showControls, setShowControls] = useState<boolean>(false);
+  // UI Interactivity State: Never auto-hide controls permanently on mobile
+  const [isCleanMode, setIsCleanMode] = useState<boolean>(false);
+  const [showControls, setShowControls] = useState<boolean>(true);
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPosition, setHoverPosition] = useState<number>(0);
   const [speedMenuOpen, setSpeedMenuOpen] = useState<boolean>(false);
   const [aspectMenuOpen, setAspectMenuOpen] = useState<boolean>(false);
+  const [volumeSliderOpen, setVolumeSliderOpen] = useState<boolean>(false);
+  const [naturalVideoHeight, setNaturalVideoHeight] = useState<number>(0);
+  const lastTouchTimeRef = useRef<number>(0);
+  const tapTimerRef = useRef<number | null>(null);
+  const lastTapSpotRef = useRef<{ time: number; x: number }>({ time: 0, x: 0 });
   const [actionFeedback, setActionFeedback] = useState<{
     type: 'play' | 'pause' | 'seek-forward' | 'seek-backward' | 'snapshot' | 'bookmark';
     timestamp: number;
@@ -132,17 +144,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   } | null>(null);
   const [copyToast, setCopyToast] = useState(false);
   const [enableCors, setEnableCors] = useState<boolean>(false);
-  const [currentSrc, setCurrentSrc] = useState<string>(video.url);
+  const FALLBACK_VIDEO_SRC = DEFAULT_PLAYABLE_VIDEO_URL;
+  const resolvedVideoUrl = useMemo(
+    () => sanitizePlayableVideoUrl(video.url, video.id, 'video', false),
+    [video.url, video.id]
+  );
+  const [currentSrc, setCurrentSrc] = useState<string>(resolvedVideoUrl);
   // Adaptive Bitrate (ABR) & Cloud Streaming State
-  const [streamLadder, setStreamLadder] = useState<VideoStreamQuality[]>(() => {
-    return video.streamQualities && video.streamQualities.length > 0
-      ? video.streamQualities
-      : buildStreamLadder(video.id, video.url);
-  });
   const [selectedQuality, setSelectedQuality] = useState<string>(() => {
     return localStorage.getItem('vio_pref_quality') || 'Auto';
   });
-  const [effectiveQualityLabel, setEffectiveQualityLabel] = useState<string>('1080p60 HD');
+  const [effectiveQualityLabel, setEffectiveQualityLabel] = useState<string>('720p HD');
   const [qualityMenuOpen, setQualityMenuOpen] = useState<boolean>(false);
   const [reconnecting, setReconnecting] = useState<boolean>(false);
   const [reconnectToast, setReconnectToast] = useState<string | null>(null);
@@ -150,6 +162,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showTelemetry, setShowTelemetry] = useState<boolean>(false);
   const [bufferHealthSec, setBufferHealthSec] = useState<number>(0);
   const [failoverIndex, setFailoverIndex] = useState<number>(0);
+
+  // Only list qualities genuinely supported by the video metadata / explicit streamQualities
+  const streamLadder: VideoStreamQuality[] = useMemo(() => {
+    if (video.streamQualities && video.streamQualities.length > 0) {
+      return video.streamQualities;
+    }
+    const baseLadder = buildStreamLadder(video.id, currentSrc || resolvedVideoUrl || FALLBACK_VIDEO_SRC);
+    if (naturalVideoHeight > 0) {
+      const supported = baseLadder.filter((tier) => {
+        const parts = tier.resolution.split('x');
+        const h = parseInt(parts[1] || '0', 10);
+        return h > 0 && h <= naturalVideoHeight;
+      });
+      if (supported.length > 0) {
+        return supported;
+      }
+      return [
+        {
+          label: `${naturalVideoHeight}p`,
+          resolution: `${Math.round((naturalVideoHeight * 16) / 9)}x${naturalVideoHeight}`,
+          bitrateKbps: naturalVideoHeight >= 720 ? 3000 : 1200,
+          fps: 30,
+          url: currentSrc || resolvedVideoUrl || FALLBACK_VIDEO_SRC,
+          isMaster: true,
+        },
+      ];
+    }
+    return baseLadder;
+  }, [video.streamQualities, video.id, resolvedVideoUrl, currentSrc, naturalVideoHeight, FALLBACK_VIDEO_SRC]);
 
   // Subtitles / Closed Captions State
   const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(() => {
@@ -233,18 +274,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [chapters, currentTime, handleSelectChapter]);
 
-  // Handle external seek requests (e.g. from clicking chapter timestamps in WatchView description)
+  // Handle external seek requests (e.g. deep-link ?t=, chapter clicks, or bookmark jumps)
   useEffect(() => {
     if (typeof externalSeekTime === 'number' && videoRef.current) {
-      videoRef.current.currentTime = externalSeekTime;
-      setCurrentTime(externalSeekTime);
-      if (!isPlaying) {
-        videoRef.current.play().catch(() => {});
-        setIsPlaying(true);
+      if (videoRef.current.readyState >= 1) {
+        videoRef.current.currentTime = externalSeekTime;
+        setCurrentTime(externalSeekTime);
+        onTimeUpdate?.(externalSeekTime);
+        if (!isPlaying) {
+          videoRef.current.play().catch(() => {});
+          setIsPlaying(true);
+        }
+        onExternalSeekConsumed?.();
+      } else {
+        pendingSeekRef.current = externalSeekTime;
       }
-      onExternalSeekConsumed?.();
     }
-  }, [externalSeekTime, onExternalSeekConsumed, isPlaying]);
+  }, [externalSeekTime, onExternalSeekConsumed, isPlaying, onTimeUpdate]);
 
   // Sync subtitle tracks when video changes
   useEffect(() => {
@@ -323,10 +369,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setSubtitleMenuOpen(false);
   };
 
+  // Ensure selected quality stays valid if supported streamLadder shrinks for lower-res videos
+  useEffect(() => {
+    if (selectedQuality !== 'Auto' && streamLadder.length > 0) {
+      const stillSupported = streamLadder.some((t) => t.label === selectedQuality);
+      if (!stillSupported) {
+        setSelectedQuality('Auto');
+        setEffectiveQualityLabel(streamLadder[0].label);
+      }
+    } else if (streamLadder.length > 0 && !streamLadder.some((t) => t.label === effectiveQualityLabel)) {
+      setEffectiveQualityLabel(streamLadder[0].label);
+    }
+  }, [streamLadder, selectedQuality, effectiveQualityLabel]);
+
   // Buffer health & adaptive bitrate monitor
   useEffect(() => {
     const timer = setInterval(() => {
-      if (!videoRef.current) return;
+      if (!videoRef.current || streamLadder.length === 0) return;
       const vid = videoRef.current;
       if (vid.buffered && vid.buffered.length > 0) {
         let maxBuffered = 0;
@@ -340,7 +399,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         if (selectedQuality === 'Auto') {
           const optimal = calculateAdaptiveBitrate(maxBuffered, effectiveQualityLabel, streamLadder);
-          if (optimal.label !== effectiveQualityLabel) {
+          if (optimal && optimal.label !== effectiveQualityLabel) {
             setEffectiveQualityLabel(optimal.label);
           }
         }
@@ -357,9 +416,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (qualityLabel === 'Auto') {
       const optimal = calculateAdaptiveBitrate(bufferHealthSec, effectiveQualityLabel, streamLadder);
-      setEffectiveQualityLabel(optimal.label);
-      showSubToast(`Adaptive Bitrate: Auto (${optimal.label})`);
+      const nextLabel = optimal?.label || streamLadder[0]?.label || 'Auto';
+      setEffectiveQualityLabel(nextLabel);
+      showSubToast(`Adaptive Bitrate: Auto (${nextLabel})`);
     } else {
+      const matchedTier = streamLadder.find((t) => t.label === qualityLabel);
+      if (matchedTier && matchedTier.url && matchedTier.url !== currentSrc && videoRef.current) {
+        const resumeTime = videoRef.current.currentTime || 0;
+        const wasPlaying = !videoRef.current.paused;
+        setCurrentSrc(matchedTier.url);
+        setTimeout(() => {
+          if (videoRef.current) {
+            videoRef.current.currentTime = resumeTime;
+            if (wasPlaying) videoRef.current.play().catch(() => {});
+          }
+        }, 50);
+      }
       setEffectiveQualityLabel(qualityLabel);
       showSubToast(`Quality set to ${qualityLabel}`);
     }
@@ -370,16 +442,27 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const timeBeforeError = videoRef.current.currentTime || 0;
     const wasPlaying = isPlaying;
 
+    const rawMirrors = [
+      ...(video.backupStreams || []),
+      ...(CDN_STREAM_MIRRORS[video.id] || []),
+      DEFAULT_PLAYABLE_VIDEO_URL,
+      'https://download.blender.org/durian/trailer/sintel_trailer-720p.mp4',
+      'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+    ].map((u) => sanitizePlayableVideoUrl(u, video.id, 'video', true));
+
+    const uniqueMirrors = Array.from(new Set(rawMirrors)).filter(Boolean);
+    const candidateMirrors = uniqueMirrors.filter((u) => u !== currentSrc);
+
+    if (failoverIndex >= candidateMirrors.length || candidateMirrors.length === 0) {
+      setReconnecting(false);
+      setErrorMessage('This video stream could not be loaded. Click below to retry via Edge CDN.');
+      return;
+    }
+
+    const nextMirror = candidateMirrors[failoverIndex] || DEFAULT_PLAYABLE_VIDEO_URL;
+    setFailoverIndex((prev) => prev + 1);
     setReconnecting(true);
     setReconnectToast(`Reconnecting stream via Cloud Edge CDN (${Math.floor(timeBeforeError)}s)...`);
-
-    const mirrors = video.backupStreams || CDN_STREAM_MIRRORS[video.id] || [
-      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-    ];
-
-    const nextMirror = mirrors[failoverIndex % mirrors.length] || video.url;
-    setFailoverIndex((prev) => prev + 1);
 
     setTimeout(() => {
       if (videoRef.current) {
@@ -394,8 +477,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setErrorMessage(null);
       setReconnectToast(`Stream reconnected via Edge CDN (${Math.floor(timeBeforeError)}s)`);
       setTimeout(() => setReconnectToast(null), 3000);
-    }, 1200);
-  }, [failoverIndex, video.backupStreams, video.id, isPlaying, video.url]);
+    }, 600);
+  }, [failoverIndex, video.backupStreams, video.id, isPlaying, currentSrc]);
 
   // Upload local .srt or .vtt file
   const handleSubtitleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -507,10 +590,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   useEffect(() => {
-    setCurrentSrc(video.url);
+    setCurrentSrc(resolvedVideoUrl);
     setFailoverIndex(0);
+    setNaturalVideoHeight(0);
     setErrorMessage(null);
-  }, [video.id, video.url]);
+  }, [video.id, resolvedVideoUrl]);
 
   const handleCopyVideoLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}?v=${video.id}`;
@@ -540,24 +624,47 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     filter: `brightness(${filters.brightness}%) contrast(${filters.contrast}%) saturate(${filters.saturate}%) grayscale(${filters.grayscale}%) sepia(${filters.sepia}%) blur(${filters.blur}px) invert(${filters.invert}%)`,
   };
 
-  // Aspect Ratio Object-Fit mapping
-  const getAspectRatioClasses = () => {
+  // Container Aspect Ratio and Responsive Constraint mapping
+  const getContainerAspectClasses = () => {
+    if (isFullscreen) {
+      return 'w-full h-full max-h-screen';
+    }
     switch (aspectRatio) {
       case '16:9':
-        return 'aspect-video object-contain';
+        return 'w-full aspect-video max-h-[75vh]';
       case '4:3':
-        return 'aspect-4/3 object-contain';
+        return 'w-full aspect-[4/3] max-h-[75vh]';
       case '21:9':
-        return 'aspect-21/9 object-contain';
+        return 'w-full aspect-[21/9] max-h-[75vh]';
       case '9:16':
-        return 'aspect-9/16 max-w-sm mx-auto object-contain';
+        return 'w-full aspect-[9/16] max-h-[80vh] max-w-sm mx-auto';
+      case 'cover':
+        return 'w-full aspect-video max-h-[75vh]';
+      case 'auto':
+      default:
+        return 'w-full aspect-video max-h-[75vh]';
+    }
+  };
+
+  // Video Element Object-Fit mapping
+  const getVideoElementClasses = () => {
+    if (isFullscreen) {
+      return 'w-full h-full max-h-screen object-contain';
+    }
+    switch (aspectRatio) {
       case 'cover':
         return 'w-full h-full object-cover';
+      case '16:9':
+      case '4:3':
+      case '21:9':
+      case '9:16':
       case 'auto':
       default:
         return 'w-full h-full object-contain';
     }
   };
+
+  const getAspectRatioClasses = getVideoElementClasses;
 
   // Play / Pause Toggle
   const togglePlay = useCallback(() => {
@@ -584,21 +691,40 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 600);
   };
 
-  // Autohide controls logic
+  // Autohide controls logic (3 seconds)
+  const scheduleAutoHide = useCallback((playingOverride?: boolean) => {
+    if (hideControlsTimerRef.current) {
+      window.clearTimeout(hideControlsTimerRef.current);
+      hideControlsTimerRef.current = null;
+    }
+    const playingNow = playingOverride ?? isPlaying;
+    if (playingNow && !speedMenuOpen && !aspectMenuOpen && !qualityMenuOpen && !subtitleMenuOpen && !volumeSliderOpen && !isSeeking) {
+      hideControlsTimerRef.current = window.setTimeout(() => {
+        setShowControls(false);
+        setVolumeSliderOpen(false);
+      }, 3000);
+    }
+  }, [isPlaying, speedMenuOpen, aspectMenuOpen, qualityMenuOpen, subtitleMenuOpen, volumeSliderOpen, isSeeking]);
+
   const handleUserActivity = useCallback(() => {
     if (isCleanMode) return;
     setShowControls(true);
-    if (hideControlsTimerRef.current) {
+    scheduleAutoHide();
+  }, [isCleanMode, scheduleAutoHide]);
+
+  // Trigger 3-second auto-hide automatically when playback starts
+  useEffect(() => {
+    if (isPlaying && showControls) {
+      scheduleAutoHide(true);
+    } else if (!isPlaying && hideControlsTimerRef.current) {
       window.clearTimeout(hideControlsTimerRef.current);
     }
-    if (isPlaying) {
-      hideControlsTimerRef.current = window.setTimeout(() => {
-        if (!speedMenuOpen && !aspectMenuOpen && !isSeeking) {
-          setShowControls(false);
-        }
-      }, 1800);
-    }
-  }, [isPlaying, speedMenuOpen, aspectMenuOpen, isSeeking, isCleanMode]);
+    return () => {
+      if (hideControlsTimerRef.current) {
+        window.clearTimeout(hideControlsTimerRef.current);
+      }
+    };
+  }, [isPlaying, showControls, scheduleAutoHide]);
 
   // Volume handler
   const handleVolumeChange = (newVolume: number) => {
@@ -613,6 +739,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       videoRef.current.muted = false;
       setIsMuted(false);
     }
+    handleUserActivity();
   };
 
   const toggleMute = () => {
@@ -621,12 +748,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       videoRef.current.muted = false;
       setIsMuted(false);
       if (volume === 0) {
-        handleVolumeChange(0.5);
+        handleVolumeChange(0.7);
       }
     } else {
       videoRef.current.muted = true;
       setIsMuted(true);
     }
+    handleUserActivity();
   };
 
   // Seek relative
@@ -648,21 +776,56 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     handleUserActivity();
   };
 
-  // Fullscreen
+  // Fullscreen (with Safari/iOS & mobile orientation support)
   const toggleFullscreen = useCallback(async () => {
     if (!containerRef.current) return;
+    const el = containerRef.current as any;
+    const vidEl = videoRef.current as any;
+    const doc = document as any;
+
     try {
-      if (!document.fullscreenElement) {
-        await containerRef.current.requestFullscreen();
+      const activeFullscreen = doc.fullscreenElement || doc.webkitFullscreenElement;
+      if (!activeFullscreen) {
+        if (el.requestFullscreen) {
+          await el.requestFullscreen();
+        } else if (el.webkitRequestFullscreen) {
+          await el.webkitRequestFullscreen();
+        } else if (vidEl?.webkitEnterFullscreen) {
+          vidEl.webkitEnterFullscreen();
+        }
         setIsFullscreen(true);
+        try {
+          await (screen.orientation as any)?.lock?.('landscape');
+        } catch {
+          // Orientation lock unsupported in desktop or certain browsers
+        }
       } else {
-        await document.exitFullscreen();
+        if (doc.exitFullscreen) {
+          await doc.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen();
+        }
         setIsFullscreen(false);
+        try {
+          (screen.orientation as any)?.unlock?.();
+        } catch {
+          // ignore
+        }
       }
     } catch (err) {
-      console.error('Fullscreen request failed:', err);
+      if (vidEl?.webkitEnterFullscreen) {
+        try {
+          vidEl.webkitEnterFullscreen();
+          setIsFullscreen(true);
+        } catch {
+          console.error('Fullscreen request failed:', err);
+        }
+      } else {
+        console.error('Fullscreen request failed:', err);
+      }
     }
-  }, []);
+    handleUserActivity();
+  }, [handleUserActivity]);
 
   // Picture in Picture
   const togglePiP = async () => {
@@ -739,43 +902,74 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     triggerFeedback('bookmark');
   };
 
-  // Scrubbing & Seeking calculation
-  const calculateSeekTime = (e: React.MouseEvent<HTMLDivElement>) => {
+  // Scrubbing & Seeking calculation (mouse + touch)
+  const calculateSeekFromClientX = (clientX: number) => {
     if (!progressTrackRef.current || !duration) return 0;
     const rect = progressTrackRef.current.getBoundingClientRect();
-    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    return pos * duration;
+    const pos = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return { pos, time: pos * duration };
   };
 
   const handleSeekStart = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
     setIsSeeking(true);
-    const newTime = calculateSeekTime(e);
+    const { pos, time } = calculateSeekFromClientX(e.clientX) || { pos: 0, time: 0 };
+    setHoverPosition(pos * 100);
+    setHoverTime(time);
     if (videoRef.current) {
-      videoRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
     }
+    handleUserActivity();
   };
 
   const handleSeekMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!progressTrackRef.current || !duration) return;
-    const rect = progressTrackRef.current.getBoundingClientRect();
-    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const { pos, time } = calculateSeekFromClientX(e.clientX) || { pos: 0, time: 0 };
     setHoverPosition(pos * 100);
-    setHoverTime(pos * duration);
+    setHoverTime(time);
 
     if (isSeeking && videoRef.current) {
-      const newTime = pos * duration;
-      videoRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
+
+  const handleTouchSeekStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const touch = e.touches[0];
+    if (!touch) return;
+    setIsSeeking(true);
+    const { pos, time } = calculateSeekFromClientX(touch.clientX) || { pos: 0, time: 0 };
+    setHoverPosition(pos * 100);
+    setHoverTime(time);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+    handleUserActivity();
+  };
+
+  const handleTouchSeekMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const touch = e.touches[0];
+    if (!touch || !progressTrackRef.current || !duration) return;
+    const { pos, time } = calculateSeekFromClientX(touch.clientX) || { pos: 0, time: 0 };
+    setHoverPosition(pos * 100);
+    setHoverTime(time);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
     }
   };
 
   const handleSeekEnd = () => {
     setIsSeeking(false);
+    setHoverTime(null);
+    scheduleAutoHide();
   };
 
   // Keyboard Shortcuts Listener
-  // Use custom hook to handle comprehensive keyboard shortcuts
   useVideoKeyboardShortcuts({
     togglePlay,
     seekRelative,
@@ -798,14 +992,54 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     enabled: true,
   });
 
-  // Fullscreen change listener
+  // Fullscreen change listener (desktop + iOS/webkit)
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      const doc = document as any;
+      const isFs = Boolean(doc.fullscreenElement || doc.webkitFullscreenElement);
+      setIsFullscreen(isFs);
+      if (!isFs) {
+        try {
+          (screen.orientation as any)?.unlock?.();
+        } catch {
+          // ignore
+        }
+      }
     };
+    const vidEl = videoRef.current;
+    const onWebkitEndFs = () => setIsFullscreen(false);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    vidEl?.addEventListener('webkitendfullscreen', onWebkitEndFs);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      vidEl?.removeEventListener('webkitendfullscreen', onWebkitEndFs);
+    };
   }, []);
+
+  // Close player menus on outside click/touch
+  useEffect(() => {
+    if (!speedMenuOpen && !aspectMenuOpen && !qualityMenuOpen && !subtitleMenuOpen && !volumeSliderOpen) {
+      return;
+    }
+    const handleOutside = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-player-menu]')) {
+        setSpeedMenuOpen(false);
+        setAspectMenuOpen(false);
+        setQualityMenuOpen(false);
+        setSubtitleMenuOpen(false);
+        setVolumeSliderOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchstart', handleOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+    };
+  }, [speedMenuOpen, aspectMenuOpen, qualityMenuOpen, subtitleMenuOpen, volumeSliderOpen]);
 
   // Reset state on video change
   useEffect(() => {
@@ -813,7 +1047,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setBufferedEnd(0);
     setIsBuffering(false);
     setErrorMessage(null);
-    if (videoRef.current) {
+    setShowControls(true);
+    if (videoRef.current && (video.url || currentSrc)) {
       videoRef.current.currentTime = 0;
       videoRef.current.playbackRate = playbackRate;
       videoRef.current.load();
@@ -825,16 +1060,79 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [video.id, video.url]);
 
-  // Double tap to seek (Left half: -10s, Right half: +10s)
-  const handleVideoAreaClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // If target was a button inside controls, ignore
+  // Mobile tap (show/hide controls + 3s auto-hide, double-tap left/right 10s seek) & desktop click
+  const handleVideoTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
       return;
     }
+    lastTouchTimeRef.current = Date.now();
+    const touch = e.changedTouches[0];
+    if (!touch || !containerRef.current) return;
+
+    const now = Date.now();
+    const rect = containerRef.current.getBoundingClientRect();
+    const tapX = touch.clientX - rect.left;
+
+    if (now - lastTapSpotRef.current.time < 280) {
+      // Double tap detected
+      if (tapTimerRef.current) {
+        window.clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = null;
+      }
+      lastTapSpotRef.current = { time: 0, x: 0 };
+      if (tapX < rect.width * 0.35) {
+        seekRelative(-10);
+      } else if (tapX > rect.width * 0.65) {
+        seekRelative(10);
+      } else {
+        togglePlay();
+      }
+    } else {
+      lastTapSpotRef.current = { time: now, x: tapX };
+      tapTimerRef.current = window.setTimeout(() => {
+        tapTimerRef.current = null;
+        if (isCleanMode) {
+          setIsCleanMode(false);
+          setShowControls(true);
+          scheduleAutoHide();
+          return;
+        }
+        setShowControls((prev) => {
+          const next = !prev;
+          if (next) {
+            scheduleAutoHide();
+          } else {
+            setQualityMenuOpen(false);
+            setSpeedMenuOpen(false);
+            setAspectMenuOpen(false);
+            setSubtitleMenuOpen(false);
+            setVolumeSliderOpen(false);
+          }
+          return next;
+        });
+      }, 240);
+    }
+  };
+
+  const handleVideoAreaClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
+      return;
+    }
+    // Ignore synthesized click shortly after touch event
+    if (Date.now() - lastTouchTimeRef.current < 500) {
+      return;
+    }
+    setQualityMenuOpen(false);
+    setSpeedMenuOpen(false);
+    setAspectMenuOpen(false);
+    setSubtitleMenuOpen(false);
+    setVolumeSliderOpen(false);
     togglePlay();
+    handleUserActivity();
   };
 
   const handleVideoDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (Date.now() - lastTouchTimeRef.current < 500) return;
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
@@ -851,31 +1149,54 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     <div
       ref={containerRef}
       onMouseMove={handleUserActivity}
-      onMouseEnter={() => setShowControls(true)}
-      onMouseLeave={() => isPlaying && setShowControls(false)}
+      onMouseEnter={() => {
+        setShowControls(true);
+        scheduleAutoHide();
+      }}
+      onMouseLeave={() => {
+        if (isPlaying && !speedMenuOpen && !qualityMenuOpen && !subtitleMenuOpen && !aspectMenuOpen) {
+          setShowControls(false);
+        }
+      }}
       onMouseUp={handleSeekEnd}
       className={`group relative select-none overflow-hidden bg-black transition-all ${
-        isFullscreen ? 'h-screen w-screen' : 'w-full rounded-2xl shadow-2xl ring-1 ring-white/10'
+        isFullscreen ? 'h-screen w-screen' : 'w-full rounded-xl sm:rounded-2xl shadow-2xl ring-1 ring-black/15 dark:ring-white/10'
       }`}
     >
+      {/* Subtle Cinema Ambient Glow when enabled */}
+      {ambientMode && video.poster && !isFullscreen && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -inset-4 -z-10 opacity-35 blur-3xl scale-110 transition-opacity duration-700"
+          style={{
+            backgroundImage: `url(${video.poster})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+        />
+      )}
+
       {/* Video Element */}
       <div
         onClick={handleVideoAreaClick}
         onDoubleClick={handleVideoDoubleClick}
-        className="relative flex aspect-video sm:h-[480px] lg:h-[620px] w-full items-center justify-center overflow-hidden cursor-pointer"
+        onTouchEnd={handleVideoTouchEnd}
+        className={`relative flex w-full items-center justify-center overflow-hidden cursor-pointer ${getContainerAspectClasses()}`}
       >
         <video
           ref={videoRef}
-          src={currentSrc}
+          src={currentSrc || FALLBACK_VIDEO_SRC}
           poster={video.poster}
           playsInline
           loop={isLooping}
           crossOrigin={enableCors ? 'anonymous' : undefined}
           style={filterStyle}
-          className={`transition-all duration-150 ${getAspectRatioClasses()}`}
+          className={`transition-all duration-150 ${getVideoElementClasses()}`}
           onTimeUpdate={() => {
             if (videoRef.current && !isSeeking) {
-              setCurrentTime(videoRef.current.currentTime);
+              const t = videoRef.current.currentTime;
+              setCurrentTime(t);
+              onTimeUpdate?.(t);
             }
           }}
           onProgress={() => {
@@ -889,6 +1210,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               setDuration(videoRef.current.duration);
               setIsMuted(videoRef.current.muted);
               setVolume(videoRef.current.volume);
+              if (videoRef.current.videoHeight > 0) {
+                setNaturalVideoHeight(videoRef.current.videoHeight);
+              }
+              if (pendingSeekRef.current !== null) {
+                const targetTime = Math.min(pendingSeekRef.current, videoRef.current.duration || pendingSeekRef.current);
+                videoRef.current.currentTime = targetTime;
+                setCurrentTime(targetTime);
+                onTimeUpdate?.(targetTime);
+                pendingSeekRef.current = null;
+                onExternalSeekConsumed?.();
+              }
             }
           }}
           onWaiting={() => setIsBuffering(true)}
@@ -1045,9 +1377,59 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Top Overlay Bar (Hidden on mobile to keep player completely clear of overlays) */}
+      {/* YouTube-style Center Transport Controls (Visible when controls are open on mobile & desktop) */}
+      {showControls && !isCleanMode && !errorMessage && !isBuffering && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-5 sm:gap-12 [@media(max-height:500px)]:gap-6 animate-in fade-in duration-150">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              seekRelative(-10);
+            }}
+            aria-label="Rewind 10 seconds"
+            title="Rewind 10 seconds"
+            className="pointer-events-auto flex h-11 w-11 sm:h-14 sm:w-14 [@media(max-height:500px)]:h-10 [@media(max-height:500px)]:w-10 flex-col items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-md ring-1 ring-white/20 hover:bg-black/75 active:scale-90 transition-all shadow-xl"
+          >
+            <RotateCcw className="h-4 w-4 sm:h-5 sm:w-5" />
+            <span className="text-[9px] font-mono font-bold leading-none mt-0.5">10s</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePlay();
+              handleUserActivity();
+            }}
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+            className="pointer-events-auto flex h-14 w-14 sm:h-[72px] sm:w-[72px] [@media(max-height:500px)]:h-12 [@media(max-height:500px)]:w-12 items-center justify-center rounded-full bg-black/65 hover:bg-[#FF0000] text-white backdrop-blur-md ring-2 ring-white/25 active:scale-90 transition-all shadow-2xl"
+          >
+            {isPlaying ? (
+              <Pause className="h-7 w-7 sm:h-8 sm:w-8 fill-white" />
+            ) : (
+              <Play className="h-7 w-7 sm:h-8 sm:w-8 fill-white ml-0.5" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              seekRelative(10);
+            }}
+            aria-label="Forward 10 seconds"
+            title="Forward 10 seconds"
+            className="pointer-events-auto flex h-11 w-11 sm:h-14 sm:w-14 [@media(max-height:500px)]:h-10 [@media(max-height:500px)]:w-10 flex-col items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-md ring-1 ring-white/20 hover:bg-black/75 active:scale-90 transition-all shadow-xl"
+          >
+            <RotateCw className="h-4 w-4 sm:h-5 sm:w-5" />
+            <span className="text-[9px] font-mono font-bold leading-none mt-0.5">10s</span>
+          </button>
+        </div>
+      )}
+
+      {/* Top Overlay Bar (Compact on mobile, full on desktop) */}
       <div
-        className={`hidden md:flex absolute top-0 inset-x-0 z-30 items-center justify-between p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-300 ${
+        className={`flex absolute top-0 inset-x-0 z-30 items-center justify-between px-3 py-2 sm:p-4 [@media(max-height:500px)]:py-1.5 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-300 ${
           showControls && !isCleanMode ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
@@ -1067,7 +1449,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <button
             onClick={onOpenInfo}
             title="Video Information"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
+            className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
           >
             <Info className="h-4 w-4" />
           </button>
@@ -1094,19 +1476,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <Captions className="h-4 w-4" />
           </button>
 
-          {/* Quick Aspect Ratio */}
-          <div className="relative">
+          {/* Quick Aspect Ratio (Responsive on mobile & desktop) */}
+          <div data-player-menu className="relative">
             <button
-              onClick={() => setAspectMenuOpen(!aspectMenuOpen)}
+              onClick={() => {
+                setAspectMenuOpen(!aspectMenuOpen);
+                setQualityMenuOpen(false);
+                setSpeedMenuOpen(false);
+                setSubtitleMenuOpen(false);
+              }}
               title="Aspect Ratio"
-              className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-white/10 text-xs font-medium text-white hover:bg-white/20 transition-colors"
+              aria-label="Aspect Ratio"
+              className="flex items-center gap-1.5 h-8 px-2 sm:px-2.5 rounded-lg bg-white/10 text-xs font-medium text-white hover:bg-white/20 transition-colors"
             >
               <Tv className="h-3.5 w-3.5" />
-              <span className="uppercase">{aspectRatio}</span>
+              <span className="hidden sm:inline uppercase">{aspectRatio}</span>
             </button>
 
             {aspectMenuOpen && (
-              <div className="absolute right-0 top-10 z-40 w-36 rounded-xl border border-white/10 bg-slate-900/95 py-1.5 shadow-2xl backdrop-blur-md text-white text-xs">
+              <div className="absolute right-0 top-10 z-40 w-36 max-w-[calc(100vw-1.5rem)] max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900/95 py-1.5 shadow-2xl backdrop-blur-md text-white text-xs">
                 {(['auto', '16:9', '4:3', '21:9', '9:16', 'cover'] as AspectRatioMode[]).map((mode) => (
                   <button
                     key={mode}
@@ -1114,8 +1502,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       setAspectRatio(mode);
                       setAspectMenuOpen(false);
                     }}
-                    className={`flex w-full items-center justify-between px-3 py-1.5 hover:bg-white/10 ${
-                      aspectRatio === mode ? 'text-sky-400 font-semibold' : 'text-slate-300'
+                    className={`flex w-full items-center justify-between px-3 py-2 hover:bg-white/10 ${
+                      aspectRatio === mode ? 'text-[#FF4E45] font-semibold' : 'text-slate-300'
                     }`}
                   >
                     <span className="capitalize">{mode}</span>
@@ -1130,7 +1518,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <button
             onClick={handleCopyVideoLink}
             title="Copy Video Link"
-            className={`flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`hidden md:flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-xs font-semibold transition-all ${
               copyToast
                 ? 'bg-emerald-600 text-white'
                 : 'bg-white/10 text-white hover:bg-white/20'
@@ -1144,7 +1532,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <button
             onClick={takeSnapshot}
             title="Capture Current Frame (S)"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
+            className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
           >
             <Camera className="h-4 w-4" />
           </button>
@@ -1153,24 +1541,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Bottom Controls Overlay */}
       <div
-        className={`absolute bottom-0 inset-x-0 z-30 px-3 sm:px-4 pb-3 sm:pb-4 pt-8 bg-gradient-to-t from-black/90 via-black/50 to-transparent transition-opacity duration-300 ${
+        onClick={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+        className={`absolute bottom-0 inset-x-0 z-30 px-2.5 sm:px-4 pb-2.5 sm:pb-4 pt-8 sm:pt-10 [@media(max-height:500px)]:pt-4 [@media(max-height:500px)]:pb-1.5 bg-gradient-to-t from-black/95 via-black/65 to-transparent transition-opacity duration-300 ${
           showControls && !isCleanMode ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        {/* Interactive Timeline Progress Bar */}
+        {/* Interactive Timeline Progress Bar (Mouse + Touch Scrubbing) */}
         <div
           ref={progressTrackRef}
           onMouseDown={handleSeekStart}
           onMouseMove={handleSeekMove}
           onMouseLeave={() => setHoverTime(null)}
-          className="group/seek relative mb-3 flex h-6 w-full cursor-pointer items-center"
+          onTouchStart={handleTouchSeekStart}
+          onTouchMove={handleTouchSeekMove}
+          onTouchEnd={handleSeekEnd}
+          className="group/seek relative mb-2 sm:mb-3 [@media(max-height:500px)]:mb-1.5 flex h-7 sm:h-6 w-full cursor-pointer items-center touch-none"
         >
           {/* Base Track */}
-          <div className="relative h-1.5 w-full rounded-full bg-white/20 transition-all group-hover/seek:h-2.5">
+          <div className="relative h-1.5 w-full rounded-full bg-white/25 transition-all group-hover/seek:h-2.5">
             {/* Buffered Bar */}
             {duration > 0 && (
               <div
-                className="absolute inset-y-0 left-0 rounded-full bg-white/30 transition-all"
+                className="absolute inset-y-0 left-0 rounded-full bg-white/35 transition-all"
                 style={{ width: `${Math.min(100, (bufferedEnd / duration) * 100)}%` }}
               />
             )}
@@ -1178,7 +1571,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             {/* Played Bar */}
             {duration > 0 && (
               <div
-                className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-sky-500 to-cyan-400 shadow-[0_0_8px_rgba(56,189,248,0.5)]"
+                className="absolute inset-y-0 left-0 rounded-full bg-[#FF0000] shadow-[0_0_10px_rgba(255,0,0,0.65)]"
                 style={{ width: `${Math.min(100, (currentTime / duration) * 100)}%` }}
               />
             )}
@@ -1210,24 +1603,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               );
             })}
 
-            {/* Scrub Thumb */}
+            {/* Scrub Thumb (Always visible on mobile/scrubbing so touch users see handle) */}
             {duration > 0 && (
               <div
-                className="absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 rounded-full bg-white shadow-md ring-2 ring-sky-400 transition-transform scale-0 group-hover/seek:scale-100"
-                style={{ left: `calc(${(currentTime / duration) * 100}% - 7px)` }}
+                className={`absolute top-1/2 -translate-y-1/2 h-4 w-4 sm:h-3.5 sm:w-3.5 rounded-full bg-[#FF0000] shadow-md ring-2 ring-white/90 transition-transform ${
+                  isSeeking ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
+                }`}
+                style={{ left: `calc(${(currentTime / duration) * 100}% - 8px)` }}
               />
             )}
           </div>
 
-          {/* Hover Time Tooltip with Chapter Title */}
+          {/* Hover / Touch Seek Time Tooltip with Chapter Title */}
           {hoverTime !== null && (
             <div
-              className="pointer-events-none absolute bottom-5 -translate-x-1/2 rounded-md bg-slate-900/95 px-2.5 py-1 text-[11px] font-mono text-white shadow-xl ring-1 ring-white/10 flex flex-col items-center max-w-[220px]"
-              style={{ left: `${hoverPosition}%` }}
+              className="pointer-events-none absolute bottom-6 -translate-x-1/2 rounded-md bg-slate-900/95 px-2.5 py-1 text-[11px] font-mono text-white shadow-xl ring-1 ring-white/15 flex flex-col items-center max-w-[220px]"
+              style={{ left: `${Math.max(10, Math.min(90, hoverPosition))}%` }}
             >
               <span className="font-semibold">{formatTime(hoverTime)}</span>
               {hoverChapter && (
-                <span className="text-[10px] text-sky-300 font-sans font-medium truncate max-w-[200px]">
+                <span className="text-[10px] text-amber-300 font-sans font-medium truncate max-w-[200px]">
                   {hoverChapter.title}
                 </span>
               )}
@@ -1236,45 +1631,53 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
 
         {/* Controls Toolbar */}
-        <div className="flex items-center justify-between text-white">
+        <div className="flex items-center justify-between gap-1 text-white">
           {/* Left Controls: Play, Rewind, Forward, Volume, Time */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-0.5 sm:gap-2 min-w-0">
             {/* Prev Video (if in playlist) */}
             {hasPrevVideo && (
               <button
                 onClick={onPrevVideo}
                 title="Previous Video"
-                className="p-1.5 text-slate-300 hover:text-white transition-colors"
+                aria-label="Previous Video"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors shrink-0"
               >
-                <RotateCcw className="h-4 w-4" />
+                <SkipBack className="h-4 w-4" />
               </button>
             )}
 
             {/* Play/Pause */}
             <button
-              onClick={togglePlay}
+              onClick={() => {
+                togglePlay();
+                handleUserActivity();
+              }}
               aria-label={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500 text-white shadow-md hover:bg-sky-400 active:scale-95 transition-all"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#FF0000] text-white shadow-md hover:bg-[#CC0000] active:scale-95 transition-all"
             >
               {isPlaying ? <Pause className="h-4 w-4 fill-white" /> : <Play className="h-4 w-4 fill-white ml-0.5" />}
             </button>
 
-            {/* Rewind 10s */}
+            {/* Rewind 10s (Visible on mobile & desktop) */}
             <button
               onClick={() => seekRelative(-10)}
               title="Rewind 10s (J)"
-              className="hidden xs:flex p-1.5 text-slate-300 hover:text-white transition-colors"
+              aria-label="Rewind 10 seconds"
+              className="flex items-center justify-center h-9 px-1.5 sm:px-2 rounded-lg text-slate-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all shrink-0"
             >
               <RotateCcw className="h-4 w-4" />
+              <span className="ml-0.5 text-[10px] font-mono font-bold">10</span>
             </button>
 
-            {/* Forward 10s */}
+            {/* Forward 10s (Visible on mobile & desktop) */}
             <button
               onClick={() => seekRelative(10)}
               title="Fast Forward 10s (L)"
-              className="hidden xs:flex p-1.5 text-slate-300 hover:text-white transition-colors"
+              aria-label="Forward 10 seconds"
+              className="flex items-center justify-center h-9 px-1.5 sm:px-2 rounded-lg text-slate-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all shrink-0"
             >
               <RotateCw className="h-4 w-4" />
+              <span className="ml-0.5 text-[10px] font-mono font-bold">10</span>
             </button>
 
             {/* Next Video */}
@@ -1282,18 +1685,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <button
                 onClick={onNextVideo}
                 title="Next Video"
-                className="p-1.5 text-slate-300 hover:text-white transition-colors"
+                aria-label="Next Video"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors shrink-0"
               >
-                <RotateCw className="h-4 w-4" />
+                <SkipForward className="h-4 w-4" />
               </button>
             )}
 
-            {/* Volume Control */}
-            <div className="group/vol flex items-center gap-1.5">
+            {/* Touch-friendly Volume & Mute Control */}
+            <div data-player-menu className="relative group/vol flex items-center gap-1 shrink-0">
               <button
-                onClick={toggleMute}
-                title="Mute / Unmute (M)"
-                className="p-1.5 text-slate-300 hover:text-white transition-colors"
+                onClick={() => {
+                  if (typeof window !== 'undefined' && window.innerWidth < 640) {
+                    setVolumeSliderOpen((prev) => !prev);
+                    setQualityMenuOpen(false);
+                    setSpeedMenuOpen(false);
+                    setSubtitleMenuOpen(false);
+                    setAspectMenuOpen(false);
+                    handleUserActivity();
+                  } else {
+                    toggleMute();
+                  }
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setVolumeSliderOpen((prev) => !prev);
+                }}
+                title="Mute / Volume (M)"
+                aria-label={isMuted ? 'Unmute' : 'Mute'}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
               >
                 {isMuted || volume === 0 ? (
                   <VolumeX className="h-4 w-4 text-rose-400" />
@@ -1304,27 +1724,63 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 )}
               </button>
 
-              <div className="w-0 overflow-hidden transition-all duration-200 group-hover/vol:w-20 sm:w-16">
+              {/* Desktop inline volume slider */}
+              <div className="hidden sm:flex items-center w-16 md:w-20">
                 <input
                   type="range"
+                  aria-label="Volume"
                   min="0"
                   max="1"
                   step="0.02"
                   value={isMuted ? 0 : volume}
                   onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-                  className="h-1 w-16 accent-sky-400"
+                  className="h-1 w-full accent-[#FF0000] cursor-pointer"
                 />
               </div>
+
+              {/* Mobile expandable volume + mute popover */}
+              {volumeSliderOpen && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="sm:hidden absolute left-0 bottom-11 z-50 flex items-center gap-2.5 max-w-[calc(100vw-2rem)] rounded-xl border border-white/15 bg-slate-900/95 px-3 py-2 shadow-2xl backdrop-blur-md"
+                >
+                  <button
+                    type="button"
+                    onClick={toggleMute}
+                    aria-label={isMuted ? 'Unmute' : 'Mute'}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20"
+                  >
+                    {isMuted || volume === 0 ? (
+                      <VolumeX className="h-4 w-4 text-rose-400" />
+                    ) : (
+                      <Volume2 className="h-4 w-4" />
+                    )}
+                  </button>
+                  <input
+                    type="range"
+                    aria-label="Mobile Volume"
+                    min="0"
+                    max="1"
+                    step="0.02"
+                    value={isMuted ? 0 : volume}
+                    onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                    className="h-1.5 w-24 accent-[#FF0000]"
+                  />
+                  <span className="text-[10px] font-mono text-white w-8 text-right tabular-nums">
+                    {Math.round((isMuted ? 0 : volume) * 100)}%
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Time Display */}
             <button
               onClick={() => setShowTimeRemaining(!showTimeRemaining)}
               title="Click to toggle elapsed / remaining time"
-              className="text-xs font-mono text-slate-300 hover:text-white transition-colors whitespace-nowrap pl-1"
+              className="text-[11px] sm:text-xs font-mono text-slate-200 hover:text-white transition-colors whitespace-nowrap px-1 shrink-0 tabular-nums"
             >
               {formatTime(currentTime)}{' '}
-              <span className="text-slate-500">/</span>{' '}
+              <span className="text-slate-400">/</span>{' '}
               {showTimeRemaining && duration > 0
                 ? `-${formatTime(Math.max(0, duration - currentTime))}`
                 : formatTime(duration)}
@@ -1335,31 +1791,31 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <button
                 onClick={() => setChaptersOverlayOpen(!chaptersOverlayOpen)}
                 title={`Current Chapter: ${activeChapter.title} (Click to open chapter list)`}
-                className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-white/10 hover:bg-white/20 text-sky-300 border border-white/10 transition-all max-w-[220px] truncate"
+                className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-white/10 hover:bg-white/20 text-amber-200 border border-white/10 transition-all max-w-[200px] truncate"
               >
-                <ListOrdered className="h-3.5 w-3.5 flex-shrink-0 text-sky-400" />
+                <ListOrdered className="h-3.5 w-3.5 flex-shrink-0 text-[#FF0000]" />
                 <span className="truncate">{activeChapter.title}</span>
                 <ChevronRight className="h-3 w-3 flex-shrink-0 opacity-70" />
               </button>
             )}
           </div>
 
-          {/* Right Controls: Bookmark, Chapters, Speed, Loop, PiP, Fullscreen */}
-          <div className="flex items-center gap-1 sm:gap-2">
+          {/* Right Controls: Bookmark, Chapters, Speed, Quality/Settings, CC, PiP, Fullscreen */}
+          <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
             {/* Chapter List Overlay Button */}
             {chapters.length > 0 && (
               <button
                 onClick={() => setChaptersOverlayOpen(!chaptersOverlayOpen)}
                 title="Video Chapters (Click to view full chapter list)"
-                className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg transition-colors ${
+                className={`flex items-center gap-1 h-9 px-2 text-xs font-medium rounded-lg transition-colors ${
                   chaptersOverlayOpen
-                    ? 'bg-sky-500 text-white shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-white/10'
+                    ? 'bg-[#FF0000] text-white shadow-sm'
+                    : 'text-slate-200 hover:text-white hover:bg-white/10'
                 }`}
               >
-                <ListOrdered className="h-3.5 w-3.5" />
-                <span className="hidden md:inline">Chapters</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+                <ListOrdered className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+                <span className="hidden lg:inline">Chapters</span>
+                <span className="text-[10px] px-1 rounded-full bg-white/20">
                   {chapters.length}
                 </span>
               </button>
@@ -1369,23 +1825,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <button
               onClick={handleAddBookmarkClick}
               title="Add Bookmark at this time (B)"
-              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg text-slate-300 hover:text-amber-400 hover:bg-white/10 transition-colors"
+              className="hidden sm:flex items-center gap-1 h-9 px-2.5 text-xs font-medium rounded-lg text-slate-300 hover:text-amber-400 hover:bg-white/10 transition-colors"
             >
               <BookmarkIcon className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Bookmark</span>
             </button>
 
             {/* Playback Speed Menu */}
-            <div className="relative">
+            <div data-player-menu className="relative">
               <button
-                onClick={() => setSpeedMenuOpen(!speedMenuOpen)}
-                className="h-7 px-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+                onClick={() => {
+                  setSpeedMenuOpen(!speedMenuOpen);
+                  setQualityMenuOpen(false);
+                  setSubtitleMenuOpen(false);
+                  setAspectMenuOpen(false);
+                  setVolumeSliderOpen(false);
+                }}
+                aria-label="Playback Speed"
+                className="h-9 px-2 rounded-lg text-xs font-medium text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
               >
                 {playbackRate}x
               </button>
 
               {speedMenuOpen && (
-                <div className="absolute right-0 bottom-9 z-40 w-28 rounded-xl border border-white/10 bg-slate-900/95 py-1.5 shadow-2xl backdrop-blur-md text-white text-xs">
+                <div className="absolute right-0 bottom-11 z-40 w-28 max-w-[calc(100vw-1.5rem)] max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900/95 py-1.5 shadow-2xl backdrop-blur-md text-white text-xs">
                   <div className="px-3 py-1 font-semibold text-slate-400 border-b border-white/10 text-[10px] uppercase tracking-wider">
                     Playback Speed
                   </div>
@@ -1405,22 +1868,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               )}
             </div>
 
-            {/* Quality & Adaptive Bitrate (ABR) Menu */}
-            <div className="relative">
+            {/* Quality / Settings Menu (Only supported resolutions) */}
+            <div data-player-menu className="relative">
               <button
-                onClick={() => setQualityMenuOpen(!qualityMenuOpen)}
-                title="Video Quality & Adaptive Bitrate (ABR)"
-                className={`flex items-center gap-1 h-7 px-2 rounded-lg text-xs font-semibold transition-all ${
+                onClick={() => {
+                  setQualityMenuOpen(!qualityMenuOpen);
+                  setSpeedMenuOpen(false);
+                  setSubtitleMenuOpen(false);
+                  setAspectMenuOpen(false);
+                  setVolumeSliderOpen(false);
+                }}
+                title="Quality & Video Settings"
+                aria-label="Quality Settings"
+                className={`flex items-center gap-1 h-9 px-2 rounded-lg text-xs font-semibold transition-all ${
                   selectedQuality === 'Auto'
-                    ? 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20'
-                    : 'text-sky-400 bg-sky-500/10 hover:bg-sky-500/20'
+                    ? 'text-emerald-400 bg-emerald-500/15 hover:bg-emerald-500/25'
+                    : 'text-white bg-white/15 hover:bg-white/25'
                 }`}
               >
-                <Signal className="h-3 w-3" />
+                <Settings className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">
                   {selectedQuality === 'Auto' ? `Auto (${effectiveQualityLabel.replace(' HD', '')})` : selectedQuality.replace(' HD', '')}
                 </span>
-                <span className="sm:hidden">
+                <span className="sm:hidden text-[11px]">
                   {selectedQuality === 'Auto' ? 'Auto' : selectedQuality.split(' ')[0]}
                 </span>
               </button>
@@ -1428,7 +1898,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               {qualityMenuOpen && (
                 <div
                   onClick={(e) => e.stopPropagation()}
-                  className="absolute right-0 bottom-9 z-50 w-60 rounded-2xl border border-white/15 bg-slate-900/98 p-2.5 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150 space-y-2"
+                  className="absolute right-0 bottom-11 z-50 w-60 max-w-[calc(100vw-1.5rem)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900/98 p-2.5 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150 space-y-2"
                 >
                   <div className="flex items-center justify-between pb-1.5 border-b border-white/10 text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">
                     <div className="flex items-center gap-1.5">
@@ -1506,12 +1976,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               )}
             </div>
 
-            {/* Subtitles / Closed Captions (CC) Quick Toggle & Menu */}
-            <div className="relative">
+            {/* Subtitles / Closed Captions (CC) Menu & Toggle */}
+            <div data-player-menu className="relative">
               <button
-                onClick={toggleSubtitles}
-                title={`Subtitles / Captions (C) - ${subtitlesEnabled ? 'On' : 'Off'} (Tap menu button for tracks & custom .srt upload)`}
-                className={`relative flex items-center justify-center p-1.5 rounded-lg transition-all ${
+                onClick={() => {
+                  setSubtitleMenuOpen(!subtitleMenuOpen);
+                  setQualityMenuOpen(false);
+                  setSpeedMenuOpen(false);
+                  setAspectMenuOpen(false);
+                  setVolumeSliderOpen(false);
+                }}
+                title={`Subtitles / Captions (C) - ${subtitlesEnabled ? 'On' : 'Off'}`}
+                aria-label="Subtitles and Captions"
+                className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-all ${
                   subtitlesEnabled
                     ? 'text-sky-400 bg-sky-500/20 ring-1 ring-sky-500/40'
                     : 'text-slate-300 hover:text-white hover:bg-white/10'
@@ -1519,24 +1996,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               >
                 <Captions className="h-4 w-4" />
                 {subtitlesEnabled && (
-                  <span className="absolute bottom-0.5 right-1 h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+                  <span className="absolute bottom-1 right-1.5 h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
                 )}
-              </button>
-
-              {/* Subtitles Options Trigger Pill */}
-              <button
-                onClick={() => setSubtitleMenuOpen(!subtitleMenuOpen)}
-                title="Subtitle Tracks & Settings"
-                className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-800 text-[9px] text-slate-300 hover:bg-sky-600 hover:text-white ring-1 ring-white/20 transition-colors"
-              >
-                <SlidersHorizontal className="h-2 w-2" />
               </button>
 
               {/* Subtitles Dropdown Menu */}
               {subtitleMenuOpen && (
                 <div
                   onClick={(e) => e.stopPropagation()}
-                  className="absolute right-0 bottom-9 z-50 w-72 sm:w-80 rounded-2xl border border-white/15 bg-slate-900/98 p-3 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150 space-y-3"
+                  className="absolute right-0 bottom-11 z-50 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900/98 p-3 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150 space-y-3"
                 >
                   {/* Header */}
                   <div className="flex items-center justify-between pb-2 border-b border-white/10">
@@ -1729,7 +2197,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <button
               onClick={() => setIsLooping(!isLooping)}
               title={isLooping ? 'Looping enabled' : 'Enable loop'}
-              className={`p-1.5 rounded-lg transition-colors ${
+              className={`hidden sm:flex p-1.5 rounded-lg transition-colors ${
                 isLooping ? 'text-sky-400 bg-sky-500/20' : 'text-slate-300 hover:text-white hover:bg-white/10'
               }`}
             >
@@ -1740,7 +2208,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <button
               onClick={togglePiP}
               title="Picture-in-Picture (P)"
-              className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+              className="hidden sm:flex p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
             >
               <PictureInPicture className="h-4 w-4" />
             </button>
@@ -1749,12 +2217,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <button
               onClick={toggleFullscreen}
               title="Toggle Fullscreen (F)"
-              className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+              aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
             >
               {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
             </button>
 
-            {/* Clean View / Clear All Overlays Toggle */}
+            {/* Clean View / Clear All Overlays Toggle (Desktop) */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -1763,7 +2232,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 if (next) setShowControls(false);
               }}
               title={isCleanMode ? "Show Controls Overlay" : "Clear All Overlays (Clean View)"}
-              className={`p-1.5 rounded-lg transition-colors ${
+              className={`hidden sm:flex p-1.5 rounded-lg transition-colors ${
                 isCleanMode ? 'text-sky-400 bg-sky-500/20' : 'text-slate-300 hover:text-white hover:bg-white/10'
               }`}
             >
