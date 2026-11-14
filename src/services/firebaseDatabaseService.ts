@@ -495,6 +495,7 @@ export async function updateVideoDoc(
 }
 
 export async function deleteVideoDoc(videoId: string): Promise<void> {
+  if (!auth.currentUser?.uid) return;
   const path = `${COLLECTIONS.VIDEOS}/${videoId}`;
   try {
     await deleteDoc(doc(db, COLLECTIONS.VIDEOS, videoId));
@@ -617,9 +618,10 @@ export async function addCommentDoc(
   authorAvatar: string,
   customId?: string
 ): Promise<void> {
+  if (!auth.currentUser?.uid) return;
   const commentId = customId || `comment-${Date.now()}`;
   const path = `${COLLECTIONS.COMMENTS}/${commentId}`;
-  const userId = auth.currentUser?.uid || 'guest';
+  const userId = auth.currentUser.uid;
 
   const docData = {
     id: commentId,

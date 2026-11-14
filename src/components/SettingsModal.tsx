@@ -157,11 +157,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             <nav className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible pb-2 md:pb-0 scrollbar-none">
               <button
+                type="button"
                 onClick={() => setActiveTab('account')}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'account'
-                    ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
+                    ? 'bg-[#FF0000]/15 text-[#FF0000]'
+                    : 'text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]'
                 }`}
               >
                 <User className="h-4 w-4 shrink-0" />
@@ -169,11 +170,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveTab('playback')}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'playback'
-                    ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
+                    ? 'bg-[#FF0000]/15 text-[#FF0000]'
+                    : 'text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]'
                 }`}
               >
                 <Play className="h-4 w-4 shrink-0" />
@@ -181,11 +183,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveTab('notifications')}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'notifications'
-                    ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
+                    ? 'bg-[#FF0000]/15 text-[#FF0000]'
+                    : 'text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]'
                 }`}
               >
                 <Bell className="h-4 w-4 shrink-0" />
@@ -193,11 +196,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveTab('privacy')}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'privacy'
-                    ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
+                    ? 'bg-[#FF0000]/15 text-[#FF0000]'
+                    : 'text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]'
                 }`}
               >
                 <Shield className="h-4 w-4 shrink-0" />
@@ -205,11 +209,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveTab('appearance')}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   activeTab === 'appearance'
-                    ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
+                    ? 'bg-[#FF0000]/15 text-[#FF0000]'
+                    : 'text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]'
                 }`}
               >
                 <Palette className="h-4 w-4 shrink-0" />
@@ -218,7 +223,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </nav>
           </div>
 
-          <div className="hidden md:block pt-4 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-400">
+          <div className="hidden md:block pt-4 border-t border-[var(--ink-faint)] text-[11px] text-[var(--ink-medium)]">
             Vio streaming v2.4 · 2026
           </div>
         </aside>
@@ -226,12 +231,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Right Content Area */}
         <main className="flex-1 flex flex-col overflow-y-auto p-4 sm:p-6 min-h-[420px]">
           {/* Header Action Bar */}
-          <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-between pb-4 mb-4 border-b border-[var(--ink-faint)]">
             <div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white capitalize">
+              <h3 className="text-lg font-bold text-[var(--ink)] capitalize">
                 {activeTab === 'playback' ? 'Playback Controls & Quality' : activeTab}
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs text-[var(--ink-medium)]">
                 Manage your viewing experience and personalization settings
               </p>
             </div>
@@ -333,20 +338,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               {/* Channel & Membership Cards */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                <div className="flex items-center justify-between p-3.5 rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] hover:bg-[var(--card-hover)] transition-colors">
                   <div>
-                    <div className="text-xs font-semibold text-slate-900 dark:text-white">Channel Membership & Revenue</div>
-                    <div className="text-[11px] text-slate-500">Track 30% creator payouts & follower perks</div>
+                    <div className="text-xs font-semibold text-[var(--ink)]">Channel Membership & Revenue</div>
+                    <div className="text-[11px] text-[var(--ink-medium)]">Track 30% creator payouts & follower perks</div>
                   </div>
-                  <span className="text-xs font-bold text-red-600 dark:text-red-400">Active</span>
+                  <span className="text-xs font-bold text-[#FF0000]">Active</span>
                 </div>
 
-                <div className="flex items-center justify-between p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                <div className="flex items-center justify-between p-3.5 rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] hover:bg-[var(--card-hover)] transition-colors">
                   <div>
-                    <div className="text-xs font-semibold text-slate-900 dark:text-white">Connected Services & Cloud</div>
-                    <div className="text-[11px] text-slate-500">Vio streaming Cloud Storage & 4K CDN Encoding</div>
+                    <div className="text-xs font-semibold text-[var(--ink)]">Connected Services & Cloud</div>
+                    <div className="text-[11px] text-[var(--ink-medium)]">Vio streaming Cloud Storage & 4K CDN Encoding</div>
                   </div>
-                  <span className="text-xs text-slate-400">Ready</span>
+                  <span className="text-xs text-[var(--ink-medium)]">Ready</span>
                 </div>
               </div>
             </div>
@@ -356,15 +361,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {activeTab === 'playback' && (
             <div className="space-y-4">
               {/* Autoplay Next */}
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Autoplay Next Video</div>
-                  <div className="text-[11px] text-slate-500">Automatically stream recommended video when one finishes</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Autoplay Next Video</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Automatically stream recommended video when one finishes</div>
                 </div>
                 <button
+                  type="button"
                   onClick={handleAutoplayToggle}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    autoplayNext ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    autoplayNext ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -376,10 +382,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {/* Default Quality Selector */}
-              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-2">
+              <div className="p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)] space-y-2">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Default Video Streaming Quality</div>
-                  <div className="text-[11px] text-slate-500">Preferred playback resolution on Wi-Fi and high-speed broadband</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Default Video Streaming Quality</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Preferred playback resolution on Wi-Fi and high-speed broadband</div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                   {['Auto', '1080p', '1440p', '4K UHD'].map((q) => (
@@ -389,8 +395,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onClick={() => handleQualityChange(q)}
                       className={`min-h-[40px] px-3 py-2 rounded-xl text-xs font-semibold transition-all border cursor-pointer ${
                         defaultQuality === q
-                          ? 'border-red-500 bg-red-500/10 text-red-500'
-                          : 'border-[var(--ink-faint)] text-[var(--ink)] hover:bg-[var(--ink-faint)]'
+                          ? 'border-[#FF0000] bg-[#FF0000]/10 text-[#FF0000]'
+                          : 'border-[var(--ink-faint)] text-[var(--ink)] hover:bg-[var(--card-hover)]'
                       }`}
                     >
                       {q}
@@ -400,15 +406,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {/* Ambient Lighting Mode */}
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Ambient Glow / Cinema Mode</div>
-                  <div className="text-[11px] text-slate-500">Diffuse player glow around video frame for immersive cinema viewing</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Ambient Glow / Cinema Mode</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Diffuse player glow around video frame for immersive cinema viewing</div>
                 </div>
                 <button
+                  type="button"
                   onClick={handleAmbientToggle}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    ambientMode ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    ambientMode ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -420,15 +427,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {/* Captions / Subtitles */}
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Always Show Closed Captions</div>
-                  <div className="text-[11px] text-slate-500">Automatically display subtitles whenever available</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Always Show Closed Captions</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Automatically display subtitles whenever available</div>
                 </div>
                 <button
+                  type="button"
                   onClick={handleSubtitlesToggle}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    subtitlesEnabled ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    subtitlesEnabled ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -462,20 +470,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* TAB 3: NOTIFICATIONS */}
           {activeTab === 'notifications' && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Followed Channels Uploads</div>
-                  <div className="text-[11px] text-slate-500">Get notified when creators you follow release new videos or reels</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Followed Channels Uploads</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Get notified when creators you follow release new videos or reels</div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     const next = !notifyUploads;
                     setNotifyUploads(next);
                     localStorage.setItem('vio_pref_notify_uploads', String(next));
                     showSavedBadge();
                   }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    notifyUploads ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    notifyUploads ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -486,20 +495,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
 
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Replies & Comments Mentions</div>
-                  <div className="text-[11px] text-slate-500">Receive alerts when someone replies to your comment or tags your handle</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Replies & Comments Mentions</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Receive alerts when someone replies to your comment or tags your handle</div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     const next = !notifyReplies;
                     setNotifyReplies(next);
                     localStorage.setItem('vio_pref_notify_replies', String(next));
                     showSavedBadge();
                   }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    notifyReplies ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    notifyReplies ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -510,20 +520,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
 
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Studio Milestone Alerts</div>
-                  <div className="text-[11px] text-slate-500">Celebrate follower milestones, 1K/10K view peaks, and earnings milestones</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Studio Milestone Alerts</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Celebrate follower milestones, 1K/10K view peaks, and earnings milestones</div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     const next = !notifyMilestones;
                     setNotifyMilestones(next);
                     localStorage.setItem('vio_pref_notify_milestones', String(next));
                     showSavedBadge();
                   }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    notifyMilestones ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    notifyMilestones ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -534,20 +545,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
 
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Notification Chimes & Sounds</div>
-                  <div className="text-[11px] text-slate-500">Play subtle audio alert on new desktop push notification</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Notification Chimes & Sounds</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Play subtle audio alert on new desktop push notification</div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     const next = !notifySound;
                     setNotifySound(next);
                     localStorage.setItem('vio_pref_notify_sound', String(next));
                     showSavedBadge();
                   }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    notifySound ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    notifySound ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -563,20 +575,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* TAB 4: PRIVACY & HISTORY */}
           {activeTab === 'privacy' && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Keep Watch History</div>
-                  <div className="text-[11px] text-slate-500">Record videos you watch to resume later and improve recommendations</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Keep Watch History</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Record videos you watch to resume later and improve recommendations</div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     const next = !saveHistory;
                     setSaveHistory(next);
                     localStorage.setItem('vio_pref_save_history', String(next));
                     showSavedBadge();
                   }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    saveHistory ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    saveHistory ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -587,10 +600,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
 
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Clear Watch History</div>
-                  <div className="text-[11px] text-slate-500">Wipe all previously viewed clips from your local history</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Clear Watch History</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Wipe all previously viewed clips from your local history</div>
                 </div>
                 {onClearHistory && (
                   <button
@@ -607,20 +620,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
               </div>
 
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Restricted Mode (Safe Search)</div>
-                  <div className="text-[11px] text-slate-500">Hide mature or 18+ flagged content from your feed and search results</div>
+                  <div className="text-xs font-bold text-[var(--ink)]">Restricted Mode (Safe Search)</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Hide mature or 18+ flagged content from your feed and search results</div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     const next = !restrictedMode;
                     setRestrictedMode(next);
                     localStorage.setItem('vio_pref_restricted_mode', String(next));
                     showSavedBadge();
                   }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    restrictedMode ? 'bg-red-600' : 'bg-slate-300 dark:bg-slate-700'
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                    restrictedMode ? 'bg-[#FF0000]' : 'bg-[var(--ink-faint)]'
                   }`}
                 >
                   <span
@@ -636,42 +650,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* TAB 5: APPEARANCE */}
           {activeTab === 'appearance' && (
             <div className="space-y-4">
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-3">
-                <div className="text-xs font-bold text-slate-900 dark:text-white">Visual Interface Theme</div>
+              <div className="p-4 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] space-y-3">
+                <div className="text-xs font-bold text-[var(--ink)]">Visual Interface Theme</div>
                 <div className="grid grid-cols-2 gap-3">
                   <button
+                    type="button"
                     onClick={() => {
                       if (!isDarkMode) onToggleDarkMode();
                       showSavedBadge('Dark theme enabled');
                     }}
-                    className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
+                    className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       isDarkMode
-                        ? 'border-red-500 bg-red-500/10 text-red-500'
-                        : 'border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                        ? 'border-[#FF0000] bg-[#FF0000]/10 text-[#FF0000]'
+                        : 'border-[var(--ink-faint)] hover:bg-[var(--card-hover)] text-[var(--ink)]'
                     }`}
                   >
                     <Moon className="h-5 w-5" />
                     <div>
                       <div className="text-xs font-bold">Dark Theme</div>
-                      <div className="text-[10px] text-slate-400">Night cinema contrast</div>
+                      <div className="text-[10px] text-[var(--ink-medium)]">Night cinema contrast</div>
                     </div>
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => {
                       if (isDarkMode) onToggleDarkMode();
                       showSavedBadge('Light theme enabled');
                     }}
-                    className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
+                    className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       !isDarkMode
-                        ? 'border-red-500 bg-red-50 text-red-600'
-                        : 'border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                        ? 'border-[#FF0000] bg-[#FF0000]/10 text-[#FF0000]'
+                        : 'border-[var(--ink-faint)] hover:bg-[var(--card-hover)] text-[var(--ink)]'
                     }`}
                   >
                     <Sun className="h-5 w-5 text-amber-500" />
                     <div>
                       <div className="text-xs font-bold">Light Theme</div>
-                      <div className="text-[10px] text-slate-400">Clean day contrast</div>
+                      <div className="text-[10px] text-[var(--ink-medium)]">Clean day contrast</div>
                     </div>
                   </button>
                 </div>

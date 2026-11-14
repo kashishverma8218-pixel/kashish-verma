@@ -295,7 +295,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       {/* MOBILE / TABLET SLIDE-OUT GUIDE DRAWER */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-50">
+        <div className="fixed inset-0 z-50 md:hidden">
           <div
             className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
             onClick={onCloseMobile}

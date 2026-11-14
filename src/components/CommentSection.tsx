@@ -74,31 +74,32 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
 
   if (disabled) {
     return (
-      <section className="mt-8 pt-6 border-t border-slate-200 dark:border-slate-800">
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40 p-6 text-center text-slate-500 dark:text-slate-400">
-          <MessageSquare className="h-6 w-6 mx-auto mb-2 text-slate-400 opacity-60" />
-          <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Comments are turned off</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">The creator has disabled comments for this video.</p>
+      <section className="mt-8 pt-6 border-t border-[var(--ink-faint)]">
+        <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 text-center text-[var(--ink-medium)]">
+          <MessageSquare className="h-6 w-6 mx-auto mb-2 opacity-60" />
+          <p className="text-xs font-bold text-[var(--ink)]">Comments are turned off</p>
+          <p className="text-[11px] text-[var(--ink-medium)] mt-0.5">The creator has disabled comments for this video.</p>
         </div>
       </section>
     );
   }
 
   return (
-    <section className="mt-8 pt-6 border-t border-slate-200 dark:border-slate-800">
+    <section className="mt-8 pt-6 border-t border-[var(--ink-faint)]">
       {/* Header Row: Total count & Sort toggle */}
       <div className="flex items-center gap-6 mb-6">
-        <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+        <h3 className="text-lg font-bold text-[var(--ink)]">
           {comments.length} Comments
         </h3>
 
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
-          <ArrowUpDown className="h-4 w-4 text-slate-400" />
+        <div className="flex items-center gap-2 text-xs font-semibold text-[var(--ink-medium)]">
+          <ArrowUpDown className="h-4 w-4" />
           <button
+            type="button"
             onClick={() => setSortBy(sortBy === 'top' ? 'newest' : 'top')}
-            className="hover:text-slate-900 dark:hover:text-white transition-colors"
+            className="hover:text-[var(--ink)] transition-colors cursor-pointer"
           >
-            Sort by: <span className="underline decoration-slate-400">{sortBy === 'top' ? 'Top comments' : 'Newest first'}</span>
+            Sort by: <span className="underline decoration-[var(--ink-faint)]">{sortBy === 'top' ? 'Top comments' : 'Newest first'}</span>
           </button>
         </div>
       </div>
@@ -124,7 +125,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
             value={newCommentText}
             onChange={(e) => setNewCommentText(e.target.value)}
             onFocus={() => setIsFocused(true)}
-            className="w-full resize-none border-b-2 border-slate-200 bg-transparent py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:text-white dark:focus:border-sky-400 transition-all"
+            className="w-full resize-none border-b-2 border-[var(--ink-faint)] bg-transparent py-1.5 text-base sm:text-sm text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[var(--ink)] focus:outline-none transition-all"
           />
 
           {(isFocused || newCommentText) && (
@@ -135,14 +136,14 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                   setNewCommentText('');
                   setIsFocused(false);
                 }}
-                className="rounded-full px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+                className="min-h-[36px] rounded-full px-4 py-1.5 text-xs font-semibold text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)] transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!newCommentText.trim()}
-                className="flex items-center gap-1.5 rounded-full bg-sky-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                className="min-h-[36px] flex items-center gap-1.5 rounded-full bg-[#3EA6FF] px-4 py-1.5 text-xs font-semibold text-[#0F0F0F] shadow-xs hover:bg-[#65B8FF] disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
               >
                 <Send className="h-3 w-3" />
                 <span>Comment</span>
@@ -162,42 +163,44 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
               alt={comment.authorName}
               referrerPolicy="no-referrer"
               onError={(e) => {
-                e.currentTarget.style.opacity = '0.4';
+                if (e.currentTarget.src !== DEFAULT_COMMENT_AVATAR) {
+                  e.currentTarget.src = DEFAULT_COMMENT_AVATAR;
+                }
               }}
-              className="h-10 w-10 rounded-full object-cover shrink-0 ring-1 ring-slate-200 dark:ring-slate-700"
+              className="h-10 w-10 rounded-full object-cover shrink-0 ring-1 ring-[var(--ink-faint)]"
             />
 
             <div className="flex-1 min-w-0">
               {/* Header: Name, Handle & Timestamp */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-900 dark:text-white">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-[var(--ink)]">
                   {comment.authorName}
                 </span>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-[var(--ink-medium)]">
                   {comment.authorHandle}
                 </span>
-                <span aria-hidden="true" className="text-slate-400 text-xs">·</span>
-                <span className="text-[11px] text-slate-400">
+                <span aria-hidden="true" className="text-[var(--ink-medium)] text-xs">·</span>
+                <span className="text-[11px] text-[var(--ink-medium)]">
                   {comment.timestamp}
                 </span>
               </div>
 
               {/* Comment Content */}
-              <p className="mt-1 text-sm text-slate-800 dark:text-slate-200 leading-relaxed break-words">
+              <p className="mt-1 text-sm text-[var(--ink)]/90 leading-relaxed break-words">
                 {comment.content}
               </p>
 
               {/* Reaction & Reply Actions */}
-              <div className="mt-2 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+              <div className="mt-2 flex items-center gap-3 text-xs text-[var(--ink-medium)]">
                 <button
                   type="button"
                   onClick={() => onLikeComment(comment.id)}
-                  className={`min-h-[36px] px-1.5 flex items-center gap-1.5 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer ${
+                  className={`min-h-[36px] px-1.5 flex items-center gap-1.5 hover:text-[var(--ink)] transition-colors cursor-pointer ${
                     comment.userLiked ? 'text-[var(--accent-ink)] font-semibold' : ''
                   }`}
                 >
                   <ThumbsUp className={`h-3.5 w-3.5 ${comment.userLiked ? 'fill-current' : ''}`} />
-                  <span>{comment.likes}</span>
+                  <span className="tabular-nums">{comment.likes}</span>
                 </button>
 
                 <button
@@ -205,7 +208,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                   title="Dislike"
                   aria-label="Dislike comment"
                   onClick={() => onDislikeComment?.(comment.id)}
-                  className={`min-h-[36px] min-w-[36px] flex items-center justify-center hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer ${
+                  className={`min-h-[36px] min-w-[36px] flex items-center justify-center hover:text-[var(--ink)] transition-colors cursor-pointer ${
                     comment.userDisliked ? 'text-rose-500' : ''
                   }`}
                 >
@@ -217,7 +220,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                   onClick={() => {
                     setReplyingCommentId(replyingCommentId === comment.id ? null : comment.id);
                   }}
-                  className="min-h-[36px] px-2 font-semibold text-slate-700 hover:text-[var(--accent-ink)] dark:text-slate-300 transition-colors cursor-pointer"
+                  className="min-h-[36px] px-2 font-semibold text-[var(--ink)] hover:text-[var(--accent-ink)] transition-colors cursor-pointer"
                 >
                   Reply
                 </button>
@@ -230,7 +233,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                       title="Delete comment"
                       aria-label="Delete comment"
                       onClick={() => onDeleteComment(comment.id)}
-                      className="min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-rose-500 transition-colors cursor-pointer ml-auto"
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center text-[var(--ink-medium)] hover:text-rose-500 transition-colors cursor-pointer ml-auto"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -239,28 +242,28 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
 
               {/* Reply Input Box */}
               {replyingCommentId === comment.id && (
-                <div className="mt-3 flex flex-wrap sm:flex-nowrap items-center gap-2 pl-2 sm:pl-4 border-l-2 border-slate-200 dark:border-slate-700">
+                <div className="mt-3 flex flex-wrap sm:flex-nowrap items-center gap-2 pl-2 sm:pl-4 border-l-2 border-[var(--ink-faint)]">
                   <input
                     type="text"
                     placeholder={`Reply to ${comment.authorHandle}...`}
                     value={replyText}
                     onChange={(e) => setReplyText(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleReplySubmit(comment.id)}
-                    className="flex-1 min-w-[160px] min-h-[40px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-base sm:text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    className="flex-1 min-w-[160px] min-h-[40px] rounded-lg border border-[var(--ink-faint)] bg-[var(--surface)] px-3 py-1.5 text-base sm:text-xs text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[var(--ink)] focus:outline-none"
                     autoFocus
                   />
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleReplySubmit(comment.id)}
-                      className="min-h-[38px] rounded-lg bg-sky-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 transition-colors cursor-pointer"
+                      className="min-h-[38px] rounded-full bg-[#3EA6FF] px-3.5 py-1.5 text-xs font-semibold text-[#0F0F0F] hover:bg-[#65B8FF] transition-colors cursor-pointer"
                     >
                       Reply
                     </button>
                     <button
                       type="button"
                       onClick={() => setReplyingCommentId(null)}
-                      className="min-h-[38px] rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                      className="min-h-[38px] rounded-full px-2.5 py-1.5 text-xs text-[var(--ink-medium)] hover:text-[var(--ink)] hover:bg-[var(--card-hover)] cursor-pointer"
                     >
                       Cancel
                     </button>
@@ -274,7 +277,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                   <button
                     type="button"
                     onClick={() => toggleReplies(comment.id)}
-                    className="min-h-[36px] flex items-center gap-1.5 text-xs font-semibold text-sky-500 hover:text-sky-400 transition-colors cursor-pointer"
+                    className="min-h-[36px] flex items-center gap-1.5 text-xs font-semibold text-[#3EA6FF] hover:opacity-85 transition-opacity cursor-pointer"
                   >
                     <MessageSquare className="h-3.5 w-3.5" />
                     <span>
@@ -285,7 +288,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                   </button>
 
                   {expandedReplies[comment.id] && (
-                    <div className="mt-3 space-y-3 pl-3 sm:pl-6 border-l-2 border-slate-200 dark:border-slate-800">
+                    <div className="mt-3 space-y-3 pl-3 sm:pl-6 border-l-2 border-[var(--ink-faint)]">
                       {comment.replies.map((reply) => (
                         <div key={reply.id} className="flex items-start gap-3">
                           <img
@@ -293,24 +296,26 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                             alt={reply.authorName}
                             referrerPolicy="no-referrer"
                             onError={(e) => {
-                              e.currentTarget.style.opacity = '0.4';
+                              if (e.currentTarget.src !== DEFAULT_COMMENT_AVATAR) {
+                                e.currentTarget.src = DEFAULT_COMMENT_AVATAR;
+                              }
                             }}
-                            className="h-7 w-7 rounded-full object-cover shrink-0 ring-1 ring-slate-200 dark:ring-slate-700"
+                            className="h-7 w-7 rounded-full object-cover shrink-0 ring-1 ring-[var(--ink-faint)]"
                           />
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-slate-900 dark:text-white">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-[var(--ink)]">
                                 {reply.authorName}
                               </span>
-                              <span className="text-[10px] text-slate-400">
+                              <span className="text-[10px] text-[var(--ink-medium)]">
                                 {reply.authorHandle}
                               </span>
-                              <span aria-hidden="true" className="text-slate-400 text-xs">·</span>
-                              <span className="text-[10px] text-slate-400">
+                              <span aria-hidden="true" className="text-[var(--ink-medium)] text-xs">·</span>
+                              <span className="text-[10px] text-[var(--ink-medium)]">
                                 {reply.timestamp}
                               </span>
                             </div>
-                            <p className="mt-0.5 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                            <p className="mt-0.5 text-xs text-[var(--ink)]/85 leading-relaxed break-words">
                               {reply.content}
                             </p>
                           </div>

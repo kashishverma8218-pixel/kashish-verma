@@ -671,7 +671,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                 <Heart className={`h-5 w-5 ${activeReel.userLiked ? 'fill-white' : ''}`} />
               </button>
               <span className="text-[10px] font-mono font-bold text-white tabular-nums drop-shadow">
-                {formatReelLikes(activeReel.likes + (activeReel.userLiked ? 1 : 0))}
+                {formatReelLikes(activeReel.likes)}
               </span>
             </div>
 
@@ -752,7 +752,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
               />
             </button>
             <span className="font-mono text-[11px] font-medium text-[var(--ink)]/80 tabular-nums">
-              {formatReelLikes(activeReel.likes + (activeReel.userLiked ? 1 : 0))}
+              {formatReelLikes(activeReel.likes)}
             </span>
           </div>
 
@@ -897,7 +897,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                           }`}
                         >
                           <Heart className={`h-3.5 w-3.5 ${comment.userLiked ? 'fill-[#FF0000]' : ''}`} />
-                          <span className="tabular-nums">{comment.likes + (comment.userLiked ? 1 : 0)}</span>
+                          <span className="tabular-nums">{comment.likes}</span>
                         </button>
                       </div>
                     </div>
@@ -916,7 +916,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                 placeholder="Add a comment on this reel..."
                 value={newCommentText}
                 onChange={(e) => setNewCommentText(e.target.value)}
-                className="flex-1 min-h-[40px] rounded-full border border-[var(--ink-faint)] bg-[var(--surface)] px-4 py-2 text-xs text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:outline-none focus:border-[var(--accent-ink)]"
+                className="flex-1 min-h-[40px] rounded-full border border-[var(--ink-faint)] bg-[var(--surface)] px-4 py-2 text-base sm:text-xs text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:outline-none focus:border-[var(--accent-ink)]"
               />
               <button
                 type="submit"
@@ -939,29 +939,31 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-3xl max-h-[85vh] rounded-3xl border border-white/10 bg-slate-900 text-white shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+            className="w-full max-w-3xl max-h-[85vh] rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] text-[var(--ink)] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
           >
             {/* Header */}
-            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/10 bg-slate-950/60">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-[var(--ink-faint)] bg-[var(--bg)]">
               <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/20">
+                <div className="h-10 w-10 rounded-2xl bg-[#FF0000] flex items-center justify-center shadow-lg shadow-[#FF0000]/20">
                   <Layers className="h-5 w-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-base font-extrabold flex items-center gap-2">
+                  <h3 className="text-base font-extrabold flex items-center gap-2 text-[var(--ink)]">
                     Shorts Series Playlists
-                    <span className="rounded-full bg-purple-500/20 text-purple-300 text-[10px] px-2 py-0.5 font-bold">
+                    <span className="rounded-full bg-[#FF0000]/15 text-[#FF0000] text-[10px] px-2 py-0.5 font-bold">
                       Binge Mode
                     </span>
                   </h3>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-[var(--ink-medium)]">
                     Episodic vertical playlists curated by top creators on Vio streaming.
                   </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setViewMode('feed')}
-                className="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                aria-label="Close Shorts Series"
+                className="p-1.5 rounded-full text-[var(--ink-medium)] hover:text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -974,7 +976,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                 return (
                   <div
                     key={series.id}
-                    className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 space-y-3.5 hover:border-purple-500/40 transition-colors"
+                    className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--bg)] p-4 space-y-3.5 hover:border-[#FF0000]/50 transition-colors"
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-3">
@@ -986,26 +988,27 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                             const fallback = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
                             if (e.currentTarget.src !== fallback) e.currentTarget.src = fallback;
                           }}
-                          className="h-9 w-9 rounded-full object-cover ring-2 ring-purple-500/30"
+                          className="h-9 w-9 rounded-full object-cover ring-2 ring-[#FF0000]/30"
                         />
                         <div>
-                          <h4 className="font-bold text-sm text-white flex flex-wrap items-center gap-2">
+                          <h4 className="font-bold text-sm text-[var(--ink)] flex flex-wrap items-center gap-2">
                             {series.title}
-                            <span className="text-[10px] rounded-md bg-white/10 text-slate-300 px-1.5 py-0.5 font-mono">
+                            <span className="text-[10px] rounded-md bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] px-1.5 py-0.5 font-mono">
                               {seriesReels.length} Episodes
                             </span>
                           </h4>
-                          <p className="text-[11px] text-slate-400">{series.description}</p>
+                          <p className="text-[11px] text-[var(--ink-medium)]">{series.description}</p>
                         </div>
                       </div>
 
                       <button
+                        type="button"
                         onClick={() => {
                           const firstIdx = reels.findIndex((r) => series.reelIds.includes(r.id));
                           if (firstIdx !== -1) setActiveIndex(firstIdx);
                           setViewMode('feed');
                         }}
-                        className="flex items-center justify-center gap-1.5 min-h-[38px] px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-md shadow-purple-600/30 shrink-0 self-start sm:self-auto"
+                        className="flex items-center justify-center gap-1.5 min-h-[38px] px-3.5 py-1.5 rounded-full bg-[#FF0000] hover:bg-[#CC0000] text-white text-xs font-bold transition-all shadow-md shadow-[#FF0000]/25 shrink-0 self-start sm:self-auto cursor-pointer"
                       >
                         <Play className="h-3.5 w-3.5 fill-white" />
                         <span>Play All</span>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { History, ThumbsUp, Clock, Trash2, Film, Play } from 'lucide-react';
 import { VideoItem, Channel, HistoryItem } from '../types/video';
 import { VideoCard } from './VideoCard';
@@ -32,6 +32,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onRemoveFromHistory,
 }) => {
   const [activeTab, setActiveTab] = useState<'history' | 'liked' | 'watchLater'>(initialTab);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const historyVideos = history
     .map((h) => {

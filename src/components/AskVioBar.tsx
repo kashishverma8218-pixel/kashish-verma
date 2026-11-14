@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sparkles, ArrowRight, X, Search, HelpCircle, Film, DollarSign, Wand2 } from 'lucide-react';
 
 interface AskVioBarProps {
@@ -12,6 +12,18 @@ export const AskVioBar: React.FC<AskVioBarProps> = ({ onSearch, onOpenStudio, on
   const [isOpen, setIsOpen] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
   const [isAsking, setIsAsking] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsOpen(false);
+        setResponse(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen]);
 
   const QUICK_QUESTIONS = [
     { q: 'How does 30/70 revenue sharing work?', type: 'monetization' },
@@ -92,24 +104,35 @@ export const AskVioBar: React.FC<AskVioBarProps> = ({ onSearch, onOpenStudio, on
 
       {/* Floating Q&A Dropdown / Modal when opened */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 px-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl p-4 text-xs animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 dark:border-slate-800">
+        <div
+          onClick={() => {
+            setIsOpen(false);
+            setResponse(null);
+          }}
+          className="fixed inset-0 z-50 flex items-start justify-center pt-16 px-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] text-[var(--ink)] shadow-2xl p-4 text-xs animate-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center justify-between pb-2.5 border-b border-[var(--ink-faint)]">
               <div className="flex items-center gap-2">
-                <div className="h-6 w-6 rounded-md bg-gradient-to-tr from-purple-600 to-pink-500 text-white flex items-center justify-center">
+                <div className="h-6 w-6 rounded-md bg-[#FF0000] text-white flex items-center justify-center">
                   <Sparkles className="h-3.5 w-3.5" />
                 </div>
-                <span className="font-bold text-slate-900 dark:text-white">Ask Vio streaming AI</span>
-                <span className="rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold px-2 py-0.5">
+                <span className="font-bold text-[var(--ink)]">Ask Vio streaming AI</span>
+                <span className="rounded-full bg-[#FF0000]/15 text-[#FF0000] text-[10px] font-semibold px-2 py-0.5">
                   Floating Q&A
                 </span>
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setIsOpen(false);
                   setResponse(null);
                 }}
-                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                aria-label="Close Ask Vio AI"
+                className="p-1.5 rounded-full text-[var(--ink-medium)] hover:text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -117,15 +140,15 @@ export const AskVioBar: React.FC<AskVioBarProps> = ({ onSearch, onOpenStudio, on
 
             {/* Response Section */}
             {isAsking && (
-              <div className="my-4 p-3 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200/50 dark:border-purple-800/50 flex items-center gap-2 text-purple-700 dark:text-purple-300">
-                <Sparkles className="h-4 w-4 animate-spin text-purple-600 shrink-0" />
+              <div className="my-4 p-3 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)] flex items-center gap-2 text-[var(--ink)]">
+                <Sparkles className="h-4 w-4 animate-spin text-[#FF0000] shrink-0" />
                 <span>Vio streaming AI is analyzing the knowledge base...</span>
               </div>
             )}
 
             {response && (
-              <div className="my-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-purple-500/20 text-slate-800 dark:text-slate-200 leading-relaxed">
-                <div className="flex items-center gap-1.5 font-bold text-purple-600 dark:text-purple-400 mb-1 text-[11px]">
+              <div className="my-3 p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)] text-[var(--ink)] leading-relaxed">
+                <div className="flex items-center gap-1.5 font-bold text-[#FF0000] mb-1 text-[11px]">
                   <Sparkles className="h-3.5 w-3.5" />
                   <span>Answer from Vio streaming AI:</span>
                 </div>
@@ -135,34 +158,36 @@ export const AskVioBar: React.FC<AskVioBarProps> = ({ onSearch, onOpenStudio, on
 
             {/* Quick Questions */}
             <div className="mt-3">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+              <p className="text-[11px] font-bold text-[var(--ink-medium)] uppercase tracking-wider mb-2">
                 Suggested Questions
               </p>
               <div className="space-y-1.5">
                 {QUICK_QUESTIONS.map((item, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => {
                       setQuery(item.q);
                       handleAsk(item.q);
                     }}
-                    className="flex w-full items-center justify-between p-2 rounded-xl text-left hover:bg-purple-50 dark:hover:bg-purple-950/30 text-slate-700 dark:text-slate-300 transition-colors group"
+                    className="flex w-full items-center justify-between p-2 rounded-xl text-left hover:bg-[var(--card-hover)] text-[var(--ink)] transition-colors group cursor-pointer"
                   >
                     <span className="truncate pr-2">{item.q}</span>
-                    <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-purple-500 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                    <ArrowRight className="h-3.5 w-3.5 text-[var(--ink-medium)] group-hover:text-[#FF0000] shrink-0 transition-transform group-hover:translate-x-0.5" />
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+            <div className="mt-3 pt-2.5 border-t border-[var(--ink-faint)] flex items-center justify-between text-[11px] text-[var(--ink-medium)]">
               <span>Ask anything about video playback, revenue splits, or studio</span>
               <button
+                type="button"
                 onClick={() => {
                   if (query) onSearch(query);
                   setIsOpen(false);
                 }}
-                className="font-bold text-purple-600 dark:text-purple-400 hover:underline"
+                className="font-bold text-[#FF0000] hover:underline cursor-pointer"
               >
                 Search catalog
               </button>

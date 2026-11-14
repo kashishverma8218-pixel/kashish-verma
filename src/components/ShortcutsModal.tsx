@@ -40,20 +40,22 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl transition-colors dark:border-slate-800 dark:bg-slate-900"
+        className="relative w-full max-w-lg rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 shadow-2xl transition-colors text-[var(--ink)]"
       >
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center justify-between pb-4 border-b border-[var(--ink-faint)]">
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500/10 text-sky-500">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FF0000]/10 text-[#FF0000]">
               <Keyboard className="h-4 w-4" />
             </div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+            <h3 className="text-base font-bold text-[var(--ink)]">
               Keyboard Shortcuts Cheat Sheet
             </h3>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="rounded-lg p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+            aria-label="Close shortcuts"
+            className="rounded-lg p-1.5 text-[var(--ink-medium)] hover:text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
@@ -63,12 +65,12 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
           {shortcuts.map((sc, idx) => (
             <div
               key={idx}
-              className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 p-2.5 dark:border-slate-800 dark:bg-slate-800/50"
+              className="flex items-center justify-between rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] p-2.5"
             >
-              <span className="text-xs text-slate-600 dark:text-slate-300 pr-2">
+              <span className="text-xs text-[var(--ink-medium)] pr-2">
                 {sc.desc}
               </span>
-              <kbd className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-mono font-semibold text-slate-800 shadow-2xs shrink-0 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
+              <kbd className="rounded-md border border-[var(--ink-faint)] bg-[var(--surface)] px-2 py-0.5 text-xs font-mono font-semibold text-[var(--ink)] shadow-2xs shrink-0">
                 {sc.key}
               </kbd>
             </div>
@@ -77,8 +79,9 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
 
         <div className="mt-5 flex justify-end">
           <button
+            type="button"
             onClick={onClose}
-            className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-500 transition-colors"
+            className="min-h-[38px] rounded-full bg-[var(--ink)] px-5 py-2 text-xs font-semibold text-[var(--bg)] hover:opacity-90 transition-opacity cursor-pointer"
           >
             Got it
           </button>

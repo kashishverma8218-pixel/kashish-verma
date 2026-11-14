@@ -96,9 +96,37 @@ function MainApp() {
   // App Splash Screen State (shown on opening)
   const [showSplash, setShowSplash] = useState<boolean>(true);
 
-  // Reels State
-  const [reels, setReels] = useState<ReelItem[]>(INITIAL_REELS);
-  const [reelComments, setReelComments] = useState<Record<string, ReelComment[]>>(INITIAL_REEL_COMMENTS);
+  // Reels State (with localStorage persistence for likes, saves, and comments)
+  const [reels, setReels] = useState<ReelItem[]>(() => {
+    try {
+      const savedStates = localStorage.getItem('vio_streaming_reel_states');
+      if (savedStates) {
+        const stateMap = JSON.parse(savedStates) as Record<string, { userLiked?: boolean; userSaved?: boolean; likesDelta?: number }>;
+        return INITIAL_REELS.map((r) => {
+          const st = stateMap[r.id];
+          if (!st) return r;
+          return {
+            ...r,
+            userLiked: !!st.userLiked,
+            userSaved: !!st.userSaved,
+            likes: typeof st.likesDelta === 'number' ? Math.max(0, r.likes + st.likesDelta) : r.likes,
+          };
+        });
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_REELS;
+  });
+  const [reelComments, setReelComments] = useState<Record<string, ReelComment[]>>(() => {
+    try {
+      const saved = localStorage.getItem('vio_streaming_reel_comments');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return INITIAL_REEL_COMMENTS;
+  });
 
   // Primary Data State
   const [channels, setChannels] = useState<Record<string, Channel>>(() => {
@@ -326,10 +354,24 @@ function MainApp() {
       }
     });
 
-    // Live real-time sync for reels collection
+    // Live real-time sync for reels collection (preserving local userLiked/userSaved flags)
     const unsubReels = subscribeReels((firestoreReels) => {
       if (firestoreReels && firestoreReels.length > 0) {
-        setReels(firestoreReels);
+        let stateMap: Record<string, { userLiked?: boolean; userSaved?: boolean }> = {};
+        try {
+          const savedStates = localStorage.getItem('vio_streaming_reel_states');
+          if (savedStates) stateMap = JSON.parse(savedStates);
+        } catch {
+          // ignore
+        }
+        setReels(
+          firestoreReels.map((r) => {
+            const st = stateMap[r.id];
+            return st
+              ? { ...r, userLiked: !!st.userLiked, userSaved: !!st.userSaved }
+              : r;
+          })
+        );
       }
     });
 
@@ -419,6 +461,25 @@ function MainApp() {
   useEffect(() => {
     localStorage.setItem('vio_streaming_notifications', JSON.stringify(notifications));
   }, [notifications]);
+
+  useEffect(() => {
+    localStorage.setItem('vio_streaming_reel_comments', JSON.stringify(reelComments));
+  }, [reelComments]);
+
+  useEffect(() => {
+    const stateMap: Record<string, { userLiked: boolean; userSaved: boolean; likesDelta: number }> = {};
+    reels.forEach((r) => {
+      const baseLikes = INITIAL_REELS.find((ir) => ir.id === r.id)?.likes ?? r.likes;
+      if (r.userLiked || r.userSaved || r.likes !== baseLikes) {
+        stateMap[r.id] = {
+          userLiked: !!r.userLiked,
+          userSaved: !!r.userSaved,
+          likesDelta: r.likes - baseLikes,
+        };
+      }
+    });
+    localStorage.setItem('vio_streaming_reel_states', JSON.stringify(stateMap));
+  }, [reels]);
 
   // Live Firestore Comments Subscription when watching a video
   useEffect(() => {
@@ -547,6 +608,13 @@ function MainApp() {
   };
 
   const handleToggleDislike = (videoId: string) => {
+    const existingVideo = videos.find((v) => v.id === videoId);
+    const wasLiked = !!existingVideo?.userLiked;
+
+    if (wasLiked && currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+      toggleLike(currentUser.uid, videoId, 'video', 'like').catch(() => {});
+    }
+
     setVideos((prev) =>
       prev.map((v) => {
         if (v.id === videoId) {
@@ -555,11 +623,16 @@ function MainApp() {
             ...v,
             userDisliked: isDisliked,
             userLiked: false,
+            likes: v.userLiked ? Math.max(0, v.likes - 1) : v.likes,
           };
         }
         return v;
       })
     );
+
+    if (wasLiked) {
+      setLikedVideoIds((prev) => prev.filter((id) => id !== videoId));
+    }
   };
 
   const handleToggleWatchLater = (videoId: string) => {
@@ -717,9 +790,10 @@ function MainApp() {
 
   const handleDeleteVideo = (videoId: string) => {
     deleteVideoDoc(videoId).catch(() => {});
-    setVideos((prev) => prev.filter((v) => v.id !== videoId));
+    const remaining = videos.filter((v) => v.id !== videoId);
+    setVideos(remaining);
     if (activeVideoId === videoId) {
-      setActiveVideoId(videos[0]?.id || INITIAL_VIDEOS[0].id);
+      setActiveVideoId(remaining[0]?.id || INITIAL_VIDEOS[0].id);
     }
   };
 
@@ -865,12 +939,30 @@ function MainApp() {
   };
 
   const handleToggleSidebar = () => {
-    setMobileMenuOpen((prev) => !prev);
+    if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+      setSidebarCollapsed((prev) => !prev);
+    } else {
+      setMobileMenuOpen((prev) => !prev);
+    }
   };
 
-  // Active Video & Channel Resolution
+  // Active Video & Channel Resolution (with dynamic fallback if video references an external/unlisted channel)
   const activeVideo = videos.find((v) => v.id === activeVideoId) || videos[0] || INITIAL_VIDEOS[0];
-  const activeChannel = channels[activeVideo.channelId] || channels['channel-blender'] || Object.values(channels)[0];
+  const activeChannel =
+    channels[activeVideo.channelId] || {
+      id: activeVideo.channelId || 'channel-vio',
+      name: activeVideo.author || 'Vio Creator',
+      handle: `@${(activeVideo.author || 'viocreator').toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
+      banner: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80',
+      verified: true,
+      subscribersCount: 1200,
+      isSubscribed: false,
+      notificationBell: 'personalized',
+      bio: 'Creator on Vio streaming.',
+      joinedDate: 'Joined recently',
+      videoCount: 1,
+    };
   const viewingChannel = channels[activeChannelId] || channels['channel-blender'] || Object.values(channels)[0];
   const channelVideos = videos.filter((v) => v.channelId === viewingChannel.id);
 

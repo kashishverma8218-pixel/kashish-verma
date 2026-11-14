@@ -110,7 +110,7 @@ export const BookmarksPanel: React.FC<BookmarksPanelProps> = ({
                 {/* Thumbnail or Fallback */}
                 <div
                   onClick={() => onJumpToTime(bm.time)}
-                  className="relative h-12 w-20 shrink-0 cursor-pointer overflow-hidden rounded-lg bg-black ring-1 ring-slate-200 dark:ring-slate-700"
+                  className="relative h-12 w-20 shrink-0 cursor-pointer overflow-hidden rounded-lg bg-black ring-1 ring-[var(--ink-faint)]"
                 >
                   {bm.thumbnailUrl ? (
                     <img
@@ -119,7 +119,7 @@ export const BookmarksPanel: React.FC<BookmarksPanelProps> = ({
                       className="h-full w-full object-cover group-hover:scale-105 transition-transform"
                     />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-slate-900 text-slate-500">
+                    <div className="flex h-full w-full items-center justify-center bg-[var(--thumb-bg)] text-[var(--ink-medium)]">
                       <Film className="h-4 w-4" />
                     </div>
                   )}
@@ -137,12 +137,14 @@ export const BookmarksPanel: React.FC<BookmarksPanelProps> = ({
                         value={editingText}
                         onChange={(e) => setEditingText(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && saveEdit(bm.id)}
-                        className="w-full rounded border border-sky-400 bg-white px-2 py-0.5 text-xs text-slate-900 focus:outline-none dark:bg-slate-900 dark:text-white"
+                        className="w-full min-h-[34px] rounded border border-[var(--ink-medium)] bg-[var(--surface)] px-2 py-0.5 text-base sm:text-xs text-[var(--ink)] focus:outline-none focus:border-[var(--ink)]"
                         autoFocus
                       />
                       <button
+                        type="button"
                         onClick={() => saveEdit(bm.id)}
-                        className="rounded p-1 text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                        aria-label="Save bookmark label"
+                        className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded p-1 text-emerald-500 hover:bg-emerald-500/10"
                       >
                         <Check className="h-3.5 w-3.5" />
                       </button>

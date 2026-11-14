@@ -205,35 +205,36 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
   return (
     <div className={`space-y-6 ${className}`}>
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-tr from-purple-600 via-pink-600 to-amber-500 text-white shadow-md shadow-purple-500/20">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-purple-600 via-pink-600 to-amber-500 text-white shadow-md shadow-purple-500/20">
             <Activity className="h-6 w-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-bold text-[var(--ink)]">
                 HLS Streaming & Cloud-Transcoding Telemetry
               </h3>
-              <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 Live Feed
               </span>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-[var(--ink-medium)]">
               Real-time monitoring of client playback buffers, rebuffering frequency, and cloud ABR encoding health
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Video Selector */}
           {videos.length > 0 && (
             <div className="relative">
               <select
                 value={selectedVideoId}
                 onChange={(e) => setSelectedVideoId(e.target.value)}
-                className="h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 pr-8 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                aria-label="Select video for telemetry"
+                className="min-h-[40px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] px-3 pr-8 text-base sm:text-xs font-semibold text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-purple-500"
               >
                 {videos.map((v) => (
                   <option key={v.id} value={v.id}>
@@ -246,11 +247,12 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
 
           {/* Pause / Resume Live Polling */}
           <button
+            type="button"
             onClick={() => setIsLiveMonitoring(!isLiveMonitoring)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+            className={`min-h-[40px] flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               isLiveMonitoring
-                ? 'bg-purple-50 text-purple-600 dark:bg-purple-950/50 dark:text-purple-300 border border-purple-500/30'
-                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
+                : 'bg-[var(--bg)] text-[var(--ink-medium)] border border-[var(--ink-faint)]'
             }`}
           >
             <Radio className={`h-3.5 w-3.5 ${isLiveMonitoring ? 'text-purple-500 animate-pulse' : ''}`} />
@@ -262,16 +264,16 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
       {/* Primary KPI Metrics: Buffer Health, Rebuffering Frequency, Bitrates, Transcoder Speed */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Metric 1: Buffer Health */}
-        <div className="p-5 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs relative overflow-hidden">
+        <div className="p-5 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs relative overflow-hidden">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Buffer Health</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">Buffer Health</span>
             <span
               className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
                 metrics.bufferHealthSec >= 10
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  ? 'bg-emerald-500/10 text-emerald-500'
                   : metrics.bufferHealthSec >= 5
-                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                  : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                  ? 'bg-amber-500/10 text-amber-500'
+                  : 'bg-rose-500/10 text-rose-500'
               }`}
             >
               {metrics.bufferHealthSec >= 10 ? 'Optimal' : metrics.bufferHealthSec >= 5 ? 'Acceptable' : 'Stall Risk'}
@@ -279,10 +281,10 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
           </div>
 
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-900 dark:text-white font-mono">
+            <span className="text-3xl font-black text-[var(--ink)] font-mono">
               {metrics.bufferHealthSec}s
             </span>
-            <span className="text-xs text-slate-500">ahead of playhead</span>
+            <span className="text-xs text-[var(--ink-medium)]">ahead of playhead</span>
           </div>
 
           {/* Sparkline Visualizer */}
@@ -302,48 +304,48 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
             })}
           </div>
 
-          <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="mt-2.5 flex items-center justify-between text-[11px] text-[var(--ink-medium)]">
             <span>Target: &gt; 12.0s</span>
-            <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">Zero Freeze</span>
+            <span className="font-mono text-emerald-500 font-bold">Zero Freeze</span>
           </div>
         </div>
 
         {/* Metric 2: Rebuffering Frequency */}
-        <div className="p-5 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+        <div className="p-5 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Rebuffer Frequency</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">Rebuffer Frequency</span>
             <ShieldCheck className="h-4 w-4 text-emerald-500" />
           </div>
 
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-900 dark:text-white font-mono">
+            <span className="text-3xl font-black text-[var(--ink)] font-mono">
               {metrics.rebufferingFrequency}
             </span>
-            <span className="text-xs text-slate-500">stalls / stream hour</span>
+            <span className="text-xs text-[var(--ink-medium)]">stalls / stream hour</span>
           </div>
 
-          <div className="mt-3 w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
+          <div className="mt-3 w-full bg-[var(--bg)] h-2.5 rounded-full overflow-hidden">
             <div className="bg-emerald-500 h-full rounded-full" style={{ width: '99.8%' }} />
           </div>
 
-          <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="mt-2.5 flex items-center justify-between text-[11px] text-[var(--ink-medium)]">
             <span>99.98% Smooth Playback</span>
-            <span className="font-bold text-slate-700 dark:text-slate-300">Ultra-Reliable</span>
+            <span className="font-bold text-[var(--ink)]">Ultra-Reliable</span>
           </div>
         </div>
 
         {/* Metric 3: Active Delivery Bitrate */}
-        <div className="p-5 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+        <div className="p-5 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Live Rendition Bitrate</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">Live Rendition Bitrate</span>
             <Signal className="h-4 w-4 text-purple-500" />
           </div>
 
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-900 dark:text-white font-mono">
+            <span className="text-3xl font-black text-[var(--ink)] font-mono">
               {(metrics.currentBitrateKbps / 1000).toFixed(2)}
             </span>
-            <span className="text-xs text-slate-500">Mbps (VBR)</span>
+            <span className="text-xs text-[var(--ink-medium)]">Mbps (VBR)</span>
           </div>
 
           {/* Sparkline Visualizer */}
@@ -361,54 +363,54 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
             })}
           </div>
 
-          <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="mt-2.5 flex items-center justify-between text-[11px] text-[var(--ink-medium)]">
             <span>Rendition: 1080p60 FHD</span>
-            <span className="font-mono text-purple-600 dark:text-purple-400 font-bold">ABR Auto-Locked</span>
+            <span className="font-mono text-purple-500 font-bold">ABR Auto-Locked</span>
           </div>
         </div>
 
         {/* Metric 4: Transcoder & CDN Cluster */}
-        <div className="p-5 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+        <div className="p-5 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Cloud Transcoder</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">Cloud Transcoder</span>
             <Zap className="h-4 w-4 text-amber-500" />
           </div>
 
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-900 dark:text-white font-mono">
+            <span className="text-3xl font-black text-[var(--ink)] font-mono">
               {metrics.transcodingWorkerSpeed}
             </span>
           </div>
 
-          <div className="mt-3 flex items-center justify-between text-xs py-1 border-t border-slate-100 dark:border-slate-800">
-            <span className="text-slate-500">Instances:</span>
-            <span className="font-bold text-slate-900 dark:text-white font-mono">{metrics.activeTranscodeInstances} Pods (NVENC)</span>
+          <div className="mt-3 flex items-center justify-between text-xs py-1 border-t border-[var(--ink-faint)]">
+            <span className="text-[var(--ink-medium)]">Instances:</span>
+            <span className="font-bold text-[var(--ink)] font-mono">{metrics.activeTranscodeInstances} Pods (NVENC)</span>
           </div>
 
-          <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+          <div className="mt-1 flex items-center justify-between text-[11px] text-[var(--ink-medium)]">
             <span>Avg CPU: {metrics.avgTranscodeCpu}</span>
-            <span className="text-emerald-600 dark:text-emerald-400 font-bold">Auto-Scale Ready</span>
+            <span className="text-emerald-500 font-bold">Auto-Scale Ready</span>
           </div>
         </div>
       </div>
 
       {/* Interactive Simulation & Stress Testing Controls */}
-      <div className="p-4 rounded-2xl border border-purple-500/30 bg-purple-50/50 dark:bg-purple-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="p-4 rounded-2xl border border-purple-500/30 bg-[var(--surface)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <Sliders className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+          <Sliders className="h-4 w-4 text-purple-500 shrink-0" />
           <div>
-            <div className="text-xs font-bold text-slate-900 dark:text-white">
+            <div className="text-xs font-bold text-[var(--ink)]">
               Adaptive Bitrate (ABR) Stress Testing
             </div>
-            <div className="text-[11px] text-slate-500">
+            <div className="text-[11px] text-[var(--ink-medium)]">
               Test how the cloud player adapts to network throttling and prevents rebuffering
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Network presets */}
-          <div className="inline-flex rounded-xl bg-white dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-700 text-xs font-semibold">
+          <div className="inline-flex flex-wrap rounded-xl bg-[var(--bg)] p-1 border border-[var(--ink-faint)] text-xs font-semibold">
             {[
               { id: 'gigabit', label: 'Gigabit Fiber (1080p)' },
               { id: '4g', label: '4G LTE (720p)' },
@@ -416,11 +418,12 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
             ].map((p) => (
               <button
                 key={p.id}
+                type="button"
                 onClick={() => setNetworkProfile(p.id as any)}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
+                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                   networkProfile === p.id
                     ? 'bg-purple-600 text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    : 'text-[var(--ink-medium)] hover:text-[var(--ink)]'
                 }`}
               >
                 {p.label}
@@ -429,6 +432,7 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
           </div>
 
           <button
+            type="button"
             onClick={handleSimulateStall}
             disabled={simulatedStallTriggered}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-white text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
@@ -440,22 +444,22 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
       </div>
 
       {/* Multi-Bitrate HLS Rendition Ladder Performance Table */}
-      <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs overflow-hidden">
+        <div className="px-6 py-4 border-b border-[var(--ink-faint)] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Layers className="h-4 w-4 text-purple-500" />
-            <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+            <h4 className="text-sm font-bold text-[var(--ink)]">
               HLS ABR Transcoding Ladder Renditions & CDN Edge Performance
             </h4>
           </div>
-          <span className="text-xs text-slate-500 font-mono">
-            Master Manifest: <code className="text-purple-600 dark:text-purple-400">/api/stream/manifest/{selectedVideoId}.m3u8</code>
+          <span className="text-xs text-[var(--ink-medium)] font-mono">
+            Master Manifest: <code className="text-purple-400">/api/stream/manifest/{selectedVideoId}.m3u8</code>
           </span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 dark:bg-slate-800/50 text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 dark:border-slate-800">
+            <thead className="bg-[var(--bg)] text-[11px] font-bold uppercase tracking-wider text-[var(--ink-medium)] border-b border-[var(--ink-faint)]">
               <tr>
                 <th className="px-6 py-3">Resolution & Profile</th>
                 <th className="px-4 py-3">Target Bitrate</th>
@@ -466,34 +470,36 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
                 <th className="px-6 py-3 text-right">CDN Edge Cache</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
+            <tbody className="divide-y divide-[var(--ink-faint)] font-mono">
               {renditions.map((tier) => (
-                <tr key={tier.resolution} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
-                  <td className="px-6 py-3.5 font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                    <span>{tier.resolution}</span>
+                <tr key={tier.resolution} className="hover:bg-[var(--card-hover)] transition-colors">
+                  <td className="px-6 py-3.5 font-bold text-[var(--ink)]">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                      <span>{tier.resolution}</span>
+                    </div>
                   </td>
-                  <td className="px-4 py-3.5 text-slate-700 dark:text-slate-300 font-semibold">
+                  <td className="px-4 py-3.5 text-[var(--ink)] font-semibold">
                     {tier.bitrateKbps.toLocaleString()} kbps
                   </td>
-                  <td className="px-4 py-3.5 text-slate-500">
+                  <td className="px-4 py-3.5 text-[var(--ink-medium)]">
                     {tier.fps} fps
                   </td>
-                  <td className="px-4 py-3.5 text-slate-500">
+                  <td className="px-4 py-3.5 text-[var(--ink-medium)]">
                     {tier.segmentDuration.toFixed(1)}s (fMP4)
                   </td>
-                  <td className="px-4 py-3.5 text-purple-600 dark:text-purple-400">
+                  <td className="px-4 py-3.5 text-purple-400">
                     {tier.codec}
                   </td>
-                  <td className="px-4 py-3.5 text-slate-700 dark:text-slate-300">
+                  <td className="px-4 py-3.5 text-[var(--ink)]">
                     <div className="flex items-center gap-2">
-                      <div className="w-16 bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                      <div className="w-16 bg-[var(--bg)] h-1.5 rounded-full overflow-hidden">
                         <div className="bg-purple-500 h-full rounded-full" style={{ width: `${tier.activeViewersPct}%` }} />
                       </div>
                       <span className="text-[11px] font-bold">{tier.activeViewersPct}%</span>
                     </div>
                   </td>
-                  <td className="px-6 py-3.5 text-right font-bold text-emerald-600 dark:text-emerald-400">
+                  <td className="px-6 py-3.5 text-right font-bold text-emerald-500">
                     {tier.cacheHitRatio}% Hit
                   </td>
                 </tr>
@@ -503,12 +509,12 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
         </div>
 
         {/* Footer info banner */}
-        <div className="px-6 py-3 bg-slate-50/50 dark:bg-slate-950/40 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-500 gap-2">
+        <div className="px-6 py-3 bg-[var(--bg)] border-t border-[var(--ink-faint)] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-[var(--ink-medium)] gap-2">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
             <span>All segments encoded with closed GOP (Keyframe every 2.0s) for instant seeking</span>
           </div>
-          <span className="text-slate-400">
+          <span>
             Last Telemetry Heartbeat: {lastRefreshed.toLocaleTimeString()}
           </span>
         </div>

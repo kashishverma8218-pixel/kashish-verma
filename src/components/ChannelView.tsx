@@ -224,7 +224,7 @@ export const ChannelView: React.FC<ChannelViewProps> = ({
       <div className="mt-6">
         {activeTab === 'videos' ? (
           channelVideos.length === 0 ? (
-            <div className="py-12 text-center text-slate-400">
+            <div className="py-12 text-center text-[var(--ink-medium)]">
               <Film className="h-10 w-10 mx-auto mb-2 opacity-50" />
               <p>This channel has not uploaded any public videos yet.</p>
             </div>
@@ -236,7 +236,7 @@ export const ChannelView: React.FC<ChannelViewProps> = ({
                   video={video}
                   channel={channel}
                   onPlay={onPlayVideo}
-                  onSelectChannel={() => {}}
+                  onSelectChannel={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
                   onToggleWatchLater={onToggleWatchLater}
                   isWatchLater={watchLaterIds.includes(video.id)}
                 />
@@ -246,23 +246,23 @@ export const ChannelView: React.FC<ChannelViewProps> = ({
         ) : (
           <div className="max-w-2xl space-y-6">
             <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-2">
+              <h3 className="text-sm font-bold text-[var(--ink)] uppercase tracking-wider mb-2">
                 Description
               </h3>
-              <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+              <p className="text-sm text-[var(--ink)]/85 leading-relaxed whitespace-pre-line">
                 {channel.bio}
               </p>
             </div>
 
-            <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 space-y-3 text-xs">
-              <h4 className="font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+            <div className="rounded-2xl bg-[var(--surface)] p-4 border border-[var(--ink-faint)] space-y-3 text-xs">
+              <h4 className="font-bold text-[var(--ink)] uppercase tracking-wider">
                 Stats & Channel Details
               </h4>
-              <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+              <div className="flex items-center gap-2 text-[var(--ink-medium)]">
                 <Calendar className="h-4 w-4" />
                 <span>{channel.joinedDate}</span>
               </div>
-              <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+              <div className="flex items-center gap-2 text-[var(--ink-medium)]">
                 <Eye className="h-4 w-4" />
                 <span>{formatViews(totalViews)} on this platform</span>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   X,
@@ -15,6 +15,7 @@ import {
   Clock
 } from 'lucide-react';
 import { VideoItem, Channel } from '../types/video';
+import { formatTime } from '../utils/formatTime';
 
 interface AIAssistantButtonProps {
   currentVideoTitle?: string;
@@ -59,6 +60,15 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
   ]);
   const [loading, setLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen]);
 
   const handleSend = (textToSend?: string) => {
     const text = (textToSend || prompt).trim();
@@ -196,8 +206,14 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
 
       {/* Assistant Modal / Sliding Panel */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-end sm:justify-end p-0 sm:p-6 bg-black/55 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="relative w-full sm:w-[440px] max-h-[85vh] sm:max-h-[660px] rounded-t-xl sm:rounded-[4px] border border-[var(--ink-faint)] bg-[var(--surface)] shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-200">
+        <div
+          onClick={() => setIsOpen(false)}
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-end sm:justify-end p-0 sm:p-6 bg-black/55 backdrop-blur-xs animate-in fade-in duration-200"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full sm:w-[440px] max-h-[85vh] sm:max-h-[660px] rounded-t-xl sm:rounded-[4px] border border-[var(--ink-faint)] bg-[var(--surface)] shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-200"
+          >
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-[var(--ink-faint)] bg-[var(--bg)]">
               <div className="flex items-center gap-2.5">
@@ -259,7 +275,7 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
                                   className="w-full h-full object-cover group-hover/card:scale-105 transition-transform"
                                 />
                                 <span className="absolute bottom-1 right-1 px-1 py-0.2 rounded-[2px] bg-black/80 text-[9px] font-mono font-bold text-white">
-                                  {vid.duration}
+                                  {formatTime(vid.duration)}
                                 </span>
                               </div>
 
@@ -353,7 +369,7 @@ export const AIAssistantButton: React.FC<AIAssistantButtonProps> = ({
                   placeholder="Search video clips, ask titles, tags, or revenue..."
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  className="flex-1 rounded-[2px] border border-[var(--ink-faint)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[var(--accent-ink)] focus:outline-none"
+                  className="flex-1 min-h-[40px] rounded-[2px] border border-[var(--ink-faint)] bg-[var(--surface)] px-3 py-2 text-base sm:text-xs text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[var(--accent-ink)] focus:outline-none"
                 />
                 <button
                   type="submit"

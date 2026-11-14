@@ -144,6 +144,14 @@ async function startServer() {
     });
   });
 
+  // 2b. Adaptive Stream Segment Redirect / Fallback Resolver
+  app.get('/api/stream/segment/:videoId/:quality', (req: Request, res: Response) => {
+    const { videoId } = req.params;
+    const matchingJob = Array.from(transcodingJobs.values()).find((j) => j.videoId === videoId);
+    const streamTarget = matchingJob?.sourceUrl || 'https://media.w3.org/2010/05/bunny/movie.mp4';
+    res.redirect(302, streamTarget);
+  });
+
   // 3. Cloud Video Transcoding Endpoint
   app.post('/api/transcode', (req: Request, res: Response) => {
     const { videoId, sourceUrl, targetLadder = ['1080p60 HD', '720p HD', '480p', '360p'] } = req.body;

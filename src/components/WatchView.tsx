@@ -299,7 +299,7 @@ export const WatchView: React.FC<WatchViewProps> = ({
                   <span className="tabular-nums">
                     {video.hideLikes
                       ? (video.userLiked ? 'Liked' : 'Like')
-                      : (video.likes + (video.userLiked ? 1 : 0)).toLocaleString()}
+                      : video.likes.toLocaleString()}
                   </span>
                 </button>
                 <div className="h-4 w-px bg-[var(--ink-faint)]" />
