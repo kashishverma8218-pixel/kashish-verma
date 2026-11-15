@@ -16,6 +16,8 @@
     --ink-medium: #606060;
     --accent: #FF0000;
     --accent-ink: #CC0000;
+    --link: #065FD4;
+    --border-subtle: rgba(0, 0, 0, 0.08);
   }
 
   .dark {
@@ -29,6 +31,12 @@
     --ink-medium: #AAAAAA;
     --accent: #FF0000;
     --accent-ink: #FF4E45;
+    --link: #3EA6FF;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+  }
+
+  html, body {
+    overflow-x: clip;
   }
 
   body {
@@ -37,7 +45,24 @@
     -moz-osx-font-smoothing: grayscale;
     background-color: var(--bg);
     color: var(--ink);
-    overflow-x: hidden;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--link);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
   .font-display {
@@ -110,4 +135,15 @@ input[type="range"]:hover::-moz-range-thumb {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.4);
+}
+
+.no-scrollbar::-webkit-scrollbar,
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar,
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

@@ -232,7 +232,9 @@ export const EditVideoModal: React.FC<EditVideoModalProps> = ({
                   alt="Thumbnail preview"
                   referrerPolicy="no-referrer"
                   onError={(e) => {
-                    e.currentTarget.style.opacity = '0.35';
+                    const target = e.currentTarget;
+                    const fallback = 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=800&q=80';
+                    if (target.src !== fallback) target.src = fallback;
                   }}
                   className="h-full w-full object-cover"
                 />

@@ -42,7 +42,7 @@ import {
   getDownloadURL
 } from 'firebase/storage';
 import { db, auth, storage } from '../firebase';
-import { VideoItem, Channel, Comment, ReelItem, ReelComment, NotificationItem } from '../types/video';
+import { VideoItem, Channel, Comment, ReelItem, ReelComment, NotificationItem, PlaylistItem } from '../types/video';
 import { INITIAL_VIDEOS, CHANNELS, INITIAL_REELS, CATEGORIES } from '../data/mockData';
 import { sanitizePlayableVideoUrl } from './streamingService';
 
@@ -272,6 +272,12 @@ export function subscribeVideos(
           hlsManifestUrl: data.hlsManifestUrl,
           backupStreams: data.backupStreams,
           transcodingStatus: data.transcodingStatus || 'ready',
+          sourceObjectPath: data.sourceObjectPath,
+          hlsOutputPrefix: data.hlsOutputPrefix,
+          transcoderJobName: data.transcoderJobName,
+          transcodingError: data.transcodingError,
+          sourceWidth: data.sourceWidth,
+          sourceHeight: data.sourceHeight,
         });
       });
 
@@ -374,6 +380,12 @@ export async function fetchMoreVideos(
       hlsManifestUrl: data.hlsManifestUrl,
       backupStreams: data.backupStreams,
       transcodingStatus: data.transcodingStatus || 'ready',
+      sourceObjectPath: data.sourceObjectPath,
+      hlsOutputPrefix: data.hlsOutputPrefix,
+      transcoderJobName: data.transcoderJobName,
+      transcodingError: data.transcodingError,
+      sourceWidth: data.sourceWidth,
+      sourceHeight: data.sourceHeight,
     });
   });
 
@@ -424,6 +436,11 @@ export async function addVideoDoc(video: VideoItem): Promise<void> {
     hlsManifestUrl: video.hlsManifestUrl || '',
     backupStreams: video.backupStreams || [],
     transcodingStatus: video.transcodingStatus || 'ready',
+    ...(video.sourceObjectPath ? { sourceObjectPath: video.sourceObjectPath } : {}),
+    ...(video.hlsOutputPrefix ? { hlsOutputPrefix: video.hlsOutputPrefix } : {}),
+    ...(video.transcoderJobName ? { transcoderJobName: video.transcoderJobName } : {}),
+    ...(video.sourceWidth ? { sourceWidth: video.sourceWidth } : {}),
+    ...(video.sourceHeight ? { sourceHeight: video.sourceHeight } : {}),
   };
 
   try {
@@ -514,14 +531,28 @@ export function subscribeReels(callback: (reels: ReelItem[]) => void): Unsubscri
   return onSnapshot(
     q,
     (snapshot) => {
-      const reelList: ReelItem[] = [];
+      const reelList: (ReelItem & { _createdAtMs: number })[] = [];
+      const currentUid = auth.currentUser?.uid;
+      const isAdminUser = isCustomClaimAdminCached;
+
       snapshot.forEach((d) => {
         const data = d.data();
+        const rawUrl = typeof data.videoUrl === 'string' ? data.videoUrl.trim() : '';
+        if (!rawUrl) return;
+
+        const isPrivate = data.visibility === 'private';
+        const isOwner = Boolean(currentUid && (data.ownerId === currentUid || data.userId === currentUid));
+        if (isPrivate && !isOwner && !isAdminUser) {
+          return;
+        }
+
+        const createdMs = getCreatedAtMillis(data.createdAt);
+
         reelList.push({
           id: d.id,
           title: data.title || '',
           description: data.description || '',
-          videoUrl: sanitizePlayableVideoUrl(data.videoUrl, d.id, 'reel', true),
+          videoUrl: sanitizePlayableVideoUrl(rawUrl, d.id, 'reel', true),
           poster: data.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80',
           channelId: data.channelId || 'channel-blender',
           views: data.views || 0,
@@ -530,14 +561,69 @@ export function subscribeReels(callback: (reels: ReelItem[]) => void): Unsubscri
           audioTrack: data.audioTrack || 'Original Audio',
           audioArtist: data.audioArtist || 'Vio Sounds',
           tags: Array.isArray(data.tags) ? data.tags : [],
+          visibility: data.visibility || 'public',
+          createdAt: createdMs ? new Date(createdMs).toISOString() : undefined,
+          sourceObjectPath: data.sourceObjectPath,
+          hlsOutputPrefix: data.hlsOutputPrefix,
+          hlsManifestUrl: data.hlsManifestUrl,
+          transcodingStatus: data.transcodingStatus || 'ready',
+          streamQualities: data.streamQualities,
+          _createdAtMs: createdMs,
         });
       });
-      callback(reelList);
+
+      reelList.sort((a, b) => b._createdAtMs - a._createdAtMs);
+      callback(reelList.map(({ _createdAtMs, ...rest }) => rest));
     },
     (error) => {
       console.warn(`Firestore listener warning (${COLLECTIONS.REELS}):`, error?.message || error);
     }
   );
+}
+
+const viewedReelsInSession = new Set<string>();
+
+export async function incrementReelViews(reelId: string): Promise<void> {
+  if (viewedReelsInSession.has(reelId)) return;
+  viewedReelsInSession.add(reelId);
+
+  if (!auth.currentUser?.uid) return;
+  try {
+    await updateDoc(doc(db, COLLECTIONS.REELS, reelId), {
+      views: increment(1),
+    });
+  } catch (error) {
+    console.warn(`Could not increment reel views for ${reelId}:`, error);
+  }
+}
+
+export async function updateReelDoc(
+  reelId: string,
+  updates: Partial<ReelItem>
+): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    const cleanUpdates: Record<string, any> = {};
+    if (updates.title !== undefined) cleanUpdates.title = updates.title;
+    if (updates.description !== undefined) cleanUpdates.description = updates.description;
+    if (updates.visibility !== undefined) cleanUpdates.visibility = updates.visibility;
+    if (updates.audioTrack !== undefined) cleanUpdates.audioTrack = updates.audioTrack;
+    if (updates.tags !== undefined) cleanUpdates.tags = updates.tags;
+
+    await updateDoc(doc(db, COLLECTIONS.REELS, reelId), cleanUpdates);
+  } catch (error) {
+    console.warn(`Could not sync reel update for ${reelId} to Firestore:`, error);
+  }
+}
+
+export async function deleteReelDoc(reelId: string): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  const path = `${COLLECTIONS.REELS}/${reelId}`;
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.REELS, reelId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
 }
 
 export async function addReelDoc(reel: ReelItem): Promise<void> {
@@ -564,8 +650,14 @@ export async function addReelDoc(reel: ReelItem): Promise<void> {
     audioTrack: reel.audioTrack || 'Original Sound',
     audioArtist: reel.audioArtist || 'Vio Creator',
     tags: reel.tags || [],
+    visibility: reel.visibility || 'public',
     status: 'published',
     createdAt: Date.now(),
+    ...(reel.sourceObjectPath ? { sourceObjectPath: reel.sourceObjectPath } : {}),
+    ...(reel.hlsOutputPrefix ? { hlsOutputPrefix: reel.hlsOutputPrefix } : {}),
+    ...(reel.hlsManifestUrl ? { hlsManifestUrl: reel.hlsManifestUrl } : {}),
+    ...(reel.transcodingStatus ? { transcodingStatus: reel.transcodingStatus } : {}),
+    ...(reel.streamQualities ? { streamQualities: reel.streamQualities } : {}),
   };
 
   try {
@@ -594,15 +686,18 @@ export function subscribeComments(
         comms.push({
           id: d.id,
           videoId: data.targetId || targetId,
+          userId: data.userId,
           authorName: data.authorName || 'User',
           authorHandle: data.authorHandle || '@user',
           authorAvatar: data.authorAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
           content: data.content || data.text || '',
           timestamp: data.timestamp || 'Just now',
+          createdAt: getCreatedAtMillis(data.createdAt),
           likes: data.likes || 0,
           userLiked: false,
         });
       });
+      comms.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       callback(comms);
     },
     (error) => {
@@ -616,19 +711,23 @@ export async function addCommentDoc(
   content: string,
   authorName: string,
   authorAvatar: string,
-  customId?: string
+  customId?: string,
+  authorHandle?: string
 ): Promise<void> {
   if (!auth.currentUser?.uid) return;
   const commentId = customId || `comment-${Date.now()}`;
   const path = `${COLLECTIONS.COMMENTS}/${commentId}`;
   const userId = auth.currentUser.uid;
+  const normalizedHandle = authorHandle
+    ? (authorHandle.startsWith('@') ? authorHandle : `@${authorHandle}`)
+    : `@${authorName.toLowerCase().replace(/\s+/g, '')}`;
 
   const docData = {
     id: commentId,
     targetId,
     userId,
     authorName,
-    authorHandle: `@${authorName.toLowerCase().replace(/\s+/g, '')}`,
+    authorHandle: normalizedHandle,
     authorAvatar,
     content,
     text: content,
@@ -641,6 +740,17 @@ export async function addCommentDoc(
     await setDoc(doc(db, COLLECTIONS.COMMENTS, commentId), docData);
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function toggleCommentLikeDoc(commentId: string, nextLiked: boolean): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    await updateDoc(doc(db, COLLECTIONS.COMMENTS, commentId), {
+      likes: increment(nextLiked ? 1 : -1),
+    });
+  } catch (error) {
+    console.warn(`Could not sync comment like for ${commentId}:`, error);
   }
 }
 
@@ -662,25 +772,35 @@ export async function toggleLike(
   targetType: 'video' | 'reel' | 'comment',
   type: 'like' | 'dislike' = 'like'
 ): Promise<boolean> {
-  const likeId = `${userId}_${targetId}`;
+  const authUid = auth.currentUser?.uid;
+  if (!authUid || authUid !== userId) {
+    return false;
+  }
+
+  const likeId = `${authUid}_${targetId}`;
   const path = `${COLLECTIONS.LIKES}/${likeId}`;
 
   try {
-    const existingSnap = await getDoc(doc(db, COLLECTIONS.LIKES, likeId));
+    const likeRef = doc(db, COLLECTIONS.LIKES, likeId);
+    const existingSnap = await getDoc(likeRef);
     if (existingSnap.exists()) {
       // Remove like
-      await deleteDoc(doc(db, COLLECTIONS.LIKES, likeId));
+      await deleteDoc(likeRef);
       if (targetType === 'video') {
         await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
+          likes: increment(-1),
+        }).catch(() => {});
+      } else if (targetType === 'reel') {
+        await updateDoc(doc(db, COLLECTIONS.REELS, targetId), {
           likes: increment(-1),
         }).catch(() => {});
       }
       return false;
     } else {
       // Add like
-      await setDoc(doc(db, COLLECTIONS.LIKES, likeId), {
+      await setDoc(likeRef, {
         id: likeId,
-        userId,
+        userId: authUid,
         targetId,
         targetType,
         type,
@@ -688,6 +808,10 @@ export async function toggleLike(
       });
       if (targetType === 'video') {
         await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
+          likes: increment(1),
+        }).catch(() => {});
+      } else if (targetType === 'reel') {
+        await updateDoc(doc(db, COLLECTIONS.REELS, targetId), {
           likes: increment(1),
         }).catch(() => {});
       }
@@ -943,9 +1067,11 @@ export async function createPlaylist(
   userId: string,
   title: string,
   description: string = '',
-  isPublic: boolean = true
+  isPublic: boolean = true,
+  customId?: string,
+  initialVideoIds: string[] = []
 ): Promise<string> {
-  const playlistId = `playlist-${Date.now()}`;
+  const playlistId = customId || `playlist-${Date.now()}`;
   const path = `${COLLECTIONS.PLAYLISTS}/${playlistId}`;
 
   try {
@@ -956,14 +1082,76 @@ export async function createPlaylist(
       description,
       isPublic,
       isPrivate: !isPublic,
-      videoIds: [],
-      videoCount: 0,
+      videoIds: initialVideoIds,
+      videoCount: initialVideoIds.length,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
     return playlistId;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export function subscribeUserPlaylists(
+  userId: string,
+  callback: (playlists: PlaylistItem[]) => void
+): Unsubscribe {
+  if (!auth.currentUser || auth.currentUser.uid !== userId) {
+    return () => {};
+  }
+
+  const colRef = collection(db, COLLECTIONS.PLAYLISTS);
+  const q = query(colRef, where('userId', '==', userId), limit(50));
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: PlaylistItem[] = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        items.push({
+          id: d.id,
+          userId: data.userId,
+          title: data.title || 'Untitled Playlist',
+          description: data.description || '',
+          videoIds: Array.isArray(data.videoIds) ? data.videoIds : [],
+          isPublic: data.isPublic ?? true,
+          createdAt: getCreatedAtMillis(data.createdAt) || Date.now(),
+          updatedAt: getCreatedAtMillis(data.updatedAt) || Date.now(),
+        });
+      });
+      items.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+      callback(items);
+    },
+    (error) => {
+      console.warn(`Firestore listener warning (${COLLECTIONS.PLAYLISTS}):`, error?.message || error);
+    }
+  );
+}
+
+export async function updatePlaylistVideosDoc(
+  playlistId: string,
+  videoIds: string[]
+): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    await updateDoc(doc(db, COLLECTIONS.PLAYLISTS, playlistId), {
+      videoIds,
+      videoCount: videoIds.length,
+      updatedAt: Date.now(),
+    });
+  } catch (error) {
+    console.warn(`Could not update playlist ${playlistId}:`, error);
+  }
+}
+
+export async function deletePlaylistDoc(playlistId: string): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.PLAYLISTS, playlistId));
+  } catch (error) {
+    console.warn(`Could not delete playlist ${playlistId}:`, error);
   }
 }
 
@@ -979,14 +1167,14 @@ export async function recordStreamAnalytics(
     rebufferingDurationMs?: number;
   }
 ): Promise<void> {
+  if (!auth.currentUser?.uid) return;
   const analyticsId = `metric-${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const path = `${COLLECTIONS.ANALYTICS}/${analyticsId}`;
 
   try {
     await setDoc(doc(db, COLLECTIONS.ANALYTICS, analyticsId), {
       id: analyticsId,
       videoId,
-      userId: auth.currentUser?.uid || 'guest',
+      userId: auth.currentUser.uid,
       ...metrics,
       timestamp: Date.now(),
     });
@@ -1003,14 +1191,30 @@ export async function submitContentReport(
   targetType: 'video' | 'reel' | 'comment',
   reason: string,
   details: string = ''
-): Promise<void> {
+): Promise<'cloud' | 'local'> {
+  if (!auth.currentUser?.uid) {
+    try {
+      const existing = JSON.parse(localStorage.getItem('vio_local_reports') || '[]');
+      existing.unshift({
+        id: `report-${Date.now()}`,
+        targetId,
+        targetType,
+        reason,
+        details,
+        createdAt: Date.now(),
+      });
+      localStorage.setItem('vio_local_reports', JSON.stringify(existing.slice(0, 50)));
+    } catch {}
+    return 'local';
+  }
+
   const reportId = `report-${Date.now()}`;
   const path = `${COLLECTIONS.REPORTS}/${reportId}`;
 
   try {
     await setDoc(doc(db, COLLECTIONS.REPORTS, reportId), {
       id: reportId,
-      userId: auth.currentUser?.uid || 'anonymous',
+      userId: auth.currentUser.uid,
       targetId,
       targetType,
       reason,
@@ -1018,6 +1222,7 @@ export async function submitContentReport(
       status: 'pending',
       createdAt: Date.now(),
     });
+    return 'cloud';
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
@@ -1027,7 +1232,6 @@ export async function submitContentReport(
 // 13. CATEGORIES COLLECTION
 // ----------------------------------------------------
 export async function fetchCategories(): Promise<string[]> {
-  const path = COLLECTIONS.CATEGORIES;
   try {
     const snap = await getDocs(collection(db, COLLECTIONS.CATEGORIES));
     if (snap.empty) {
@@ -1048,9 +1252,8 @@ export async function fetchCategories(): Promise<string[]> {
 // 14. SEARCH HISTORY COLLECTION
 // ----------------------------------------------------
 export async function recordSearchQuery(userId: string, queryText: string): Promise<void> {
-  if (!queryText.trim()) return;
+  if (!auth.currentUser?.uid || auth.currentUser.uid !== userId || !queryText.trim()) return;
   const searchId = `search-${Date.now()}`;
-  const path = `${COLLECTIONS.SEARCH_HISTORY}/${searchId}`;
 
   try {
     await setDoc(doc(db, COLLECTIONS.SEARCH_HISTORY, searchId), {

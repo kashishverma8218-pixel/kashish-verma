@@ -37,7 +37,9 @@ import {
   ChevronRight,
   Settings,
   SkipBack,
-  SkipForward
+  SkipForward,
+  ArrowLeft,
+  Gauge
 } from 'lucide-react';
 import { VideoItem, Bookmark, VideoFilters, AspectRatioMode, VideoStreamQuality, VideoChapter } from '../types/video';
 import { formatTime } from '../utils/formatTime';
@@ -48,11 +50,14 @@ import {
   SubtitleCue,
   SubtitleTrack,
 } from '../utils/subtitleParser';
+import Hls from 'hls.js';
+import { auth } from '../firebase';
 import {
   buildStreamLadder,
   calculateAdaptiveBitrate,
   CDN_STREAM_MIRRORS,
   DEFAULT_PLAYABLE_VIDEO_URL,
+  fetchPlaybackSession,
   sanitizePlayableVideoUrl,
 } from '../services/streamingService';
 import { CloudInfrastructureModal } from './CloudInfrastructureModal';
@@ -126,8 +131,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPosition, setHoverPosition] = useState<number>(0);
-  const [speedMenuOpen, setSpeedMenuOpen] = useState<boolean>(false);
-  const [aspectMenuOpen, setAspectMenuOpen] = useState<boolean>(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState<boolean>(false);
+  const [settingsView, setSettingsView] = useState<'main' | 'quality' | 'speed' | 'subtitles' | 'aspect'>('main');
   const [volumeSliderOpen, setVolumeSliderOpen] = useState<boolean>(false);
   const [naturalVideoHeight, setNaturalVideoHeight] = useState<number>(0);
   const lastTouchTimeRef = useRef<number>(0);
@@ -155,16 +160,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return localStorage.getItem('vio_pref_quality') || 'Auto';
   });
   const [effectiveQualityLabel, setEffectiveQualityLabel] = useState<string>('720p HD');
-  const [qualityMenuOpen, setQualityMenuOpen] = useState<boolean>(false);
   const [reconnecting, setReconnecting] = useState<boolean>(false);
   const [reconnectToast, setReconnectToast] = useState<string | null>(null);
   const [showInfraModal, setShowInfraModal] = useState<boolean>(false);
   const [showTelemetry, setShowTelemetry] = useState<boolean>(false);
   const [bufferHealthSec, setBufferHealthSec] = useState<number>(0);
   const [failoverIndex, setFailoverIndex] = useState<number>(0);
+  const hlsRef = useRef<Hls | null>(null);
+  const [hlsLevels, setHlsLevels] = useState<VideoStreamQuality[]>([]);
+  const [isHlsActive, setIsHlsActive] = useState<boolean>(false);
 
-  // Only list qualities genuinely supported by the video metadata / explicit streamQualities
+  // Only list qualities genuinely supported by the HLS manifest, video metadata, or explicit streamQualities
   const streamLadder: VideoStreamQuality[] = useMemo(() => {
+    if (hlsLevels.length > 0) {
+      return hlsLevels;
+    }
     if (video.streamQualities && video.streamQualities.length > 0) {
       return video.streamQualities;
     }
@@ -190,7 +200,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       ];
     }
     return baseLadder;
-  }, [video.streamQualities, video.id, resolvedVideoUrl, currentSrc, naturalVideoHeight, FALLBACK_VIDEO_SRC]);
+  }, [hlsLevels, video.streamQualities, video.id, resolvedVideoUrl, currentSrc, naturalVideoHeight, FALLBACK_VIDEO_SRC]);
 
   // Subtitles / Closed Captions State
   const [subtitlesEnabled, setSubtitlesEnabled] = useState<boolean>(() => {
@@ -216,7 +226,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [subtitleBg, setSubtitleBg] = useState<'black-80' | 'black-solid' | 'transparent'>(() => {
     return (localStorage.getItem('vio_streaming_subtitle_bg') as 'black-80' | 'black-solid' | 'transparent') || 'black-80';
   });
-  const [subtitleMenuOpen, setSubtitleMenuOpen] = useState<boolean>(false);
   const [subtitleToast, setSubtitleToast] = useState<string | null>(null);
   const [showUrlModal, setShowUrlModal] = useState<boolean>(false);
   const [pastedUrlOrText, setPastedUrlOrText] = useState<string>('');
@@ -366,14 +375,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const track = availableTracks.find((t) => t.id === trackId);
       showSubToast(`Subtitles: ${track?.label || 'Selected'}`);
     }
-    setSubtitleMenuOpen(false);
+    setSettingsView('main');
+    setSettingsMenuOpen(false);
   };
 
-  // Ensure selected quality stays valid if supported streamLadder shrinks for lower-res videos
+  // Ensure selected quality stays valid and normalize Settings preferences (e.g. '1080p' -> '1080p HD')
   useEffect(() => {
     if (selectedQuality !== 'Auto' && streamLadder.length > 0) {
-      const stillSupported = streamLadder.some((t) => t.label === selectedQuality);
-      if (!stillSupported) {
+      const exactMatch = streamLadder.find((t) => t.label === selectedQuality);
+      if (exactMatch) return;
+      const numericH = parseInt(selectedQuality, 10);
+      const numericMatch = !Number.isNaN(numericH)
+        ? streamLadder.find((t) => {
+            const tierH = parseInt(t.resolution.split('x')[1] || t.label, 10);
+            return tierH === numericH;
+          })
+        : undefined;
+      if (numericMatch) {
+        setSelectedQuality(numericMatch.label);
+        setEffectiveQualityLabel(numericMatch.label);
+      } else {
         setSelectedQuality('Auto');
         setEffectiveQualityLabel(streamLadder[0].label);
       }
@@ -412,7 +433,31 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const handleQualityChange = (qualityLabel: string) => {
     setSelectedQuality(qualityLabel);
     localStorage.setItem('vio_pref_quality', qualityLabel);
-    setQualityMenuOpen(false);
+    setSettingsView('main');
+    setSettingsMenuOpen(false);
+
+    if (hlsRef.current && isHlsActive) {
+      if (qualityLabel === 'Auto') {
+        hlsRef.current.currentLevel = -1;
+        const activeIdx = hlsRef.current.loadLevel >= 0 ? hlsRef.current.loadLevel : 0;
+        const activeTier = streamLadder[activeIdx] || streamLadder[0];
+        if (activeTier) setEffectiveQualityLabel(activeTier.label);
+        showSubToast('Adaptive Bitrate: Auto (HLS)');
+        return;
+      }
+
+      const targetHeight = parseInt(qualityLabel, 10);
+      const levelIndex = hlsRef.current.levels.findIndex((lvl) => {
+        const shortSide = Math.min(lvl.width || 9999, lvl.height || 0);
+        return shortSide === targetHeight || lvl.height === targetHeight;
+      });
+      if (levelIndex !== -1) {
+        hlsRef.current.currentLevel = levelIndex;
+        setEffectiveQualityLabel(qualityLabel);
+        showSubToast(`HLS Quality set to ${qualityLabel}`);
+        return;
+      }
+    }
 
     if (qualityLabel === 'Auto') {
       const optimal = calculateAdaptiveBitrate(bufferHealthSec, effectiveQualityLabel, streamLadder);
@@ -698,13 +743,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hideControlsTimerRef.current = null;
     }
     const playingNow = playingOverride ?? isPlaying;
-    if (playingNow && !speedMenuOpen && !aspectMenuOpen && !qualityMenuOpen && !subtitleMenuOpen && !volumeSliderOpen && !isSeeking) {
+    if (playingNow && !settingsMenuOpen && !volumeSliderOpen && !isSeeking) {
       hideControlsTimerRef.current = window.setTimeout(() => {
         setShowControls(false);
         setVolumeSliderOpen(false);
       }, 3000);
     }
-  }, [isPlaying, speedMenuOpen, aspectMenuOpen, qualityMenuOpen, subtitleMenuOpen, volumeSliderOpen, isSeeking]);
+  }, [isPlaying, settingsMenuOpen, volumeSliderOpen, isSeeking]);
 
   const handleUserActivity = useCallback(() => {
     if (isCleanMode) return;
@@ -772,7 +817,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!videoRef.current) return;
     videoRef.current.playbackRate = rate;
     setPlaybackRate(rate);
-    setSpeedMenuOpen(false);
+    setSettingsView('main');
     handleUserActivity();
   };
 
@@ -1020,16 +1065,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Close player menus on outside click/touch
   useEffect(() => {
-    if (!speedMenuOpen && !aspectMenuOpen && !qualityMenuOpen && !subtitleMenuOpen && !volumeSliderOpen) {
+    if (!settingsMenuOpen && !volumeSliderOpen) {
       return;
     }
     const handleOutside = (e: MouseEvent | TouchEvent) => {
       const target = e.target as HTMLElement;
       if (!target.closest('[data-player-menu]')) {
-        setSpeedMenuOpen(false);
-        setAspectMenuOpen(false);
-        setQualityMenuOpen(false);
-        setSubtitleMenuOpen(false);
+        setSettingsMenuOpen(false);
+        setSettingsView('main');
         setVolumeSliderOpen(false);
       }
     };
@@ -1039,26 +1082,176 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       document.removeEventListener('mousedown', handleOutside);
       document.removeEventListener('touchstart', handleOutside);
     };
-  }, [speedMenuOpen, aspectMenuOpen, qualityMenuOpen, subtitleMenuOpen, volumeSliderOpen]);
+  }, [settingsMenuOpen, volumeSliderOpen]);
 
-  // Reset state on video change
+  // Initialize playback (Cloud Run HLS adaptive streaming via hls.js or authorized MP4 fallback)
   useEffect(() => {
+    let cancelled = false;
+
+    const cleanupHls = () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+
+    cleanupHls();
+    setHlsLevels([]);
+    setIsHlsActive(false);
     setCurrentTime(0);
     setBufferedEnd(0);
     setIsBuffering(false);
     setErrorMessage(null);
     setShowControls(true);
-    if (videoRef.current && (video.url || currentSrc)) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.playbackRate = playbackRate;
-      videoRef.current.load();
-      videoRef.current.play().then(() => {
+
+    const videoEl = videoRef.current;
+    if (!videoEl) return cleanupHls;
+
+    const attachHlsStream = async (hlsManifestUrl: string, fallbackMp4Url?: string | null) => {
+      if (Hls.isSupported()) {
+        const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+        if (cancelled) return;
+
+        const hls = new Hls({
+          enableWorker: true,
+          capLevelToPlayerSize: true,
+          xhrSetup: (xhr) => {
+            if (idToken) {
+              xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);
+            }
+          },
+        });
+        hlsRef.current = hls;
+        setIsHlsActive(true);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+          if (cancelled) return;
+          const mapped: VideoStreamQuality[] = data.levels
+            .map((lvl, idx) => {
+              const shortSide = Math.min(lvl.width || 9999, lvl.height || 0) || lvl.height || 360;
+              const label = shortSide >= 720 ? `${shortSide}p HD` : `${shortSide}p`;
+              return {
+                label,
+                resolution: `${lvl.width || 1280}x${lvl.height || 720}`,
+                bitrateKbps: Math.round((lvl.bitrate || 1500000) / 1000),
+                fps: 30,
+                url: hlsManifestUrl,
+                isMaster: idx === data.levels.length - 1,
+              };
+            })
+            .sort((a, b) => b.bitrateKbps - a.bitrateKbps);
+
+          if (mapped.length > 0) {
+            setHlsLevels(mapped);
+            setEffectiveQualityLabel(mapped[0].label);
+          }
+
+          if (selectedQuality !== 'Auto') {
+            const targetH = parseInt(selectedQuality, 10);
+            const matchIdx = hls.levels.findIndex(
+              (l) => Math.min(l.width || 9999, l.height || 0) === targetH || l.height === targetH
+            );
+            hls.currentLevel = matchIdx !== -1 ? matchIdx : -1;
+          } else {
+            hls.currentLevel = -1;
+          }
+
+          videoEl.playbackRate = playbackRate;
+          videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        });
+
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+          const lvl = hls.levels[data.level];
+          if (lvl) {
+            const shortSide = Math.min(lvl.width || 9999, lvl.height || 0) || lvl.height || 360;
+            setEffectiveQualityLabel(shortSide >= 720 ? `${shortSide}p HD` : `${shortSide}p`);
+          }
+        });
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+            return;
+          }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+            return;
+          }
+          cleanupHls();
+          setIsHlsActive(false);
+          if (fallbackMp4Url) {
+            setCurrentSrc(fallbackMp4Url);
+          } else {
+            setErrorMessage('Adaptive HLS stream encountered a playback error.');
+          }
+        });
+
+        hls.loadSource(hlsManifestUrl);
+        hls.attachMedia(videoEl);
+        return;
+      }
+
+      // Safari / iOS native HLS playback
+      if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        setIsHlsActive(false);
+        setCurrentSrc(hlsManifestUrl);
+        videoEl.currentTime = 0;
+        videoEl.playbackRate = playbackRate;
+        videoEl.load();
+        videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        return;
+      }
+
+      if (fallbackMp4Url) {
+        setCurrentSrc(fallbackMp4Url);
+      }
+    };
+
+    const usesCloudPlayback =
+      Boolean(video.sourceObjectPath) ||
+      Boolean(video.hlsManifestUrl && video.hlsManifestUrl.startsWith('/api/stream/hls/')) ||
+      Boolean(video.url && video.url.startsWith('/api/media/object/')) ||
+      video.visibility === 'private';
+
+    if (usesCloudPlayback) {
+      fetchPlaybackSession(video.id)
+        .then((session) => {
+          if (cancelled) return;
+          if (session.hlsUrl) {
+            return attachHlsStream(session.hlsUrl, session.fallbackUrl);
+          }
+          if (session.fallbackUrl) {
+            setIsHlsActive(false);
+            setCurrentSrc(session.fallbackUrl);
+            videoEl.currentTime = 0;
+            videoEl.playbackRate = playbackRate;
+            videoEl.load();
+            videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+          }
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setErrorMessage(err instanceof Error ? err.message : 'Unable to authorize video playback.');
+        });
+    } else if (video.hlsManifestUrl && /\.m3u8(\?|$)/i.test(video.hlsManifestUrl)) {
+      attachHlsStream(video.hlsManifestUrl, resolvedVideoUrl);
+    } else if (video.url || currentSrc) {
+      videoEl.currentTime = 0;
+      videoEl.playbackRate = playbackRate;
+      videoEl.load();
+      videoEl.play().then(() => {
         setIsPlaying(true);
       }).catch(() => {
         setIsPlaying(false);
       });
     }
-  }, [video.id, video.url]);
+
+    return () => {
+      cancelled = true;
+      cleanupHls();
+    };
+  }, [video.id, video.url, video.hlsManifestUrl, video.transcodingStatus, video.sourceObjectPath, video.visibility]);
 
   // Mobile tap (show/hide controls + 3s auto-hide, double-tap left/right 10s seek) & desktop click
   const handleVideoTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
@@ -1102,10 +1295,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           if (next) {
             scheduleAutoHide();
           } else {
-            setQualityMenuOpen(false);
-            setSpeedMenuOpen(false);
-            setAspectMenuOpen(false);
-            setSubtitleMenuOpen(false);
+            setSettingsMenuOpen(false);
+            setSettingsView('main');
             setVolumeSliderOpen(false);
           }
           return next;
@@ -1122,10 +1313,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (Date.now() - lastTouchTimeRef.current < 500) {
       return;
     }
-    setQualityMenuOpen(false);
-    setSpeedMenuOpen(false);
-    setAspectMenuOpen(false);
-    setSubtitleMenuOpen(false);
+    setSettingsMenuOpen(false);
+    setSettingsView('main');
     setVolumeSliderOpen(false);
     togglePlay();
     handleUserActivity();
@@ -1154,7 +1343,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         scheduleAutoHide();
       }}
       onMouseLeave={() => {
-        if (isPlaying && !speedMenuOpen && !qualityMenuOpen && !subtitleMenuOpen && !aspectMenuOpen) {
+        if (isPlaying && !settingsMenuOpen && !volumeSliderOpen) {
           setShowControls(false);
         }
       }}
@@ -1185,7 +1374,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       >
         <video
           ref={videoRef}
-          src={currentSrc || FALLBACK_VIDEO_SRC}
+          src={isHlsActive ? undefined : currentSrc || FALLBACK_VIDEO_SRC}
           poster={video.poster}
           playsInline
           loop={isLooping}
@@ -1268,14 +1457,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         {/* Active Stream Reconnecting Indicator Pill */}
         {reconnecting && (
-          <div className="absolute top-4 left-4 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 text-amber-300 text-xs font-semibold backdrop-blur-md border border-amber-500/30 shadow-xl animate-in fade-in">
+          <div className="absolute top-4 left-4 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#181818]/95 text-amber-300 text-xs font-semibold backdrop-blur-md border border-amber-500/30 shadow-xl animate-in fade-in">
             <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
             <span>Reconnecting stream via Cloud Edge CDN...</span>
           </div>
         )}
 
         {reconnectToast && (
-          <div className="absolute top-4 left-4 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 text-emerald-300 text-xs font-semibold backdrop-blur-md border border-emerald-500/30 shadow-xl animate-in fade-in">
+          <div className="absolute top-4 left-4 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#181818]/95 text-emerald-300 text-xs font-semibold backdrop-blur-md border border-emerald-500/30 shadow-xl animate-in fade-in">
             <Check className="h-3.5 w-3.5 text-emerald-400" />
             <span>{reconnectToast}</span>
           </div>
@@ -1283,16 +1472,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         {/* Resilient Error Recovery Overlay */}
         {errorMessage && (
-          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/95 p-6 text-center text-white backdrop-blur-sm animate-in fade-in">
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#0F0F0F]/95 p-6 text-center text-white backdrop-blur-sm animate-in fade-in">
             <div className="h-14 w-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mb-3 ring-1 ring-amber-500/20">
               <Signal className="h-7 w-7" />
             </div>
             <h4 className="text-base font-bold">Cloud Stream Optimization</h4>
-            <p className="mt-1 max-w-md text-xs text-slate-300 leading-relaxed">{errorMessage}</p>
+            <p className="mt-1 max-w-md text-xs text-white/75 leading-relaxed">{errorMessage}</p>
             <div className="mt-4 flex items-center gap-3">
               <button
                 onClick={handleStreamError}
-                className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-500 shadow-md transition-all active:scale-95 flex items-center gap-1.5"
+                className="rounded-xl bg-[#FF0000] px-4 py-2 text-xs font-bold text-white hover:bg-[#CC0000] shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
               >
                 <Signal className="h-3.5 w-3.5" />
                 <span>Reconnect via CDN Edge</span>
@@ -1350,7 +1539,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Subtitle Toast Feedback */}
       {subtitleToast && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full border border-white/15 bg-slate-900/95 px-4 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-2">
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full border border-white/15 bg-[#181818]/95 px-4 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-2">
           <Captions className="h-4 w-4 text-sky-400 shrink-0" />
           <span>{subtitleToast}</span>
         </div>
@@ -1358,7 +1547,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Snapshot Toast Preview */}
       {snapshotToast && (
-        <div className="absolute top-16 right-4 z-50 flex items-center gap-3 rounded-xl border border-white/10 bg-slate-900/95 p-2.5 shadow-2xl backdrop-blur-md text-white">
+        <div className="absolute top-16 right-4 z-50 flex items-center gap-3 rounded-xl border border-white/10 bg-[#181818]/95 p-2.5 shadow-2xl backdrop-blur-md text-white">
           <img
             src={snapshotToast.dataUrl}
             alt="Frame preview"
@@ -1427,114 +1616,54 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Top Overlay Bar (Compact on mobile, full on desktop) */}
+      {/* Top Overlay Bar (Clean YouTube-style Title & Quick Actions) */}
       <div
         className={`flex absolute top-0 inset-x-0 z-30 items-center justify-between px-3 py-2 sm:p-4 [@media(max-height:500px)]:py-1.5 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-300 ${
           showControls && !isCleanMode ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        <div className="flex items-center gap-3 min-w-0 pr-4">
+        <div className="flex items-center gap-2 min-w-0 pr-3">
           <div className="min-w-0">
-            <h3 className="text-sm sm:text-base font-semibold text-white tracking-tight truncate">
+            <h3 className="text-xs sm:text-base font-semibold text-white tracking-tight truncate">
               {video.title}
             </h3>
             {video.author && (
-              <p className="text-xs text-slate-300 truncate">{video.author}</p>
+              <p className="text-[11px] sm:text-xs text-slate-300 truncate">{video.author}</p>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Technical Info */}
-          <button
-            onClick={onOpenInfo}
-            title="Video Information"
-            className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
-          >
-            <Info className="h-4 w-4" />
-          </button>
-
-          {/* Video Color Filters */}
-          <button
-            onClick={onOpenFilters}
-            title="Color Grading & Adjustments"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
-          >
-            <Sliders className="h-4 w-4" />
-          </button>
-
-          {/* Subtitles Quick Launcher */}
-          <button
-            onClick={() => setSubtitleMenuOpen(!subtitleMenuOpen)}
-            title={`Subtitles / Captions (C) - ${subtitlesEnabled ? 'On' : 'Off'}`}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-              subtitlesEnabled
-                ? 'bg-sky-500/20 text-sky-400 ring-1 ring-sky-500/40'
-                : 'bg-white/10 text-white hover:bg-white/20'
-            }`}
-          >
-            <Captions className="h-4 w-4" />
-          </button>
-
-          {/* Quick Aspect Ratio (Responsive on mobile & desktop) */}
-          <div data-player-menu className="relative">
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Quick Chapters Button */}
+          {chapters.length > 0 && (
             <button
-              onClick={() => {
-                setAspectMenuOpen(!aspectMenuOpen);
-                setQualityMenuOpen(false);
-                setSpeedMenuOpen(false);
-                setSubtitleMenuOpen(false);
-              }}
-              title="Aspect Ratio"
-              aria-label="Aspect Ratio"
-              className="flex items-center gap-1.5 h-8 px-2 sm:px-2.5 rounded-lg bg-white/10 text-xs font-medium text-white hover:bg-white/20 transition-colors"
+              type="button"
+              onClick={() => setChaptersOverlayOpen(!chaptersOverlayOpen)}
+              title="Video Chapters"
+              className={`flex items-center gap-1.5 h-8 px-2.5 rounded-full text-xs font-medium backdrop-blur-md transition-colors ${
+                chaptersOverlayOpen
+                  ? 'bg-[#FF0000] text-white'
+                  : 'bg-white/15 text-white hover:bg-white/25'
+              }`}
             >
-              <Tv className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline uppercase">{aspectRatio}</span>
+              <ListOrdered className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Chapters</span>
             </button>
+          )}
 
-            {aspectMenuOpen && (
-              <div className="absolute right-0 top-10 z-40 w-36 max-w-[calc(100vw-1.5rem)] max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900/95 py-1.5 shadow-2xl backdrop-blur-md text-white text-xs">
-                {(['auto', '16:9', '4:3', '21:9', '9:16', 'cover'] as AspectRatioMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => {
-                      setAspectRatio(mode);
-                      setAspectMenuOpen(false);
-                    }}
-                    className={`flex w-full items-center justify-between px-3 py-2 hover:bg-white/10 ${
-                      aspectRatio === mode ? 'text-[#FF4E45] font-semibold' : 'text-slate-300'
-                    }`}
-                  >
-                    <span className="capitalize">{mode}</span>
-                    {aspectRatio === mode && <Check className="h-3.5 w-3.5" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Copy Video Link Button */}
+          {/* Copy Video Link Button (Desktop) */}
           <button
+            type="button"
             onClick={handleCopyVideoLink}
             title="Copy Video Link"
-            className={`hidden md:flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`hidden sm:flex items-center gap-1.5 h-8 px-2.5 rounded-full text-xs font-medium backdrop-blur-md transition-all ${
               copyToast
                 ? 'bg-emerald-600 text-white'
-                : 'bg-white/10 text-white hover:bg-white/20'
+                : 'bg-white/15 text-white hover:bg-white/25'
             }`}
           >
             {copyToast ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            <span>{copyToast ? 'Copied!' : 'Copy Link'}</span>
-          </button>
-
-          {/* Snapshot Button */}
-          <button
-            onClick={takeSnapshot}
-            title="Capture Current Frame (S)"
-            className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
-          >
-            <Camera className="h-4 w-4" />
+            <span>{copyToast ? 'Copied' : 'Copy link'}</span>
           </button>
         </div>
       </div>
@@ -1658,23 +1787,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               {isPlaying ? <Pause className="h-4 w-4 fill-white" /> : <Play className="h-4 w-4 fill-white ml-0.5" />}
             </button>
 
-            {/* Rewind 10s (Visible on mobile & desktop) */}
+            {/* Rewind 10s (Desktop bar; mobile uses center overlay + double-tap) */}
             <button
               onClick={() => seekRelative(-10)}
               title="Rewind 10s (J)"
               aria-label="Rewind 10 seconds"
-              className="flex items-center justify-center h-9 px-1.5 sm:px-2 rounded-lg text-slate-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all shrink-0"
+              className="hidden sm:flex items-center justify-center h-9 px-2 rounded-lg text-slate-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all shrink-0"
             >
               <RotateCcw className="h-4 w-4" />
               <span className="ml-0.5 text-[10px] font-mono font-bold">10</span>
             </button>
 
-            {/* Forward 10s (Visible on mobile & desktop) */}
+            {/* Forward 10s (Desktop bar; mobile uses center overlay + double-tap) */}
             <button
               onClick={() => seekRelative(10)}
               title="Fast Forward 10s (L)"
               aria-label="Forward 10 seconds"
-              className="flex items-center justify-center h-9 px-1.5 sm:px-2 rounded-lg text-slate-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all shrink-0"
+              className="hidden sm:flex items-center justify-center h-9 px-2 rounded-lg text-slate-200 hover:text-white hover:bg-white/10 active:scale-95 transition-all shrink-0"
             >
               <RotateCw className="h-4 w-4" />
               <span className="ml-0.5 text-[10px] font-mono font-bold">10</span>
@@ -1698,10 +1827,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 onClick={() => {
                   if (typeof window !== 'undefined' && window.innerWidth < 640) {
                     setVolumeSliderOpen((prev) => !prev);
-                    setQualityMenuOpen(false);
-                    setSpeedMenuOpen(false);
-                    setSubtitleMenuOpen(false);
-                    setAspectMenuOpen(false);
+                    setSettingsMenuOpen(false);
                     handleUserActivity();
                   } else {
                     toggleMute();
@@ -1800,443 +1926,576 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             )}
           </div>
 
-          {/* Right Controls: Bookmark, Chapters, Speed, Quality/Settings, CC, PiP, Fullscreen */}
-          <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
-            {/* Chapter List Overlay Button */}
-            {chapters.length > 0 && (
+          {/* Right Controls: Clean YouTube Layout (CC, Unified Settings Gear, Bookmark, PiP, Fullscreen) */}
+          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+            {/* Quick Bookmark Current Frame (Desktop) */}
+            <button
+              type="button"
+              onClick={handleAddBookmarkClick}
+              title="Add Bookmark at this time (B)"
+              aria-label="Add Bookmark"
+              className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-amber-400 hover:bg-white/10 transition-colors"
+            >
+              <BookmarkIcon className="h-4 w-4" />
+            </button>
+
+            {/* YouTube-style Quick CC Toggle (Red underline when active) */}
+            <button
+              type="button"
+              onClick={toggleSubtitles}
+              title={`Subtitles / Closed Captions (C) · ${subtitlesEnabled ? 'On' : 'Off'}`}
+              aria-label="Toggle Subtitles / Captions"
+              className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                subtitlesEnabled
+                  ? 'text-white bg-white/15'
+                  : 'text-slate-200 hover:text-white hover:bg-white/10'
+              }`}
+            >
+              <Captions className="h-4 w-4" />
+              {subtitlesEnabled && (
+                <span className="absolute bottom-1.5 inset-x-2 h-[2px] rounded-full bg-[#FF0000]" />
+              )}
+            </button>
+
+            {/* UNIFIED YOUTUBE SETTINGS GEAR MENU */}
+            <div data-player-menu className="relative">
               <button
-                onClick={() => setChaptersOverlayOpen(!chaptersOverlayOpen)}
-                title="Video Chapters (Click to view full chapter list)"
-                className={`flex items-center gap-1 h-9 px-2 text-xs font-medium rounded-lg transition-colors ${
-                  chaptersOverlayOpen
-                    ? 'bg-[#FF0000] text-white shadow-sm'
+                type="button"
+                onClick={() => {
+                  const next = !settingsMenuOpen;
+                  setSettingsMenuOpen(next);
+                  setSettingsView('main');
+                  setVolumeSliderOpen(false);
+                  handleUserActivity();
+                }}
+                title="Settings (Quality, Speed, Captions, Aspect Ratio)"
+                aria-label="Player Settings"
+                aria-expanded={settingsMenuOpen}
+                className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-all ${
+                  settingsMenuOpen
+                    ? 'bg-white/20 text-white'
                     : 'text-slate-200 hover:text-white hover:bg-white/10'
                 }`}
               >
-                <ListOrdered className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
-                <span className="hidden lg:inline">Chapters</span>
-                <span className="text-[10px] px-1 rounded-full bg-white/20">
-                  {chapters.length}
-                </span>
-              </button>
-            )}
-
-            {/* Quick Bookmark Current Frame */}
-            <button
-              onClick={handleAddBookmarkClick}
-              title="Add Bookmark at this time (B)"
-              className="hidden sm:flex items-center gap-1 h-9 px-2.5 text-xs font-medium rounded-lg text-slate-300 hover:text-amber-400 hover:bg-white/10 transition-colors"
-            >
-              <BookmarkIcon className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Bookmark</span>
-            </button>
-
-            {/* Playback Speed Menu */}
-            <div data-player-menu className="relative">
-              <button
-                onClick={() => {
-                  setSpeedMenuOpen(!speedMenuOpen);
-                  setQualityMenuOpen(false);
-                  setSubtitleMenuOpen(false);
-                  setAspectMenuOpen(false);
-                  setVolumeSliderOpen(false);
-                }}
-                aria-label="Playback Speed"
-                className="h-9 px-2 rounded-lg text-xs font-medium text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                {playbackRate}x
-              </button>
-
-              {speedMenuOpen && (
-                <div className="absolute right-0 bottom-11 z-40 w-28 max-w-[calc(100vw-1.5rem)] max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900/95 py-1.5 shadow-2xl backdrop-blur-md text-white text-xs">
-                  <div className="px-3 py-1 font-semibold text-slate-400 border-b border-white/10 text-[10px] uppercase tracking-wider">
-                    Playback Speed
-                  </div>
-                  {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => (
-                    <button
-                      key={rate}
-                      onClick={() => changeSpeed(rate)}
-                      className={`flex w-full items-center justify-between px-3 py-1.5 hover:bg-white/10 ${
-                        playbackRate === rate ? 'text-sky-400 font-bold' : 'text-slate-300'
-                      }`}
-                    >
-                      <span>{rate}x</span>
-                      {playbackRate === rate && <Check className="h-3 w-3" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Quality / Settings Menu (Only supported resolutions) */}
-            <div data-player-menu className="relative">
-              <button
-                onClick={() => {
-                  setQualityMenuOpen(!qualityMenuOpen);
-                  setSpeedMenuOpen(false);
-                  setSubtitleMenuOpen(false);
-                  setAspectMenuOpen(false);
-                  setVolumeSliderOpen(false);
-                }}
-                title="Quality & Video Settings"
-                aria-label="Quality Settings"
-                className={`flex items-center gap-1 h-9 px-2 rounded-lg text-xs font-semibold transition-all ${
-                  selectedQuality === 'Auto'
-                    ? 'text-emerald-400 bg-emerald-500/15 hover:bg-emerald-500/25'
-                    : 'text-white bg-white/15 hover:bg-white/25'
-                }`}
-              >
-                <Settings className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">
-                  {selectedQuality === 'Auto' ? `Auto (${effectiveQualityLabel.replace(' HD', '')})` : selectedQuality.replace(' HD', '')}
-                </span>
-                <span className="sm:hidden text-[11px]">
-                  {selectedQuality === 'Auto' ? 'Auto' : selectedQuality.split(' ')[0]}
-                </span>
-              </button>
-
-              {qualityMenuOpen && (
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="absolute right-0 bottom-11 z-50 w-60 max-w-[calc(100vw-1.5rem)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900/98 p-2.5 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150 space-y-2"
-                >
-                  <div className="flex items-center justify-between pb-1.5 border-b border-white/10 text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">
-                    <div className="flex items-center gap-1.5">
-                      <Signal className="h-3 w-3 text-emerald-400" />
-                      <span>Adaptive Bitrate (ABR)</span>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setQualityMenuOpen(false);
-                        setShowInfraModal(true);
-                      }}
-                      title="View Cloud Infrastructure & Edge CDN"
-                      className="text-sky-400 hover:underline flex items-center gap-0.5 normal-case"
-                    >
-                      <Server className="h-2.5 w-2.5" />
-                      <span>Cloud CDN</span>
-                    </button>
-                  </div>
-
-                  {/* Auto Mode */}
-                  <button
-                    onClick={() => handleQualityChange('Auto')}
-                    className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded-xl text-left transition-colors ${
-                      selectedQuality === 'Auto'
-                        ? 'bg-emerald-500/15 text-emerald-400 font-bold'
-                        : 'text-slate-300 hover:bg-white/10'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span>Auto (Adaptive)</span>
-                        <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
-                          {effectiveQualityLabel}
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-normal">
-                        Dynamic ladder based on buffer ({bufferHealthSec}s)
-                      </div>
-                    </div>
-                    {selectedQuality === 'Auto' && <Check className="h-3.5 w-3.5" />}
-                  </button>
-
-                  {/* Manual Ladder options */}
-                  <div className="pt-1 border-t border-white/10 space-y-0.5">
-                    {streamLadder.map((tier) => (
-                      <button
-                        key={tier.label}
-                        onClick={() => handleQualityChange(tier.label)}
-                        className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
-                          selectedQuality === tier.label
-                            ? 'bg-sky-500/15 text-sky-400 font-bold'
-                            : 'text-slate-300 hover:bg-white/10'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span>{tier.label}</span>
-                          <span className="text-[10px] text-slate-400 font-mono">
-                            {tier.bitrateKbps >= 1000 ? `${(tier.bitrateKbps / 1000).toFixed(1)} Mbps` : `${tier.bitrateKbps} kbps`}
-                          </span>
-                        </div>
-                        {selectedQuality === tier.label && <Check className="h-3.5 w-3.5 text-sky-400" />}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Telemetry Footer */}
-                  <div className="pt-1 border-t border-white/10 px-1 text-[10px] text-slate-400 flex items-center justify-between font-mono">
-                    <span className="flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                      tokyo-edge-01
-                    </span>
-                    <span className="text-emerald-400">{bufferHealthSec}s buffered</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Subtitles / Closed Captions (CC) Menu & Toggle */}
-            <div data-player-menu className="relative">
-              <button
-                onClick={() => {
-                  setSubtitleMenuOpen(!subtitleMenuOpen);
-                  setQualityMenuOpen(false);
-                  setSpeedMenuOpen(false);
-                  setAspectMenuOpen(false);
-                  setVolumeSliderOpen(false);
-                }}
-                title={`Subtitles / Captions (C) - ${subtitlesEnabled ? 'On' : 'Off'}`}
-                aria-label="Subtitles and Captions"
-                className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-all ${
-                  subtitlesEnabled
-                    ? 'text-sky-400 bg-sky-500/20 ring-1 ring-sky-500/40'
-                    : 'text-slate-300 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                <Captions className="h-4 w-4" />
-                {subtitlesEnabled && (
-                  <span className="absolute bottom-1 right-1.5 h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+                <Settings
+                  className={`h-4 w-4 transition-transform duration-200 ${
+                    settingsMenuOpen ? 'rotate-45' : ''
+                  }`}
+                />
+                {(selectedQuality !== 'Auto' || playbackRate !== 1) && (
+                  <span className="absolute top-1 right-1 rounded bg-[#FF0000] px-1 text-[8px] font-bold text-white leading-tight">
+                    {playbackRate !== 1 ? `${playbackRate}x` : 'HD'}
+                  </span>
                 )}
               </button>
 
-              {/* Subtitles Dropdown Menu */}
-              {subtitleMenuOpen && (
+              {settingsMenuOpen && (
                 <div
                   onClick={(e) => e.stopPropagation()}
-                  className="absolute right-0 bottom-11 z-50 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900/98 p-3 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150 space-y-3"
+                  className="absolute right-0 bottom-11 z-50 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-[#1a1a1d]/95 p-2 shadow-2xl backdrop-blur-xl text-white text-xs animate-in zoom-in-95 duration-150"
                 >
-                  {/* Header */}
-                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                    <div className="flex items-center gap-2">
-                      <Captions className="h-4 w-4 text-sky-400" />
-                      <span className="font-bold text-sm">Subtitles & Captions</span>
-                    </div>
-                    <button
-                      onClick={() => setSubtitleMenuOpen(false)}
-                      className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-
-                  {/* Quick Toggle On/Off */}
-                  <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10">
-                    <span className="text-xs font-semibold">Subtitles Display</span>
-                    <button
-                      onClick={toggleSubtitles}
-                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
-                        subtitlesEnabled ? 'bg-sky-500' : 'bg-slate-700'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
-                          subtitlesEnabled ? 'translate-x-4' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
-
-                  {/* Track Selection List */}
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">
-                      Available Tracks
-                    </div>
-
-                    <div className="max-h-40 overflow-y-auto space-y-0.5 pr-1">
-                      {/* Disable Subtitles Option */}
+                  {/* MAIN SETTINGS MENU */}
+                  {settingsView === 'main' && (
+                    <div className="space-y-0.5">
                       <button
-                        onClick={() => handleSelectTrack(null)}
-                        className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
-                          !subtitlesEnabled
-                            ? 'bg-sky-500/15 text-sky-400 font-bold'
-                            : 'text-slate-300 hover:bg-white/10 hover:text-white'
-                        }`}
+                        type="button"
+                        onClick={() => setSettingsView('quality')}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
                       >
-                        <span>Off (Disable)</span>
-                        {!subtitlesEnabled && <Check className="h-3.5 w-3.5" />}
+                        <div className="flex items-center gap-2.5">
+                          <Signal className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Quality</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-slate-300">
+                          <span className="text-[11px]">
+                            {selectedQuality === 'Auto'
+                              ? `Auto (${effectiveQualityLabel.replace(' HD', '')})`
+                              : selectedQuality.replace(' HD', '')}
+                          </span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </div>
                       </button>
 
-                      {/* Language & Custom Tracks */}
-                      {availableTracks.map((track) => {
-                        const isSelected = subtitlesEnabled && selectedTrackId === track.id;
-                        return (
-                          <div
-                            key={track.id}
-                            onClick={() => handleSelectTrack(track.id)}
-                            className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-sky-500/15 text-sky-400 font-bold'
-                                : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                      <button
+                        type="button"
+                        onClick={() => setSettingsView('speed')}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Gauge className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Playback speed</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-slate-300">
+                          <span className="text-[11px]">
+                            {playbackRate === 1 ? 'Normal' : `${playbackRate}x`}
+                          </span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSettingsView('subtitles')}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Captions className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Subtitles / CC</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-slate-300">
+                          <span className="text-[11px] max-w-[100px] truncate">
+                            {subtitlesEnabled
+                              ? availableTracks.find((t) => t.id === selectedTrackId)?.label || 'On'
+                              : 'Off'}
+                          </span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSettingsView('aspect')}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Tv className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Screen framing</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-slate-300">
+                          <span className="text-[11px] capitalize">{aspectRatio}</span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </div>
+                      </button>
+
+                      <div className="my-1 border-t border-white/10" />
+
+                      <button
+                        type="button"
+                        onClick={() => setIsLooping((prev) => !prev)}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <ListPlus className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Loop video</span>
+                        </div>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            isLooping ? 'bg-[#FF0000] text-white' : 'bg-white/10 text-slate-300'
+                          }`}
+                        >
+                          {isLooping ? 'On' : 'Off'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettingsMenuOpen(false);
+                          onOpenFilters();
+                        }}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Sliders className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Color & Video Filters</span>
+                        </div>
+                        <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettingsMenuOpen(false);
+                          takeSnapshot();
+                        }}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Camera className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Capture Frame Snapshot</span>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettingsMenuOpen(false);
+                          setIsCleanMode(true);
+                          setShowControls(false);
+                        }}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <EyeOff className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Clean View (Hide Overlays)</span>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettingsMenuOpen(false);
+                          onOpenInfo();
+                        }}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Info className="h-4 w-4 text-slate-300" />
+                          <span className="font-medium">Stats & Video Specs</span>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* SUBMENU: QUALITY */}
+                  {settingsView === 'quality' && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setSettingsView('main')}
+                          className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-white/10 font-semibold text-white"
+                        >
+                          <ArrowLeft className="h-3.5 w-3.5" />
+                          <span>Quality</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSettingsMenuOpen(false);
+                            setShowInfraModal(true);
+                          }}
+                          className="text-[11px] text-[#3EA6FF] hover:underline flex items-center gap-1 px-1"
+                        >
+                          <Server className="h-3 w-3" />
+                          <span>Cloud Status</span>
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleQualityChange('Auto');
+                          setSettingsMenuOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between px-2.5 py-2 rounded-xl text-left transition-colors ${
+                          selectedQuality === 'Auto'
+                            ? 'bg-white/15 text-white font-semibold'
+                            : 'text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <div>
+                          <div>Auto ({effectiveQualityLabel})</div>
+                          <div className="text-[10px] text-slate-400">
+                            Adapts automatically to connection speed
+                          </div>
+                        </div>
+                        {selectedQuality === 'Auto' && <Check className="h-4 w-4 text-[#FF0000]" />}
+                      </button>
+
+                      {streamLadder.map((tier) => (
+                        <button
+                          key={tier.label}
+                          type="button"
+                          onClick={() => {
+                            handleQualityChange(tier.label);
+                            setSettingsMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-2.5 py-2 rounded-xl text-left transition-colors ${
+                            selectedQuality === tier.label
+                              ? 'bg-white/15 text-white font-semibold'
+                              : 'text-slate-300 hover:bg-white/10'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span>{tier.label}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {tier.bitrateKbps >= 1000
+                                ? `${(tier.bitrateKbps / 1000).toFixed(1)} Mbps`
+                                : `${tier.bitrateKbps} kbps`}
+                            </span>
+                          </div>
+                          {selectedQuality === tier.label && (
+                            <Check className="h-4 w-4 text-[#FF0000]" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* SUBMENU: PLAYBACK SPEED */}
+                  {settingsView === 'speed' && (
+                    <div className="space-y-1">
+                      <div className="flex items-center pb-1.5 border-b border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setSettingsView('main')}
+                          className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-white/10 font-semibold text-white"
+                        >
+                          <ArrowLeft className="h-3.5 w-3.5" />
+                          <span>Playback speed</span>
+                        </button>
+                      </div>
+                      {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => changeSpeed(rate)}
+                          className={`flex w-full items-center justify-between px-3 py-2 rounded-xl hover:bg-white/10 ${
+                            playbackRate === rate
+                              ? 'bg-white/15 text-white font-semibold'
+                              : 'text-slate-300'
+                          }`}
+                        >
+                          <span>{rate === 1 ? 'Normal' : `${rate}x`}</span>
+                          {playbackRate === rate && <Check className="h-4 w-4 text-[#FF0000]" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* SUBMENU: ASPECT RATIO */}
+                  {settingsView === 'aspect' && (
+                    <div className="space-y-1">
+                      <div className="flex items-center pb-1.5 border-b border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setSettingsView('main')}
+                          className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-white/10 font-semibold text-white"
+                        >
+                          <ArrowLeft className="h-3.5 w-3.5" />
+                          <span>Screen framing</span>
+                        </button>
+                      </div>
+                      {(['auto', '16:9', '4:3', '21:9', '9:16', 'cover'] as AspectRatioMode[]).map(
+                        (mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => {
+                              setAspectRatio(mode);
+                              setSettingsView('main');
+                            }}
+                            className={`flex w-full items-center justify-between px-3 py-2 rounded-xl hover:bg-white/10 ${
+                              aspectRatio === mode
+                                ? 'bg-white/15 text-white font-semibold'
+                                : 'text-slate-300'
                             }`}
                           >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="truncate">{track.label}</span>
-                              {track.isCustom && (
-                                <span className="rounded bg-purple-500/20 text-purple-300 text-[9px] font-semibold px-1.5 py-0.2 shrink-0">
-                                  Custom
-                                </span>
-                              )}
+                            <span className="capitalize">
+                              {mode === 'cover' ? 'Fill Screen (Cover)' : mode}
+                            </span>
+                            {aspectRatio === mode && <Check className="h-4 w-4 text-[#FF0000]" />}
+                          </button>
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {/* SUBMENU: SUBTITLES / CAPTIONS */}
+                  {settingsView === 'subtitles' && (
+                    <div className="space-y-2.5 p-0.5">
+                      <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setSettingsView('main')}
+                          className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-white/10 font-semibold text-white"
+                        >
+                          <ArrowLeft className="h-3.5 w-3.5" />
+                          <span>Subtitles / CC</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={toggleSubtitles}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                            subtitlesEnabled ? 'bg-[#FF0000]' : 'bg-slate-700'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition ${
+                              subtitlesEnabled ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      <div className="max-h-36 overflow-y-auto space-y-0.5 pr-1">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectTrack(null)}
+                          className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
+                            !subtitlesEnabled
+                              ? 'bg-white/15 text-white font-semibold'
+                              : 'text-slate-300 hover:bg-white/10'
+                          }`}
+                        >
+                          <span>Off</span>
+                          {!subtitlesEnabled && <Check className="h-3.5 w-3.5 text-[#FF0000]" />}
+                        </button>
+
+                        {availableTracks.map((track) => {
+                          const isSelected = subtitlesEnabled && selectedTrackId === track.id;
+                          return (
+                            <div
+                              key={track.id}
+                              onClick={() => handleSelectTrack(track.id)}
+                              className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left cursor-pointer transition-colors ${
+                                isSelected
+                                  ? 'bg-white/15 text-white font-semibold'
+                                  : 'text-slate-300 hover:bg-white/10'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="truncate">{track.label}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {isSelected && <Check className="h-3.5 w-3.5 text-[#FF0000]" />}
+                                {track.isCustom && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteCustomTrack(track.id, e)}
+                                    title="Delete custom track"
+                                    className="p-1 rounded opacity-70 hover:opacity-100 hover:text-rose-400 text-slate-400"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              {isSelected && <Check className="h-3.5 w-3.5 text-sky-400" />}
-                              {track.isCustom && (
+                          );
+                        })}
+                      </div>
+
+                      <div className="pt-2 border-t border-white/10 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-semibold transition-colors"
+                        >
+                          <Upload className="h-3.5 w-3.5 text-sky-400" />
+                          <span>Upload .SRT</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSettingsMenuOpen(false);
+                            setShowUrlModal(true);
+                          }}
+                          className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-semibold transition-colors"
+                        >
+                          <FileText className="h-3.5 w-3.5 text-amber-400" />
+                          <span>Paste / URL</span>
+                        </button>
+                      </div>
+
+                      <div className="pt-2 border-t border-white/10 space-y-2 text-[10px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">
+                            Sync: {subtitleOffset === 0 ? '0.0s' : `${subtitleOffset > 0 ? '+' : ''}${subtitleOffset.toFixed(1)}s`}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSubtitleOffset((prev) => parseFloat((prev - 0.5).toFixed(1)))
+                              }
+                              className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20"
+                            >
+                              -0.5s
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSubtitleOffset(0)}
+                              className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20"
+                            >
+                              Reset
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSubtitleOffset((prev) => parseFloat((prev + 0.5).toFixed(1)))
+                              }
+                              className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20"
+                            >
+                              +0.5s
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <span className="text-slate-400 block mb-1">Size</span>
+                            <div className="flex rounded-lg bg-black/40 p-0.5 border border-white/10">
+                              {(['sm', 'base', 'lg'] as const).map((s) => (
                                 <button
-                                  onClick={(e) => handleDeleteCustomTrack(track.id, e)}
-                                  title="Delete custom track"
-                                  className="p-1 rounded opacity-0 group-hover:opacity-100 hover:text-rose-400 text-slate-400 transition-opacity"
+                                  key={s}
+                                  type="button"
+                                  onClick={() => {
+                                    setSubtitleFontSize(s);
+                                    localStorage.setItem('vio_streaming_subtitle_size', s);
+                                  }}
+                                  className={`flex-1 py-0.5 rounded text-center ${
+                                    subtitleFontSize === s
+                                      ? 'bg-[#FF0000] text-white font-bold'
+                                      : 'text-slate-400 hover:text-white'
+                                  }`}
                                 >
-                                  <Trash2 className="h-3 w-3" />
+                                  {s === 'sm' ? 'S' : s === 'base' ? 'M' : 'L'}
                                 </button>
-                              )}
+                              ))}
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
 
-                  {/* Upload & External Subtitle Actions */}
-                  <div className="pt-2 border-t border-white/10 grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-semibold transition-colors"
-                    >
-                      <Upload className="h-3.5 w-3.5 text-sky-400" />
-                      <span>Upload .SRT/.VTT</span>
-                    </button>
-                    <button
-                      onClick={() => setShowUrlModal(true)}
-                      className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-semibold transition-colors"
-                    >
-                      <FileText className="h-3.5 w-3.5 text-purple-400" />
-                      <span>Paste / URL</span>
-                    </button>
-                  </div>
-
-                  {/* Timing Sync & Customization Settings */}
-                  <div className="pt-2 border-t border-white/10 space-y-2">
-                    {/* Audio Sync Offset */}
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-slate-400 font-medium">
-                        Audio Sync: {subtitleOffset === 0 ? '0.0s' : `${subtitleOffset > 0 ? '+' : ''}${subtitleOffset.toFixed(1)}s`}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setSubtitleOffset((prev) => parseFloat((prev - 0.5).toFixed(1)))}
-                          title="-0.5s Earlier"
-                          className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px]"
-                        >
-                          -0.5s
-                        </button>
-                        <button
-                          onClick={() => setSubtitleOffset(0)}
-                          title="Reset Sync"
-                          className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] text-slate-300"
-                        >
-                          Reset
-                        </button>
-                        <button
-                          onClick={() => setSubtitleOffset((prev) => parseFloat((prev + 0.5).toFixed(1)))}
-                          title="+0.5s Later"
-                          className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px]"
-                        >
-                          +0.5s
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Font Size & Color Customization */}
-                    <div className="grid grid-cols-2 gap-2 text-[10px]">
-                      <div>
-                        <span className="text-slate-400 block mb-1">Text Size</span>
-                        <div className="flex rounded-lg bg-black/40 p-0.5 border border-white/10">
-                          {(['sm', 'base', 'lg'] as const).map((s) => (
-                            <button
-                              key={s}
-                              onClick={() => {
-                                setSubtitleFontSize(s);
-                                localStorage.setItem('vio_streaming_subtitle_size', s);
-                              }}
-                              className={`flex-1 py-0.5 rounded text-center capitalize transition-colors ${
-                                subtitleFontSize === s ? 'bg-sky-500 text-white font-bold' : 'text-slate-400 hover:text-white'
-                              }`}
-                            >
-                              {s === 'sm' ? 'S' : s === 'base' ? 'M' : 'L'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <span className="text-slate-400 block mb-1">Text Color</span>
-                        <div className="flex rounded-lg bg-black/40 p-0.5 border border-white/10">
-                          {(['white', 'yellow', 'cyan'] as const).map((c) => (
-                            <button
-                              key={c}
-                              onClick={() => {
-                                setSubtitleColor(c);
-                                localStorage.setItem('vio_streaming_subtitle_color', c);
-                              }}
-                              className={`flex-1 py-0.5 rounded text-center capitalize transition-colors ${
-                                subtitleColor === c ? 'bg-sky-500 text-white font-bold' : 'text-slate-400 hover:text-white'
-                              }`}
-                            >
-                              {c[0].toUpperCase()}
-                            </button>
-                          ))}
+                          <div>
+                            <span className="text-slate-400 block mb-1">Color</span>
+                            <div className="flex rounded-lg bg-black/40 p-0.5 border border-white/10">
+                              {(['white', 'yellow', 'cyan'] as const).map((c) => (
+                                <button
+                                  key={c}
+                                  type="button"
+                                  onClick={() => {
+                                    setSubtitleColor(c);
+                                    localStorage.setItem('vio_streaming_subtitle_color', c);
+                                  }}
+                                  className={`flex-1 py-0.5 rounded text-center ${
+                                    subtitleColor === c
+                                      ? 'bg-[#FF0000] text-white font-bold'
+                                      : 'text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  {c[0].toUpperCase()}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Loop Toggle */}
+            {/* Picture in Picture (Desktop / Tablet) */}
             <button
-              onClick={() => setIsLooping(!isLooping)}
-              title={isLooping ? 'Looping enabled' : 'Enable loop'}
-              className={`hidden sm:flex p-1.5 rounded-lg transition-colors ${
-                isLooping ? 'text-sky-400 bg-sky-500/20' : 'text-slate-300 hover:text-white hover:bg-white/10'
-              }`}
-            >
-              <ListPlus className="h-4 w-4" />
-            </button>
-
-            {/* Picture in Picture */}
-            <button
+              type="button"
               onClick={togglePiP}
-              title="Picture-in-Picture (P)"
-              className="hidden sm:flex p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+              title="Miniplayer / Picture-in-Picture (P)"
+              aria-label="Picture in Picture"
+              className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
             >
               <PictureInPicture className="h-4 w-4" />
             </button>
 
             {/* Fullscreen */}
             <button
+              type="button"
               onClick={toggleFullscreen}
-              title="Toggle Fullscreen (F)"
+              title="Fullscreen (F)"
               aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
               className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
             >
               {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-            </button>
-
-            {/* Clean View / Clear All Overlays Toggle (Desktop) */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const next = !isCleanMode;
-                setIsCleanMode(next);
-                if (next) setShowControls(false);
-              }}
-              title={isCleanMode ? "Show Controls Overlay" : "Clear All Overlays (Clean View)"}
-              className={`hidden sm:flex p-1.5 rounded-lg transition-colors ${
-                isCleanMode ? 'text-sky-400 bg-sky-500/20' : 'text-slate-300 hover:text-white hover:bg-white/10'
-              }`}
-            >
-              {isCleanMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </div>
@@ -2250,7 +2509,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-3xl border border-white/15 bg-slate-900 p-5 shadow-2xl text-white space-y-4 animate-in zoom-in-95"
+            className="w-full max-w-md rounded-3xl border border-white/15 bg-[#181818] p-5 shadow-2xl text-white space-y-4 animate-in zoom-in-95"
           >
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
               <div className="flex items-center gap-2">
@@ -2259,13 +2518,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
               <button
                 onClick={() => setShowUrlModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
+                className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
+            <p className="text-xs text-white/75 leading-relaxed">
               Paste a direct URL to an external <code className="text-sky-300 font-mono">.srt</code> or <code className="text-sky-300 font-mono">.vtt</code> file, or paste raw subtitle text below:
             </p>
 
@@ -2274,7 +2533,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               value={pastedUrlOrText}
               onChange={(e) => setPastedUrlOrText(e.target.value)}
               placeholder="https://example.com/movie_subtitles.srt&#10;or paste&#10;1&#10;00:00:01,000 --> 00:00:04,000&#10;Welcome to Vio streaming..."
-              className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-mono text-white placeholder:text-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none"
+              className="w-full rounded-xl border border-white/10 bg-[#0F0F0F] p-3 text-xs font-mono text-white placeholder:text-white/40 focus:border-[#3EA6FF] focus:outline-none focus:ring-1 focus:ring-[#3EA6FF] resize-none"
             />
 
             <div className="flex items-center justify-between pt-2">

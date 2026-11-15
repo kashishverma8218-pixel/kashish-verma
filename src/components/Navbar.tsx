@@ -11,18 +11,20 @@ import {
   ArrowLeft,
   Settings,
   Plus,
-  UserCircle2
+  UserCircle2,
+  History as HistoryIcon,
+  ArrowUpRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { NotificationsPanel } from './NotificationsPanel';
-import { NotificationItem } from '../types/video';
+import { NotificationItem, VideoItem, Channel } from '../types/video';
 import { VioLogo } from './VioLogo';
 
 interface NavbarProps {
   onToggleSidebar: () => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
-  onSearchSubmit: () => void;
+  onSearchSubmit: (overrideQuery?: string) => void;
   onNavigateHome: () => void;
   onOpenAuth: () => void;
   onOpenProfile: () => void;
@@ -36,6 +38,11 @@ interface NavbarProps {
   onSelectVideo: (videoId: string) => void;
   onSelectChannel: (channelId: string) => void;
   onSimulateNotification: () => void;
+  hideOnMobile?: boolean;
+  searchHistory?: string[];
+  onRemoveSearchHistoryItem?: (term: string) => void;
+  videos?: VideoItem[];
+  channels?: Channel[];
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -56,6 +63,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectVideo,
   onSelectChannel,
   onSimulateNotification,
+  hideOnMobile = false,
+  searchHistory = [],
+  onRemoveSearchHistoryItem,
+  videos = [],
+  channels = [],
 }) => {
   const { currentUser, userProfile, signOutUser } = useAuth();
 
@@ -64,17 +76,22 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [voiceSearchActive, setVoiceSearchActive] = useState(false);
   const [voiceStatusText, setVoiceStatusText] = useState('Listening... Speak now');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const recognitionRef = useRef<any>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const searchBoxRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   useEffect(() => {
-    if (!showUserMenu) return;
+    if (!showUserMenu && !searchFocused) return;
     const handleOutside = (e: MouseEvent | TouchEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setShowUserMenu(false);
+      }
+      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
+        setSearchFocused(false);
       }
     };
     document.addEventListener('mousedown', handleOutside);
@@ -83,11 +100,48 @@ export const Navbar: React.FC<NavbarProps> = ({
       document.removeEventListener('mousedown', handleOutside);
       document.removeEventListener('touchstart', handleOutside);
     };
-  }, [showUserMenu]);
+  }, [showUserMenu, searchFocused]);
+
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  const matchedVideos = trimmedQuery
+    ? videos
+        .filter(
+          (v) =>
+            v.title.toLowerCase().includes(trimmedQuery) ||
+            v.category.toLowerCase().includes(trimmedQuery)
+        )
+        .slice(0, 5)
+    : [];
+  const matchedChannels = trimmedQuery
+    ? channels
+        .filter(
+          (c) =>
+            c.name.toLowerCase().includes(trimmedQuery) ||
+            c.handle.toLowerCase().includes(trimmedQuery)
+        )
+        .slice(0, 2)
+    : [];
+  const filteredHistory = searchHistory
+    .filter((item) => !trimmedQuery || item.toLowerCase().includes(trimmedQuery))
+    .slice(0, 5);
+  const hasSuggestions =
+    filteredHistory.length > 0 || matchedVideos.length > 0 || matchedChannels.length > 0;
+
+  const triggerSearch = (term?: string) => {
+    const finalTerm = typeof term === 'string' ? term : searchQuery;
+    if (typeof term === 'string') {
+      setSearchQuery(term);
+    }
+    setSearchFocused(false);
+    setMobileSearchOpen(false);
+    onSearchSubmit(finalTerm);
+  };
 
   const handleSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      onSearchSubmit();
+      triggerSearch();
+    } else if (e.key === 'Escape') {
+      setSearchFocused(false);
       setMobileSearchOpen(false);
     }
   };
@@ -169,10 +223,14 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, [avatarUrl]);
 
   return (
-    <header className="sticky top-0 z-40 w-full h-14 bg-[var(--bg)]/95 backdrop-blur-md px-3 sm:px-4 transition-colors flex items-center">
+    <header
+      className={`sticky top-0 z-40 w-full h-14 bg-[var(--bg)]/95 backdrop-blur-md px-3 sm:px-4 transition-colors items-center ${
+        hideOnMobile ? 'hidden md:flex' : 'flex'
+      }`}
+    >
       {/* MOBILE SEARCH OVERLAY MODE */}
       {mobileSearchOpen ? (
-        <div className="flex w-full items-center gap-2 animate-in fade-in duration-150">
+        <div className="relative flex w-full items-center gap-2 animate-in fade-in duration-150">
           <button
             onClick={() => setMobileSearchOpen(false)}
             aria-label="Back"
@@ -188,8 +246,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               placeholder="Search Vio streaming"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
               onKeyDown={handleSearchKey}
-              className="w-full rounded-full border border-[var(--ink-faint)] bg-[var(--surface)] py-2 pl-4 pr-9 text-sm text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[#3EA6FF] focus:outline-none"
+              className="w-full rounded-full border border-[var(--ink-faint)] bg-[var(--surface)] py-2 pl-4 pr-9 text-base sm:text-sm text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[var(--link)] focus:outline-none"
             />
             {searchQuery && (
               <button
@@ -200,13 +259,55 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <X className="h-4 w-4" />
               </button>
             )}
+
+            {hasSuggestions && (
+              <div className="absolute left-0 right-0 top-12 z-50 rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface-elevated)] py-2 shadow-2xl max-h-72 overflow-y-auto">
+                {filteredHistory.map((term) => (
+                  <div
+                    key={`m-hist-${term}`}
+                    className="flex items-center justify-between px-3.5 py-2 hover:bg-[var(--card-hover)]"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => triggerSearch(term)}
+                      className="flex flex-1 items-center gap-2.5 text-left text-xs text-[var(--ink)] min-w-0 cursor-pointer"
+                    >
+                      <HistoryIcon className="h-4 w-4 text-[var(--ink-medium)] shrink-0" />
+                      <span className="truncate">{term}</span>
+                    </button>
+                    {onRemoveSearchHistoryItem && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveSearchHistoryItem(term)}
+                        aria-label={`Remove ${term}`}
+                        className="p-1 text-[var(--ink-medium)] hover:text-[var(--ink)]"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {matchedVideos.map((vid) => (
+                  <button
+                    key={`m-vid-${vid.id}`}
+                    type="button"
+                    onClick={() => {
+                      setMobileSearchOpen(false);
+                      onSelectVideo(vid.id);
+                    }}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--card-hover)] cursor-pointer"
+                  >
+                    <Search className="h-3.5 w-3.5 text-[var(--ink-medium)] shrink-0" />
+                    <span className="truncate flex-1">{vid.title}</span>
+                    <ArrowUpRight className="h-3.5 w-3.5 text-[var(--ink-medium)] shrink-0" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <button
-            onClick={() => {
-              onSearchSubmit();
-              setMobileSearchOpen(false);
-            }}
+            onClick={() => triggerSearch()}
             title="Search"
             aria-label="Submit search"
             className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--card-hover)] hover:bg-[var(--ink-faint)] text-[var(--ink)] transition-colors shrink-0"
@@ -235,7 +336,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={onToggleSidebar}
               aria-label="Toggle navigation guide"
               title="Toggle menu"
-              className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
             >
               <Menu className="h-5 w-5" />
             </button>
@@ -243,22 +344,26 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={onNavigateHome}
               aria-label="Vio streaming Home"
-              className="flex items-center focus:outline-none group overflow-visible py-0.5"
+              className="flex items-center focus:outline-none group overflow-visible py-0.5 cursor-pointer"
             >
               <VioLogo size="md" />
             </button>
           </div>
 
-          {/* Center Section: YouTube Connected Pill Search Bar + Circular Mic */}
-          <div className="hidden sm:flex flex-1 max-w-[620px] items-center justify-center px-2">
+          {/* Center Section: YouTube Connected Pill Search Bar + Circular Mic + Autocomplete Dropdown */}
+          <div ref={searchBoxRef} className="hidden sm:flex flex-1 max-w-[620px] items-center justify-center px-2">
             <div className="relative flex w-full items-center">
-              <div className="flex flex-1 items-center h-10">
-                <div className="flex flex-1 items-center h-full rounded-l-full border border-[var(--ink-faint)] focus-within:border-[#3EA6FF] bg-[var(--bg)] pl-4 pr-2 transition-colors">
+              <div className="relative flex flex-1 items-center h-10">
+                <div className="flex flex-1 items-center h-full rounded-l-full border border-[var(--ink-faint)] focus-within:border-[var(--link)] bg-[var(--bg)] pl-4 pr-2 transition-colors">
                   <input
                     type="text"
                     placeholder="Search"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onFocus={() => setSearchFocused(true)}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setSearchFocused(true);
+                    }}
                     onKeyDown={handleSearchKey}
                     className="flex-1 bg-transparent text-sm text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:outline-none"
                   />
@@ -266,7 +371,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <button
                       onClick={() => setSearchQuery('')}
                       aria-label="Clear search"
-                      className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]"
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)] cursor-pointer"
                     >
                       <X className="h-4 w-4" />
                     </button>
@@ -274,13 +379,81 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
 
                 <button
-                  onClick={onSearchSubmit}
+                  onClick={() => triggerSearch()}
                   title="Search"
                   aria-label="Search"
-                  className="flex h-full w-16 items-center justify-center rounded-r-full border border-l-0 border-[var(--ink-faint)] bg-[var(--card-hover)] hover:bg-[var(--ink-faint)] text-[var(--ink)] transition-colors shrink-0"
+                  className="flex h-full w-16 items-center justify-center rounded-r-full border border-l-0 border-[var(--ink-faint)] bg-[var(--card-hover)] hover:bg-[var(--ink-faint)] text-[var(--ink)] transition-colors shrink-0 cursor-pointer"
                 >
                   <Search className="h-4 w-4" />
                 </button>
+
+                {/* Desktop Search Suggestions & Recent History */}
+                {searchFocused && hasSuggestions && (
+                  <div className="absolute left-0 right-0 top-11 z-50 rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface-elevated)] py-2 shadow-2xl max-h-80 overflow-y-auto animate-in fade-in duration-100">
+                    {filteredHistory.map((term) => (
+                      <div
+                        key={`d-hist-${term}`}
+                        className="flex items-center justify-between px-4 py-2 hover:bg-[var(--card-hover)] transition-colors"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => triggerSearch(term)}
+                          className="flex flex-1 items-center gap-3 text-left text-xs font-medium text-[var(--ink)] min-w-0 cursor-pointer"
+                        >
+                          <HistoryIcon className="h-4 w-4 text-[var(--ink-medium)] shrink-0" />
+                          <span className="truncate">{term}</span>
+                        </button>
+                        {onRemoveSearchHistoryItem && (
+                          <button
+                            type="button"
+                            onClick={() => onRemoveSearchHistoryItem(term)}
+                            aria-label={`Remove ${term} from search history`}
+                            className="p-1 text-[var(--ink-medium)] hover:text-[var(--ink)] cursor-pointer"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+
+                    {matchedChannels.map((ch) => (
+                      <button
+                        key={`d-ch-${ch.id}`}
+                        type="button"
+                        onClick={() => {
+                          setSearchFocused(false);
+                          onSelectChannel(ch.id);
+                        }}
+                        className="flex w-full items-center gap-3 px-4 py-2 text-left text-xs hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
+                      >
+                        <img
+                          src={ch.avatar}
+                          alt={ch.name}
+                          referrerPolicy="no-referrer"
+                          className="h-5 w-5 rounded-full object-cover shrink-0"
+                        />
+                        <span className="font-semibold text-[var(--ink)] truncate">{ch.name}</span>
+                        <span className="text-[11px] text-[var(--ink-medium)] truncate">{ch.handle}</span>
+                      </button>
+                    ))}
+
+                    {matchedVideos.map((vid) => (
+                      <button
+                        key={`d-vid-${vid.id}`}
+                        type="button"
+                        onClick={() => {
+                          setSearchFocused(false);
+                          onSelectVideo(vid.id);
+                        }}
+                        className="flex w-full items-center gap-3 px-4 py-2 text-left text-xs text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
+                      >
+                        <Search className="h-4 w-4 text-[var(--ink-medium)] shrink-0" />
+                        <span className="truncate flex-1">{vid.title}</span>
+                        <span className="text-[11px] text-[var(--ink-medium)] shrink-0">{vid.category}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <button
@@ -477,9 +650,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             ) : (
               <button
                 onClick={onOpenAuth}
-                className="flex items-center gap-1.5 h-9 rounded-full border border-[var(--ink-faint)] hover:bg-[#3EA6FF]/10 hover:border-[#3EA6FF]/40 text-[#3EA6FF] px-3.5 text-sm font-medium whitespace-nowrap shrink-0 transition-colors active:scale-95"
+                className="flex items-center gap-1 sm:gap-1.5 h-9 rounded-full border border-[var(--ink-faint)] hover:bg-[var(--link)]/10 hover:border-[var(--link)]/40 text-[var(--link)] px-2.5 sm:px-3.5 text-xs sm:text-sm font-medium whitespace-nowrap shrink-0 transition-colors active:scale-95 cursor-pointer"
               >
-                <UserCircle2 className="h-5 w-5" />
+                <UserCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />
                 <span>Sign in</span>
               </button>
             )}

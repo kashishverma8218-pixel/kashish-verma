@@ -13,13 +13,18 @@ import {
   Download,
   Check,
   Maximize2,
-  Info
+  Info,
+  ListPlus,
+  Flag,
+  RotateCcw,
+  Plus
 } from 'lucide-react';
-import { VideoItem, Channel, Comment, VideoFilters, AspectRatioMode, Bookmark } from '../types/video';
+import { VideoItem, Channel, Comment, VideoFilters, AspectRatioMode, Bookmark, PlaylistItem } from '../types/video';
 import { VideoPlayer } from './VideoPlayer';
 import { CommentSection } from './CommentSection';
 import { BookmarksPanel } from './BookmarksPanel';
 import { ShareModal } from './ShareModal';
+import { ReportModal } from './ReportModal';
 import { formatTime } from '../utils/formatTime';
 import { formatViews, formatSubscribers } from '../data/mockData';
 
@@ -43,6 +48,7 @@ interface WatchViewProps {
   onDeleteComment?: (commentId: string) => void;
   onAddReply: (commentId: string, content: string) => void;
   userAvatar?: string;
+  currentUserId?: string;
   currentUserHandle?: string;
   bookmarks: Bookmark[];
   onAddBookmark: (time: number, thumbnailUrl?: string) => void;
@@ -55,6 +61,11 @@ interface WatchViewProps {
   aspectRatio: AspectRatioMode;
   setAspectRatio: (mode: AspectRatioMode) => void;
   initialSeekTime?: number | null;
+  savedProgressSeconds?: number;
+  onWatchProgress?: (video: VideoItem, seconds: number) => void;
+  playlists?: PlaylistItem[];
+  onToggleVideoInPlaylist?: (playlistId: string, videoId: string) => void;
+  onCreatePlaylist?: (title: string, initialVideoId?: string) => void;
   ambientMode?: boolean;
 }
 
@@ -78,6 +89,7 @@ export const WatchView: React.FC<WatchViewProps> = ({
   onDeleteComment,
   onAddReply,
   userAvatar,
+  currentUserId,
   currentUserHandle,
   bookmarks,
   onAddBookmark,
@@ -90,28 +102,74 @@ export const WatchView: React.FC<WatchViewProps> = ({
   aspectRatio,
   setAspectRatio,
   initialSeekTime = null,
+  savedProgressSeconds = 0,
+  onWatchProgress,
+  playlists = [],
+  onToggleVideoInPlaylist,
+  onCreatePlaylist,
   ambientMode = false,
 }) => {
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [bellDropdownOpen, setBellDropdownOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isPlaylistPopoverOpen, setIsPlaylistPopoverOpen] = useState(false);
+  const [newPlaylistTitle, setNewPlaylistTitle] = useState('');
   const [autoplayNext, setAutoplayNext] = useState<boolean>(() => {
     const saved = localStorage.getItem('vio_pref_autoplay');
     return saved === null ? true : saved === 'true';
   });
   const [liveTime, setLiveTime] = useState<number>(0);
-  const [seekTime, setSeekTime] = useState<number | null>(initialSeekTime);
+
+  // Resume from saved watch history (>10s and <92% duration) if no explicit deep-link seek
+  const shouldAutoResume =
+    initialSeekTime === null &&
+    savedProgressSeconds > 10 &&
+    savedProgressSeconds < Math.max(20, (video.duration || 120) * 0.92);
+
+  const [resumedFromSec, setResumedFromSec] = useState<number | null>(() =>
+    shouldAutoResume ? Math.floor(savedProgressSeconds) : null
+  );
+  const [seekTime, setSeekTime] = useState<number | null>(() =>
+    initialSeekTime !== null
+      ? initialSeekTime
+      : shouldAutoResume
+      ? Math.floor(savedProgressSeconds)
+      : null
+  );
   const [avatarFailed, setAvatarFailed] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
+  const lastSavedTimeRef = useRef<number>(0);
 
   useEffect(() => {
     setAvatarFailed(false);
   }, [channel?.avatar]);
 
   useEffect(() => {
-    setSeekTime(initialSeekTime);
+    const autoResume =
+      initialSeekTime === null &&
+      savedProgressSeconds > 10 &&
+      savedProgressSeconds < Math.max(20, (video.duration || 120) * 0.92);
+
+    setResumedFromSec(autoResume ? Math.floor(savedProgressSeconds) : null);
+    setSeekTime(
+      initialSeekTime !== null
+        ? initialSeekTime
+        : autoResume
+        ? Math.floor(savedProgressSeconds)
+        : null
+    );
     setLiveTime(0);
+    lastSavedTimeRef.current = 0;
   }, [video.id, initialSeekTime]);
+
+  const handlePlayerTimeUpdate = (seconds: number) => {
+    setLiveTime(seconds);
+    if (onWatchProgress && Math.abs(seconds - lastSavedTimeRef.current) >= 5) {
+      lastSavedTimeRef.current = seconds;
+      onWatchProgress(video, Math.floor(seconds));
+    }
+  };
 
   useEffect(() => {
     if (!bellDropdownOpen) return;
@@ -157,10 +215,29 @@ export const WatchView: React.FC<WatchViewProps> = ({
               hasNextVideo={autoplayNext && !!nextVideo}
               externalSeekTime={seekTime}
               onExternalSeekConsumed={() => setSeekTime(null)}
-              onTimeUpdate={setLiveTime}
+              onTimeUpdate={handlePlayerTimeUpdate}
               ambientMode={ambientMode}
             />
           </div>
+
+          {resumedFromSec !== null && (
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] px-3.5 py-2 text-xs">
+              <span className="text-[var(--ink-medium)] tabular-nums">
+                Resumed where you left off at <strong className="text-[var(--ink)]">{formatTime(resumedFromSec)}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSeekTime(0);
+                  setResumedFromSec(null);
+                }}
+                className="inline-flex items-center gap-1 font-semibold text-[var(--link)] hover:underline cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Start over</span>
+              </button>
+            </div>
+          )}
 
           {/* Video Title */}
           <h1 className="font-display text-lg sm:text-xl font-bold text-[var(--ink)] leading-snug">
@@ -286,12 +363,12 @@ export const WatchView: React.FC<WatchViewProps> = ({
             </div>
 
             {/* Video Action Bar */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar sm:flex-wrap pb-0.5 w-full lg:w-auto">
               {/* Like / Dislike Split Pill */}
-              <div className="flex items-center rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] p-0.5">
+              <div className="flex items-center shrink-0 rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] p-0.5">
                 <button
                   onClick={() => onToggleLike(video.id)}
-                  className={`flex items-center gap-1.5 min-h-[38px] rounded-l-full px-3.5 py-1.5 text-xs font-semibold hover:bg-[var(--card-hover)] transition-colors ${
+                  className={`flex items-center gap-1.5 min-h-[38px] rounded-l-full px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap hover:bg-[var(--card-hover)] transition-colors ${
                     video.userLiked ? 'text-[var(--accent-ink)] font-bold' : 'text-[var(--ink)]'
                   }`}
                 >
@@ -317,7 +394,7 @@ export const WatchView: React.FC<WatchViewProps> = ({
               {/* Share */}
               <button
                 onClick={handleShare}
-                className="flex items-center gap-1.5 min-h-[40px] rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] px-3.5 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors"
+                className="flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] px-3.5 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors"
               >
                 <Share2 className="h-4 w-4" />
                 <span>Share</span>
@@ -327,7 +404,7 @@ export const WatchView: React.FC<WatchViewProps> = ({
               <button
                 onClick={() => onToggleWatchLater(video.id)}
                 title="Save to Watch Later"
-                className={`flex items-center gap-1.5 min-h-[40px] rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors border ${
+                className={`flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors border ${
                   isWatchLater
                     ? 'bg-[#FF0000] text-white border-[#FF0000] font-bold'
                     : 'bg-[var(--surface)] border-[var(--ink-faint)] text-[var(--ink)] hover:bg-[var(--card-hover)]'
@@ -337,35 +414,58 @@ export const WatchView: React.FC<WatchViewProps> = ({
                 <span>{isWatchLater ? 'Saved' : 'Save'}</span>
               </button>
 
+              {/* Save to Playlist */}
+              {onToggleVideoInPlaylist && (
+                <button
+                  type="button"
+                  onClick={() => setIsPlaylistPopoverOpen(true)}
+                  title="Add to playlist"
+                  className="flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] px-3.5 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
+                >
+                  <ListPlus className="h-4 w-4" />
+                  <span>Playlist</span>
+                </button>
+              )}
+
               {/* Color Adjustments */}
               <button
+                type="button"
                 onClick={onOpenFilters}
                 title="Color Grading"
                 aria-label="Color Grading"
-                className="flex items-center justify-center min-h-[40px] min-w-[40px] rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] p-2 text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors"
+                className="flex items-center justify-center shrink-0 min-h-[40px] min-w-[40px] rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] p-2 text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
               >
                 <Sliders className="h-4 w-4" />
               </button>
 
               {/* Technical Video Info */}
               <button
+                type="button"
                 onClick={onOpenInfo}
                 title="Video Technical Specs & Codecs"
                 aria-label="Video Technical Specs"
-                className="flex items-center justify-center min-h-[40px] min-w-[40px] rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] p-2 text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors"
+                className="flex items-center justify-center shrink-0 min-h-[40px] min-w-[40px] rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] p-2 text-[var(--ink)] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
               >
                 <Info className="h-4 w-4" />
+              </button>
+
+              {/* Report Video */}
+              <button
+                type="button"
+                onClick={() => setIsReportModalOpen(true)}
+                title="Report video"
+                aria-label="Report video"
+                className="flex items-center justify-center shrink-0 min-h-[40px] min-w-[40px] rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] p-2 text-[var(--ink)] hover:bg-[var(--card-hover)] hover:text-rose-500 transition-colors cursor-pointer"
+              >
+                <Flag className="h-4 w-4" />
               </button>
             </div>
           </div>
 
-          {/* Description Card (Expandable) */}
-          <div
-            onClick={() => setDescriptionExpanded(!descriptionExpanded)}
-            className="cursor-pointer rounded-2xl bg-[var(--surface)] border border-[var(--ink-faint)] p-4 transition-colors hover:border-[var(--ink-medium)]/30"
-          >
+          {/* Description Card (Expandable without nested interactive button inside div[onClick]) */}
+          <div className="rounded-2xl bg-[var(--surface)] border border-[var(--ink-faint)] p-4 transition-colors">
             {/* Clean Unboxed Metadata */}
-            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[var(--ink)]">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[var(--ink)] tabular-nums">
               <span>{formatViews(video.views)}</span>
               <span aria-hidden="true">·</span>
               <span>Published {video.publishedAt}</span>
@@ -378,7 +478,7 @@ export const WatchView: React.FC<WatchViewProps> = ({
             </div>
 
             <p className={`mt-2 text-sm text-[var(--ink)]/85 leading-relaxed ${
-              descriptionExpanded ? '' : 'line-clamp-2'
+              descriptionExpanded ? 'whitespace-pre-line' : 'line-clamp-2'
             }`}>
               {video.description}
             </p>
@@ -391,7 +491,11 @@ export const WatchView: React.FC<WatchViewProps> = ({
               </div>
             )}
 
-            <button className="mt-2 text-xs font-bold text-[var(--ink)]">
+            <button
+              type="button"
+              onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+              className="mt-2 min-h-[32px] text-xs font-bold text-[var(--ink)] hover:underline cursor-pointer"
+            >
               {descriptionExpanded ? 'Show less' : '...more'}
             </button>
           </div>
@@ -406,6 +510,7 @@ export const WatchView: React.FC<WatchViewProps> = ({
             onDeleteComment={onDeleteComment}
             onAddReply={onAddReply}
             userAvatar={userAvatar}
+            currentUserId={currentUserId}
             currentUserHandle={currentUserHandle}
             disabled={video.commentsControl === 'disabled'}
           />
@@ -495,6 +600,101 @@ export const WatchView: React.FC<WatchViewProps> = ({
         onClose={() => setIsShareModalOpen(false)}
         video={video}
         currentTime={liveTime}
+      />
+
+      {/* Save to Playlist Dialog */}
+      {isPlaylistPopoverOpen && (
+        <div
+          onClick={() => setIsPlaylistPopoverOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface-elevated)] p-5 shadow-2xl text-[var(--ink)] space-y-4"
+          >
+            <div className="flex items-center justify-between pb-2.5 border-b border-[var(--ink-faint)]">
+              <h3 className="text-sm font-bold flex items-center gap-2">
+                <ListPlus className="h-4 w-4 text-[var(--accent-ink)]" />
+                <span>Save video to playlist</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsPlaylistPopoverOpen(false)}
+                className="text-xs font-semibold text-[var(--ink-medium)] hover:text-[var(--ink)] px-2 py-1 rounded-lg hover:bg-[var(--card-hover)] cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {playlists.length === 0 ? (
+                <p className="text-xs text-[var(--ink-medium)] py-2">
+                  No playlists yet. Create one below to organize your favorite streams.
+                </p>
+              ) : (
+                playlists.map((pl) => {
+                  const checked = pl.videoIds.includes(video.id);
+                  return (
+                    <button
+                      key={pl.id}
+                      type="button"
+                      onClick={() => onToggleVideoInPlaylist?.(pl.id, video.id)}
+                      className="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-medium hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
+                    >
+                      <span className="truncate">{pl.title}</span>
+                      <span
+                        className={`flex h-4 w-4 items-center justify-center rounded border ${
+                          checked
+                            ? 'bg-[#FF0000] border-[#FF0000] text-white'
+                            : 'border-[var(--ink-medium)]'
+                        }`}
+                      >
+                        {checked && <Check className="h-3 w-3" />}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            {onCreatePlaylist && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newPlaylistTitle.trim()) return;
+                  onCreatePlaylist(newPlaylistTitle.trim(), video.id);
+                  setNewPlaylistTitle('');
+                }}
+                className="flex items-center gap-2 pt-2 border-t border-[var(--ink-faint)]"
+              >
+                <input
+                  type="text"
+                  value={newPlaylistTitle}
+                  onChange={(e) => setNewPlaylistTitle(e.target.value)}
+                  placeholder="New playlist name..."
+                  className="flex-1 min-h-[38px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] px-3 py-1.5 text-xs text-[var(--ink)] focus:border-[#FF0000] focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={!newPlaylistTitle.trim()}
+                  className="min-h-[38px] inline-flex items-center gap-1 rounded-xl bg-[#FF0000] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#CC0000] disabled:opacity-40 cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Create</span>
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Report Video Modal */}
+      <ReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        targetId={video.id}
+        targetType="video"
+        targetTitle={video.title}
       />
     </div>
   );

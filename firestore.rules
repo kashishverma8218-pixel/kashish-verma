@@ -14,132 +14,71 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    // 4. Admin की पहचान केवल Firebase Custom Claims से (Email fallback हटाया गया)
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 256 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    // 4. Admin lookup via admins collection or verified bootstrapped owner email
     function isAdmin() {
-      return signedIn() && request.auth.token.admin == true;
+      return signedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email == 'kashishverma8218@gmail.com' && request.auth.token.email_verified == true)
+      );
     }
 
     // -------------------------------------------------------------------------
     // COUNTER VALIDATION HELPERS (3. फर्जी Views, Likes और Dislikes रोकने के नियम)
     // -------------------------------------------------------------------------
+    function isValidCounterDelta(field, allowDecrement) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field]) || (
+        request.resource.data[field] is int &&
+        (resource.data.get(field, 0) is int || resource.data.get(field, 0) is float) &&
+        request.resource.data[field] >= 0 &&
+        request.resource.data[field] <= resource.data.get(field, 0) + 1 &&
+        (
+          (allowDecrement && request.resource.data[field] >= resource.data.get(field, 0) - 1) ||
+          (!allowDecrement && request.resource.data[field] >= resource.data.get(field, 0))
+        )
+      );
+    }
+
     function isValidVideoInteraction() {
-      let diff = request.resource.data.diff(resource.data);
-      let affected = diff.affectedKeys();
-      
-      // केवल views, likes, dislikes ही दर्शकों द्वारा अपडेट किए जा सकते हैं
-      let allowedKeys = affected.hasOnly(['views', 'likes', 'dislikes']);
-
-      // ownerId या userId को किसी भी इंटरैक्शन में बदला नहीं जा सकता (Immutability)
-      let immutableOwner = !affected.hasAny(['ownerId', 'userId']);
-
-      // Views: धनात्मक पूर्णांक, एक रिक्वेस्ट में अधिकतम 0 या +1 ही बढ़ सकता है
-      let currentViews = ('views' in resource.data) ? resource.data.views : 0;
-      let validViews = !affected.hasAny(['views']) || (
-        request.resource.data.views is int &&
-        request.resource.data.views >= currentViews &&
-        request.resource.data.views <= currentViews + 1
-      );
-
-      // Likes: शून्य या धनात्मक पूर्णांक, केवल +1 या -1 का अंतर संभव (नेगेटिव नहीं हो सकता)
-      let currentLikes = ('likes' in resource.data) ? resource.data.likes : 0;
-      let validLikes = !affected.hasAny(['likes']) || (
-        request.resource.data.likes is int &&
-        request.resource.data.likes >= 0 &&
-        request.resource.data.likes >= currentLikes - 1 &&
-        request.resource.data.likes <= currentLikes + 1
-      );
-
-      // Dislikes: शून्य या धनात्मक पूर्णांक, केवल +1 या -1 का अंतर संभव
-      let currentDislikes = ('dislikes' in resource.data) ? resource.data.dislikes : 0;
-      let validDislikes = !affected.hasAny(['dislikes']) || (
-        request.resource.data.dislikes is int &&
-        request.resource.data.dislikes >= 0 &&
-        request.resource.data.dislikes >= currentDislikes - 1 &&
-        request.resource.data.dislikes <= currentDislikes + 1
-      );
-
-      return allowedKeys && immutableOwner && validViews && validLikes && validDislikes;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes', 'dislikes'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['ownerId', 'userId'])
+        && isValidCounterDelta('views', false)
+        && isValidCounterDelta('likes', true)
+        && isValidCounterDelta('dislikes', true);
     }
 
     function isValidReelInteraction() {
-      let diff = request.resource.data.diff(resource.data);
-      let affected = diff.affectedKeys();
-      let allowedKeys = affected.hasOnly(['views', 'likes', 'commentsCount', 'sharesCount']);
-      let immutableOwner = !affected.hasAny(['ownerId', 'userId']);
-
-      let currentViews = ('views' in resource.data) ? resource.data.views : 0;
-      let validViews = !affected.hasAny(['views']) || (
-        request.resource.data.views is int &&
-        request.resource.data.views >= currentViews &&
-        request.resource.data.views <= currentViews + 1
-      );
-
-      let currentLikes = ('likes' in resource.data) ? resource.data.likes : 0;
-      let validLikes = !affected.hasAny(['likes']) || (
-        request.resource.data.likes is int &&
-        request.resource.data.likes >= 0 &&
-        request.resource.data.likes >= currentLikes - 1 &&
-        request.resource.data.likes <= currentLikes + 1
-      );
-
-      let currentComments = ('commentsCount' in resource.data) ? resource.data.commentsCount : 0;
-      let validComments = !affected.hasAny(['commentsCount']) || (
-        request.resource.data.commentsCount is int &&
-        request.resource.data.commentsCount >= 0 &&
-        request.resource.data.commentsCount >= currentComments - 1 &&
-        request.resource.data.commentsCount <= currentComments + 1
-      );
-
-      let currentShares = ('sharesCount' in resource.data) ? resource.data.sharesCount : 0;
-      let validShares = !affected.hasAny(['sharesCount']) || (
-        request.resource.data.sharesCount is int &&
-        request.resource.data.sharesCount >= currentShares &&
-        request.resource.data.sharesCount <= currentShares + 1
-      );
-
-      return allowedKeys && immutableOwner && validViews && validLikes && validComments && validShares;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes', 'commentsCount', 'sharesCount'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['ownerId', 'userId'])
+        && isValidCounterDelta('views', false)
+        && isValidCounterDelta('likes', true)
+        && isValidCounterDelta('commentsCount', true)
+        && isValidCounterDelta('sharesCount', false);
     }
 
     function isValidCommentInteraction() {
-      let diff = request.resource.data.diff(resource.data);
-      let affected = diff.affectedKeys();
-      let allowedKeys = affected.hasOnly(['likes', 'dislikes', 'repliesCount']);
-      let immutableAuthor = !affected.hasAny(['userId', 'authorName', 'content', 'text']);
-
-      let currentLikes = ('likes' in resource.data) ? resource.data.likes : 0;
-      let validLikes = !affected.hasAny(['likes']) || (
-        request.resource.data.likes is int &&
-        request.resource.data.likes >= 0 &&
-        request.resource.data.likes >= currentLikes - 1 &&
-        request.resource.data.likes <= currentLikes + 1
-      );
-
-      let currentDislikes = ('dislikes' in resource.data) ? resource.data.dislikes : 0;
-      let validDislikes = !affected.hasAny(['dislikes']) || (
-        request.resource.data.dislikes is int &&
-        request.resource.data.dislikes >= 0 &&
-        request.resource.data.dislikes >= currentDislikes - 1 &&
-        request.resource.data.dislikes <= currentDislikes + 1
-      );
-
-      let currentReplies = ('repliesCount' in resource.data) ? resource.data.repliesCount : 0;
-      let validReplies = !affected.hasAny(['repliesCount']) || (
-        request.resource.data.repliesCount is int &&
-        request.resource.data.repliesCount >= 0 &&
-        request.resource.data.repliesCount >= currentReplies - 1 &&
-        request.resource.data.repliesCount <= currentReplies + 1
-      );
-
-      return allowedKeys && immutableAuthor && validLikes && validDislikes && validReplies;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'dislikes', 'repliesCount'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['userId', 'authorName', 'content', 'text'])
+        && isValidCounterDelta('likes', true)
+        && isValidCounterDelta('dislikes', true)
+        && isValidCounterDelta('repliesCount', true);
     }
 
     // =========================================================================
-    // 1. USER PROFILES
+    // 1. USER PROFILES (PII protected: owner or admin read)
     // =========================================================================
     match /users/{uid} {
-      allow read: if true;
-      allow create: if isOwner(uid);
-      allow update, delete: if isOwner(uid) || isAdmin();
+      allow get: if isOwner(uid) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(uid)
+                    && request.resource.data.uid == request.auth.uid
+                    && (!('role' in request.resource.data) || request.resource.data.role in ['user', 'creator']);
+      allow update: if (isOwner(uid) && (!('role' in request.resource.data) || ('role' in resource.data && request.resource.data.role == resource.data.role)))
+                    || isAdmin();
+      allow delete: if isOwner(uid) || isAdmin();
     }
 
     // =========================================================================
@@ -231,12 +170,33 @@ service cloud.firestore {
     // 5. LIKES (3. डुप्लीकेट और फर्जी Like रोकने के लिए Doc ID बाँधना)
     // =========================================================================
     match /likes/{likeId} {
-      allow read: if true;
+      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       // likeId अनिवार्य रूप से `${request.auth.uid}_${targetId}` होना चाहिए
       allow create: if signedIn()
+                    && isValidId(likeId)
+                    && request.resource.data.keys().hasAll(['id', 'userId', 'targetId', 'type', 'createdAt'])
+                    && request.resource.data.keys().hasOnly(['id', 'userId', 'targetId', 'targetType', 'type', 'createdAt'])
+                    && request.resource.data.id == likeId
                     && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.targetId is string
+                    && request.resource.data.targetId.size() > 0
+                    && request.resource.data.targetId.size() <= 128
+                    && (!('targetType' in request.resource.data) || request.resource.data.targetType in ['video', 'reel', 'comment'])
+                    && request.resource.data.type in ['like', 'dislike']
+                    && request.resource.data.createdAt is int
                     && likeId == request.auth.uid + '_' + request.resource.data.targetId;
-      allow update: if false;
+      allow update: if signedIn()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.keys().hasAll(['id', 'userId', 'targetId', 'type', 'createdAt'])
+                    && request.resource.data.keys().hasOnly(['id', 'userId', 'targetId', 'targetType', 'type', 'createdAt'])
+                    && request.resource.data.id == likeId
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.targetId == resource.data.targetId
+                    && (!('targetType' in request.resource.data) || request.resource.data.targetType in ['video', 'reel', 'comment'])
+                    && request.resource.data.type in ['like', 'dislike']
+                    && request.resource.data.createdAt is int
+                    && likeId == request.auth.uid + '_' + request.resource.data.targetId;
       allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
     }
 
@@ -244,11 +204,20 @@ service cloud.firestore {
     // 6. SUBSCRIPTIONS
     // =========================================================================
     match /subscriptions/{subscriptionId} {
-      allow read: if true;
+      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if signedIn()
+                    && isValidId(subscriptionId)
                     && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.channelId is string
+                    && request.resource.data.channelId.size() > 0
+                    && request.resource.data.channelId.size() <= 128
                     && subscriptionId == request.auth.uid + '_' + request.resource.data.channelId;
-      allow update: if false;
+      allow update: if signedIn()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.channelId == resource.data.channelId
+                    && subscriptionId == request.auth.uid + '_' + request.resource.data.channelId;
       allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
     }
 
@@ -256,12 +225,21 @@ service cloud.firestore {
     // 7. FOLLOWERS (7. Follow Button के लिए 100% सुरक्षित और संगत व्यवस्था)
     // =========================================================================
     match /followers/{followerId} {
-      allow read: if true;
+      allow get: if signedIn() && (resource == null || resource.data.followerId == request.auth.uid || isAdmin());
+      allow list: if signedIn() && (resource.data.followerId == request.auth.uid || isAdmin());
       // followerId अनिवार्य रूप से `${request.auth.uid}_${creatorId}` होना चाहिए
       allow create: if signedIn()
+                    && isValidId(followerId)
                     && request.resource.data.followerId == request.auth.uid
+                    && request.resource.data.creatorId is string
+                    && request.resource.data.creatorId.size() > 0
+                    && request.resource.data.creatorId.size() <= 128
                     && followerId == request.auth.uid + '_' + request.resource.data.creatorId;
-      allow update: if false;
+      allow update: if signedIn()
+                    && resource.data.followerId == request.auth.uid
+                    && request.resource.data.followerId == request.auth.uid
+                    && request.resource.data.creatorId == resource.data.creatorId
+                    && followerId == request.auth.uid + '_' + request.resource.data.creatorId;
       allow delete: if (signedIn() && resource.data.followerId == request.auth.uid) || isAdmin();
     }
 
@@ -269,7 +247,8 @@ service cloud.firestore {
     // 8. NOTIFICATIONS (2. केवल अधिकृत प्रेषक ही Notification बना सकता है)
     // =========================================================================
     match /notifications/{notificationId} {
-      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
 
       // प्रेषक (sender) का UID लॉगिन यूज़र से मेल खाना चाहिए; कोई फर्जी नाम से नहीं भेज सकता
       allow create: if (signedIn() && (
@@ -290,9 +269,10 @@ service cloud.firestore {
     // 9. WATCH HISTORY
     // =========================================================================
     match /watchHistory/{historyId} {
-      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if signedIn() && resource.data.userId == request.auth.uid;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
       allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
     }
 
@@ -312,8 +292,9 @@ service cloud.firestore {
     // 11. ANALYTICS
     // =========================================================================
     match /analytics/{analyticsId} {
-      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-      allow create: if signedIn() || isAdmin();
+      allow get: if isAdmin() || (signedIn() && (resource == null || resource.data.userId == request.auth.uid));
+      allow list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if (signedIn() && request.resource.data.userId == request.auth.uid) || isAdmin();
       allow update, delete: if isAdmin();
     }
 
@@ -322,7 +303,8 @@ service cloud.firestore {
     // =========================================================================
     match /reports/{reportId} {
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow get: if isAdmin() || (signedIn() && (resource == null || resource.data.userId == request.auth.uid));
+      allow list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
       allow update, delete: if isAdmin();
     }
 
@@ -338,17 +320,19 @@ service cloud.firestore {
     // 14. SEARCH HISTORY
     // =========================================================================
     match /searchHistory/{searchId} {
-      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if signedIn() && resource.data.userId == request.auth.uid;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
       allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
     }
 
     // =========================================================================
-    // 15. TEST CONNECTION (1. सार्वजनिक Read/Write बंद, सुरक्षित प्रमाणीकरण अनिवार्य)
+    // 15. TEST CONNECTION
     // =========================================================================
     match /test/{docId} {
-      allow read: if signedIn();
+      allow get: if docId == 'connection' || signedIn();
+      allow list: if signedIn();
       allow write: if isAdmin();
     }
 

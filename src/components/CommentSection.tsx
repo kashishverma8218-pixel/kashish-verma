@@ -18,6 +18,7 @@ interface CommentSectionProps {
   onDeleteComment?: (commentId: string) => void;
   onAddReply: (commentId: string, content: string) => void;
   userAvatar?: string;
+  currentUserId?: string;
   currentUserHandle?: string;
   disabled?: boolean;
 }
@@ -34,6 +35,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
   onDeleteComment,
   onAddReply,
   userAvatar,
+  currentUserId,
   currentUserHandle,
   disabled = false,
 }) => {
@@ -67,9 +69,10 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
   // Sort comments
   const sortedComments = [...comments].sort((a, b) => {
     if (sortBy === 'top') {
-      return b.likes - a.likes;
+      if (b.likes !== a.likes) return b.likes - a.likes;
+      return (b.createdAt || 0) - (a.createdAt || 0);
     }
-    return 0; // maintain newest insertion order
+    return (b.createdAt || 0) - (a.createdAt || 0);
   });
 
   if (disabled) {
@@ -88,7 +91,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
     <section className="mt-8 pt-6 border-t border-[var(--ink-faint)]">
       {/* Header Row: Total count & Sort toggle */}
       <div className="flex items-center gap-6 mb-6">
-        <h3 className="text-lg font-bold text-[var(--ink)]">
+        <h3 className="text-lg font-bold text-[var(--ink)] tabular-nums">
           {comments.length} Comments
         </h3>
 
@@ -143,7 +146,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
               <button
                 type="submit"
                 disabled={!newCommentText.trim()}
-                className="min-h-[36px] flex items-center gap-1.5 rounded-full bg-[#3EA6FF] px-4 py-1.5 text-xs font-semibold text-[#0F0F0F] shadow-xs hover:bg-[#65B8FF] disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                className="min-h-[36px] flex items-center gap-1.5 rounded-full bg-[#065FD4] dark:bg-[#3EA6FF] px-4 py-1.5 text-xs font-semibold text-white dark:text-[#0F0F0F] shadow-xs hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
               >
                 <Send className="h-3 w-3" />
                 <span>Comment</span>
@@ -226,8 +229,8 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                 </button>
 
                 {onDeleteComment &&
-                  (comment.authorHandle === (currentUserHandle || '@creative_viewer') ||
-                    comment.id.startsWith('c-')) && (
+                  ((Boolean(currentUserId && comment.userId === currentUserId)) ||
+                    (!comment.userId && comment.authorHandle === (currentUserHandle || '@creative_viewer'))) && (
                     <button
                       type="button"
                       title="Delete comment"
@@ -256,7 +259,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                     <button
                       type="button"
                       onClick={() => handleReplySubmit(comment.id)}
-                      className="min-h-[38px] rounded-full bg-[#3EA6FF] px-3.5 py-1.5 text-xs font-semibold text-[#0F0F0F] hover:bg-[#65B8FF] transition-colors cursor-pointer"
+                      className="min-h-[38px] rounded-full bg-[#065FD4] dark:bg-[#3EA6FF] px-3.5 py-1.5 text-xs font-semibold text-white dark:text-[#0F0F0F] hover:opacity-90 transition-colors cursor-pointer"
                     >
                       Reply
                     </button>
@@ -277,7 +280,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                   <button
                     type="button"
                     onClick={() => toggleReplies(comment.id)}
-                    className="min-h-[36px] flex items-center gap-1.5 text-xs font-semibold text-[#3EA6FF] hover:opacity-85 transition-opacity cursor-pointer"
+                    className="min-h-[36px] flex items-center gap-1.5 text-xs font-semibold text-[var(--link)] hover:opacity-85 transition-opacity cursor-pointer"
                   >
                     <MessageSquare className="h-3.5 w-3.5" />
                     <span>

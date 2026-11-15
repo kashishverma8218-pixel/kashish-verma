@@ -1,6 +1,6 @@
-import React from 'react';
-import { Tv, Sparkles, CheckCircle2 } from 'lucide-react';
-import { Channel, VideoItem } from '../types/video';
+import React, { useState } from 'react';
+import { Tv } from 'lucide-react';
+import { Channel, VideoItem, PlaylistItem } from '../types/video';
 import { VideoCard } from './VideoCard';
 import { formatSubscribers } from '../data/mockData';
 
@@ -14,7 +14,36 @@ interface SubscriptionsViewProps {
   onToggleSubscribe: (channelId: string) => void;
   onToggleWatchLater: (videoId: string) => void;
   watchLaterIds: string[];
+  playlists?: PlaylistItem[];
+  onAddToPlaylist?: (playlistId: string, videoId: string) => void;
 }
+
+const ChannelAvatar: React.FC<{ src?: string; name: string; sizeClass: string }> = ({
+  src,
+  name,
+  sizeClass,
+}) => {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div
+      className={`${sizeClass} rounded-full overflow-hidden shrink-0 bg-[#FF0000]/15 flex items-center justify-center`}
+    >
+      {failed || !src ? (
+        <span className="font-bold text-sm text-[var(--accent-ink)]">
+          {name.charAt(0).toUpperCase()}
+        </span>
+      ) : (
+        <img
+          src={src}
+          alt={name}
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+          className="h-full w-full object-cover"
+        />
+      )}
+    </div>
+  );
+};
 
 export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
   subscribedChannels,
@@ -26,6 +55,8 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
   onToggleSubscribe,
   onToggleWatchLater,
   watchLaterIds,
+  playlists = [],
+  onAddToPlaylist,
 }) => {
   const subscribedIds = new Set(subscribedChannels.map((c) => c.id));
   const subVideos = videos.filter((v) => subscribedIds.has(v.channelId));
@@ -58,15 +89,7 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
                   onClick={() => onSelectChannel(ch.id)}
                   className="flex items-center gap-3 min-w-0 cursor-pointer"
                 >
-                  <img
-                    src={ch.avatar}
-                    alt={ch.name}
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      e.currentTarget.style.opacity = '0.4';
-                    }}
-                    className="h-10 w-10 rounded-full object-cover shrink-0 bg-[var(--bg)]"
-                  />
+                  <ChannelAvatar src={ch.avatar} name={ch.name} sizeClass="h-10 w-10" />
                   <div className="min-w-0">
                     <h4 className="text-xs font-bold text-[var(--ink)] truncate">
                       {ch.name}
@@ -108,15 +131,7 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
               className="group min-w-[68px] flex flex-col items-center gap-1.5 shrink-0 focus:outline-none cursor-pointer"
             >
               <div className="relative h-14 w-14 rounded-full overflow-hidden ring-2 ring-transparent group-hover:ring-[#FF0000] transition-all bg-[var(--surface)]">
-                <img
-                  src={channel.avatar}
-                  alt={channel.name}
-                  referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    e.currentTarget.style.opacity = '0.4';
-                  }}
-                  className="h-full w-full object-cover"
-                />
+                <ChannelAvatar src={channel.avatar} name={channel.name} sizeClass="h-full w-full" />
               </div>
               <span className="text-xs font-medium text-[var(--ink)] truncate max-w-[80px] group-hover:text-[var(--accent-ink)] transition-colors">
                 {channel.name}
@@ -150,6 +165,8 @@ export const SubscriptionsView: React.FC<SubscriptionsViewProps> = ({
                 onSelectChannel={onSelectChannel}
                 onToggleWatchLater={onToggleWatchLater}
                 isWatchLater={watchLaterIds.includes(video.id)}
+                playlists={playlists}
+                onAddToPlaylist={onAddToPlaylist}
               />
             ))}
           </div>

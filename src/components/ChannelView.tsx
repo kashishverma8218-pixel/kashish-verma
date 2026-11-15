@@ -26,11 +26,13 @@ export const ChannelView: React.FC<ChannelViewProps> = ({
   const [activeTab, setActiveTab] = useState<'videos' | 'about'>('videos');
   const [bellOpen, setBellOpen] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
+  const [bannerFailed, setBannerFailed] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setAvatarFailed(false);
-  }, [channel.id, channel.avatar]);
+    setBannerFailed(false);
+  }, [channel.id, channel.avatar, channel.banner]);
 
   useEffect(() => {
     if (!bellOpen) return;
@@ -52,16 +54,16 @@ export const ChannelView: React.FC<ChannelViewProps> = ({
   return (
     <div className="mx-auto max-w-7xl px-3 sm:px-6 py-4">
       {/* Channel Banner */}
-      <div className="relative h-36 sm:h-56 md:h-64 w-full overflow-hidden rounded-2xl bg-[#141416] shadow-md border border-[var(--ink-faint)]">
-        <img
-          src={channel.banner}
-          alt={channel.name}
-          referrerPolicy="no-referrer"
-          onError={(e) => {
-            e.currentTarget.style.opacity = '0.3';
-          }}
-          className="h-full w-full object-cover"
-        />
+      <div className="relative h-36 sm:h-56 md:h-64 w-full overflow-hidden rounded-2xl bg-gradient-to-br from-[#1f1f24] via-[#141416] to-[#261111] shadow-md border border-[var(--ink-faint)]">
+        {!bannerFailed && channel.banner && (
+          <img
+            src={channel.banner}
+            alt={channel.name}
+            referrerPolicy="no-referrer"
+            onError={() => setBannerFailed(true)}
+            className="h-full w-full object-cover"
+          />
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
       </div>
 

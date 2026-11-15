@@ -322,13 +322,15 @@ export const ProfileManagementModal: React.FC<ProfileManagementModalProps> = ({
               />
             </div>
             {bannerURL && (
-              <div className="mb-2 h-24 w-full overflow-hidden rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)]">
+              <div className="mb-2 h-24 w-full overflow-hidden rounded-xl border border-[var(--ink-faint)] bg-gradient-to-br from-[#1f1f24] via-[#141416] to-[#261111]">
                 <img
                   src={bannerURL}
                   alt="Channel banner preview"
                   referrerPolicy="no-referrer"
                   onError={(e) => {
-                    e.currentTarget.style.opacity = '0.35';
+                    const target = e.currentTarget;
+                    const fallback = 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80';
+                    if (target.src !== fallback) target.src = fallback;
                   }}
                   className="h-full w-full object-cover"
                 />

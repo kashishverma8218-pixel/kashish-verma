@@ -27,8 +27,12 @@ import {
 import { VideoItem, ReelItem, Channel } from '../types/video';
 import { CATEGORIES } from '../data/mockData';
 import { formatFileSize, formatTime } from '../utils/formatTime';
-import { buildStreamLadder, triggerCloudTranscoding } from '../services/streamingService';
-import { addVideoDoc, addReelDoc, uploadFileToStorage, uploadImageAsset } from '../services/firebaseDatabaseService';
+import {
+  buildStreamLadder,
+  startVideoProcessing,
+  uploadFileResumableInChunks,
+} from '../services/streamingService';
+import { addVideoDoc, addReelDoc, uploadImageAsset } from '../services/firebaseDatabaseService';
 import { useAuth } from '../context/AuthContext';
 import { auth } from '../firebase';
 
@@ -72,6 +76,8 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState('');
   const [videoDuration, setVideoDuration] = useState<number>(120);
   const [videoResolution, setVideoResolution] = useState<string>('1920x1080');
+  const [sourceWidth, setSourceWidth] = useState<number>(1920);
+  const [sourceHeight, setSourceHeight] = useState<number>(1080);
   const [copiedPreviewLink, setCopiedPreviewLink] = useState<boolean>(false);
 
   // Upload Progress & State
@@ -356,6 +362,8 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
         const dur = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 120;
         setVideoDuration(dur);
         if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+          setSourceWidth(vid.videoWidth);
+          setSourceHeight(vid.videoHeight);
           setVideoResolution(`${vid.videoWidth}x${vid.videoHeight}`);
         }
 
@@ -429,10 +437,15 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
         captureFrames();
       };
 
+      if (vid.onloadedmetadata) {
+        // handled below
+      }
       vid.onloadedmetadata = () => {
         const dur = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 120;
         setVideoDuration(dur);
         if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+          setSourceWidth(vid.videoWidth);
+          setSourceHeight(vid.videoHeight);
           setVideoResolution(`${vid.videoWidth}x${vid.videoHeight}`);
         }
         setTimeout(() => {
@@ -455,12 +468,25 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     setError(null);
     setIsUploadingThumb(true);
     try {
-      const res = await uploadImageAsset(imgFile, 'thumbnails');
-      setCustomThumbnailUrl(res.url);
-      setSelectedPoster(res.url);
-      setThumbStorageMode(res.storage);
+      if (auth.currentUser?.uid) {
+        const uploaded = await uploadFileResumableInChunks({
+          file: imgFile,
+          videoId: draftSlugId,
+          folder: 'thumbnails',
+          visibility,
+        });
+        const assetUrl = `/api/media/asset?path=${encodeURIComponent(uploaded.objectPath)}`;
+        setCustomThumbnailUrl(assetUrl);
+        setSelectedPoster(assetUrl);
+        setThumbStorageMode('cloud');
+      } else {
+        const res = await uploadImageAsset(imgFile, 'thumbnails');
+        setCustomThumbnailUrl(res.url);
+        setSelectedPoster(res.url);
+        setThumbStorageMode(res.storage);
+      }
     } catch (err: any) {
-      setError(err?.message || 'Failed to load custom thumbnail image.');
+      setError(err?.message || 'Failed to upload custom thumbnail image to Cloud Storage.');
     } finally {
       setIsUploadingThumb(false);
     }
@@ -516,12 +542,10 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
     setError(null);
     setPublishSuccessMessage(null);
 
-    if (!currentUser?.uid) {
-      setError('Please sign in to your Vio streaming account before publishing.');
+    if (!currentUser?.uid || !auth.currentUser?.uid) {
+      setError('Please sign in to your Vio Firebase account before uploading or publishing.');
       return;
     }
-
-    const hasFirebaseSession = Boolean(auth.currentUser?.uid);
 
     const fallbackTitle = file
       ? cleanTitleFromFileName(file.name)
@@ -536,22 +560,25 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       autoThumbnails[0] ||
       DEFAULT_THUMBS[0];
 
-    const finalVideoId = `studio-${Date.now()}`;
+    const finalVideoId = publishTarget === 'reel' ? `reel-${Date.now()}` : `studio-${Date.now()}`;
     let effectiveUrl = resolvedVideoUrl || url.trim();
+    let uploadedObjectPath: string | undefined;
 
     setIsPublishing(true);
     setUploadPhase('uploading');
     setUploadProgress(0);
 
     try {
-      if (file && hasFirebaseSession) {
+      if (file) {
         setTotalBytes(formatFileSize(file.size));
         const startTime = Date.now();
 
-        effectiveUrl = await uploadFileToStorage(
+        const uploaded = await uploadFileResumableInChunks({
           file,
-          'videos',
-          (pct, bytesTransferred, total) => {
+          videoId: finalVideoId,
+          folder: 'videos',
+          visibility,
+          onProgress: (pct, bytesTransferred, total) => {
             setUploadProgress(pct);
             setUploadedBytes(formatFileSize(bytesTransferred));
             setTotalBytes(formatFileSize(total));
@@ -564,36 +591,28 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
               setEtaSeconds(Math.max(0, remainingSec));
             }
           },
-          { visibility, title: finalTitle }
-        );
-      } else if (file && !hasFirebaseSession) {
-        // Demo/Local session: keep playable local blob URL and animate smooth progress
-        setUploadProgress(65);
-        setUploadSpeed('Saving to local session...');
-        await new Promise((r) => setTimeout(r, 350));
+        });
+
+        uploadedObjectPath = uploaded.objectPath;
+        effectiveUrl = `/api/media/object/${finalVideoId}`;
       }
 
       if (!effectiveUrl) {
         throw new Error('Please select a video file or provide a valid video URL.');
       }
 
-      if (effectiveUrl.startsWith('blob:')) {
-        publishedBlobUrlsRef.current.add(effectiveUrl);
-      }
-
       setUploadPhase('transcoding');
       setUploadProgress(90);
 
-      if (hasFirebaseSession && finalPoster.startsWith('data:image/')) {
-        try {
-          const thumbFile = await dataUrlToFile(finalPoster, `${finalVideoId}_thumb.jpg`);
-          const uploadedThumb = await uploadImageAsset(thumbFile, 'thumbnails');
-          if (uploadedThumb.url) {
-            finalPoster = uploadedThumb.url;
-          }
-        } catch {
-          // Keep generated JPEG data URL if Storage thumbnail upload falls back
-        }
+      if (finalPoster.startsWith('data:image/')) {
+        const thumbFile = await dataUrlToFile(finalPoster, `${finalVideoId}_thumb.jpg`);
+        const uploadedThumb = await uploadFileResumableInChunks({
+          file: thumbFile,
+          videoId: finalVideoId,
+          folder: 'thumbnails',
+          visibility,
+        });
+        finalPoster = `/api/media/asset?path=${encodeURIComponent(uploadedThumb.objectPath)}`;
       }
 
       const ladder = buildStreamLadder(finalVideoId, effectiveUrl);
@@ -601,7 +620,7 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       if (publishTarget === 'reel') {
         const selectedChannel = channels.find((c) => c.id === channelId);
         const newReel: ReelItem = {
-          id: `reel-${Date.now()}`,
+          id: finalVideoId,
           title: finalTitle,
           description: description.trim() || `${finalTitle} on Vio streaming Reels`,
           videoUrl: effectiveUrl,
@@ -613,26 +632,37 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
           audioTrack: `Original Sound · ${selectedChannel?.name || 'Vio Creator'}`,
           audioArtist: selectedChannel?.name || 'Vio Creator',
           tags: tags.length > 0 ? tags : [category, 'Reels'],
+          visibility,
           createdAt: 'Just now',
+          sourceObjectPath: uploadedObjectPath,
+          transcodingStatus: uploadedObjectPath ? 'processing' : 'ready',
+          streamQualities: ladder,
         };
 
         setUploadPhase('checking');
-        setUploadProgress(95);
-        if (hasFirebaseSession) {
-          await addReelDoc(newReel);
+        setUploadProgress(94);
+        await addReelDoc(newReel);
+
+        if (uploadedObjectPath) {
+          setUploadPhase('transcoding');
+          setUploadProgress(97);
+          await startVideoProcessing({
+            videoId: finalVideoId,
+            sourceObjectPath: uploadedObjectPath,
+            collectionName: 'reels',
+            sourceWidth,
+            sourceHeight,
+          });
         }
 
         setUploadProgress(100);
         setUploadPhase('completed');
-        setUploadSpeed(hasFirebaseSession ? 'Upload complete · Saved to Firebase' : 'Published to local session');
+        setUploadSpeed('Uploaded to Cloud Storage · Transcoding in background');
         setEtaSeconds(0);
         setPublishSuccessMessage(
-          hasFirebaseSession
-            ? `Reel "${finalTitle}" uploaded and published!`
-            : `Reel "${finalTitle}" published to your session!`
+          `Reel "${finalTitle}" uploaded to Google Cloud Storage and queued for HLS transcoding!`
         );
 
-        triggerCloudTranscoding(newReel.id, effectiveUrl);
         onPublishReel?.(newReel);
       } else {
         const newVideo: VideoItem = {
@@ -649,7 +679,7 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
           duration: Math.round(videoDuration) || 120,
           category: category,
           tags: tags.length > 0 ? tags : [category],
-          isLocal: sourceType === 'file',
+          isLocal: false,
           fileSize: file ? formatFileSize(file.size) : totalBytes,
           visibility,
           hideLikes,
@@ -659,32 +689,38 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
           ageRestricted,
           createdAt: Date.now(),
           streamQualities: ladder,
-          hlsManifestUrl: `/api/stream/manifest/${finalVideoId}?format=hls`,
-          backupStreams: [
-            effectiveUrl,
-            'https://media.w3.org/2010/05/bunny/movie.mp4',
-            'https://download.blender.org/durian/trailer/sintel_trailer-720p.mp4',
-          ],
-          transcodingStatus: 'ready',
+          hlsManifestUrl: '',
+          backupStreams: [effectiveUrl],
+          transcodingStatus: uploadedObjectPath ? 'processing' : 'ready',
+          sourceObjectPath: uploadedObjectPath,
+          sourceWidth,
+          sourceHeight,
         };
 
         setUploadPhase('checking');
-        setUploadProgress(95);
-        if (hasFirebaseSession) {
-          await addVideoDoc(newVideo);
+        setUploadProgress(94);
+        await addVideoDoc(newVideo);
+
+        if (uploadedObjectPath) {
+          setUploadPhase('transcoding');
+          setUploadProgress(97);
+          await startVideoProcessing({
+            videoId: finalVideoId,
+            sourceObjectPath: uploadedObjectPath,
+            collectionName: 'videos',
+            sourceWidth,
+            sourceHeight,
+          });
         }
 
         setUploadProgress(100);
         setUploadPhase('completed');
-        setUploadSpeed(hasFirebaseSession ? 'Upload complete · Saved to Firebase' : 'Published to local session');
+        setUploadSpeed('Uploaded to Cloud Storage · Transcoding in background');
         setEtaSeconds(0);
         setPublishSuccessMessage(
-          hasFirebaseSession
-            ? `"${finalTitle}" uploaded and published!`
-            : `"${finalTitle}" published to your session!`
+          `"${finalTitle}" uploaded to Google Cloud Storage and queued for 360p–1080p HLS transcoding!`
         );
 
-        triggerCloudTranscoding(finalVideoId, effectiveUrl);
         onPublishVideo(newVideo);
       }
 
@@ -699,7 +735,7 @@ export const VideoUploadModal: React.FC<VideoUploadModalProps> = ({
       setError(
         err instanceof Error
           ? err.message
-          : 'Failed to upload video to Firebase Storage. Please check your network and try again.'
+          : 'Failed to upload video to Google Cloud Storage. Please check your configuration and try again.'
       );
     }
   };

@@ -419,6 +419,12 @@ function MainApp() {
                 userLiked: likedIds.has(v.id),
               }))
             );
+            setReels((prev) =>
+              prev.map((r) => ({
+                ...r,
+                userLiked: likedIds.has(r.id) || r.userLiked,
+              }))
+            );
           }
         })
         .catch(() => {});
@@ -1135,6 +1141,7 @@ function MainApp() {
           setMobileMenuOpen(false);
         }}
         onSimulateNotification={handleSimulateNotification}
+        hideOnMobile={currentPage === 'reels'}
       />
 
       {/* Main Container with Sidebar + Content */}
@@ -1168,8 +1175,14 @@ function MainApp() {
           onOpenSettings={() => setIsSettingsOpen(true)}
         />
 
-        {/* Content View Switcher (with bottom safe-area padding on mobile for MobileBottomNav) */}
-        <div className="flex-1 min-w-0 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0">
+        {/* Content View Switcher (Reels sits flush above MobileBottomNav; other pages include safe bottom padding) */}
+        <div
+          className={
+            currentPage === 'reels'
+              ? 'flex-1 min-w-0 h-[calc(100dvh-3.5rem-env(safe-area-inset-bottom))] md:h-[calc(100dvh-3.5rem)] overflow-hidden'
+              : 'flex-1 min-w-0 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0'
+          }
+        >
           {/* WATCH VIEW */}
           {currentPage === 'watch' && (
             <WatchView
@@ -1303,7 +1316,7 @@ function MainApp() {
                             </button>
                           </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5">
+                          <div className="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 no-scrollbar sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 sm:gap-3.5">
                             {reels.slice(0, 6).map((reel) => (
                               <button
                                 key={reel.id}
@@ -1311,7 +1324,7 @@ function MainApp() {
                                   setInitialReelId(reel.id);
                                   setCurrentPage('reels');
                                 }}
-                                className="group text-left flex flex-col focus:outline-none"
+                                className="group text-left flex flex-col focus:outline-none w-[42vw] max-w-[170px] shrink-0 snap-start sm:w-auto sm:max-w-none"
                               >
                                 <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-[var(--thumb-bg)]">
                                   <img

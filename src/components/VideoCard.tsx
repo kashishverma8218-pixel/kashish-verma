@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MoreVertical, Clock, Share2, Copy, Check, CheckCircle2 } from 'lucide-react';
-import { VideoItem, Channel } from '../types/video';
+import { MoreVertical, Clock, Share2, Copy, Check, CheckCircle2, ListPlus, Trash2 } from 'lucide-react';
+import { VideoItem, Channel, PlaylistItem } from '../types/video';
 import { formatTime } from '../utils/formatTime';
 import { formatViews } from '../data/mockData';
 import { ShareModal } from './ShareModal';
@@ -13,6 +13,9 @@ interface VideoCardProps {
   onToggleWatchLater: (videoId: string) => void;
   isWatchLater?: boolean;
   watchProgress?: number; // 0 to 1
+  playlists?: PlaylistItem[];
+  onAddToPlaylist?: (playlistId: string, videoId: string) => void;
+  onRemoveFromHistory?: (videoId: string) => void;
 }
 
 function formatVideoTitle(title: string): string {
@@ -35,8 +38,12 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   onToggleWatchLater,
   isWatchLater = false,
   watchProgress = 0,
+  playlists = [],
+  onAddToPlaylist,
+  onRemoveFromHistory,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -118,15 +125,32 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
         />
 
-        {/* Quick Watch Later Button on Thumbnail Hover */}
+        {/* Optional Remove from History Button (Top-Left, non-overlapping) */}
+        {onRemoveFromHistory && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemoveFromHistory(video.id);
+            }}
+            title="Remove from Watch history"
+            aria-label={`Remove ${displayTitle} from Watch history`}
+            className="absolute top-2 left-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/80 text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity hover:bg-rose-600 cursor-pointer"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+
+        {/* Quick Watch Later Button on Thumbnail Hover (Top-Right) */}
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onToggleWatchLater(video.id);
           }}
           title={isWatchLater ? 'Remove from Watch later' : 'Watch later'}
           aria-label={isWatchLater ? 'Remove from Watch later' : 'Watch later'}
-          className="absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/80 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black"
+          className="absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/80 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black cursor-pointer"
         >
           {isWatchLater ? <Check className="h-4 w-4 text-[#FF0000]" /> : <Clock className="h-4 w-4" />}
         </button>
@@ -237,15 +261,67 @@ export const VideoCard: React.FC<VideoCardProps> = ({
               </button>
 
               <button
+                type="button"
                 onClick={() => {
                   onToggleWatchLater(video.id);
                   setMenuOpen(false);
                 }}
-                className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-[var(--ink)]/90 hover:bg-[var(--card-hover)] transition-colors"
+                className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-[var(--ink)]/90 hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
               >
                 <Clock className="h-4 w-4 text-[var(--ink-medium)]" />
                 <span>{isWatchLater ? 'Remove from Watch later' : 'Save to Watch later'}</span>
               </button>
+
+              {onAddToPlaylist && playlists.length > 0 && (
+                <div className="border-t border-[var(--ink-faint)] mt-1 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setPlaylistMenuOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 rounded-lg text-[var(--ink)]/90 hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <ListPlus className="h-4 w-4 text-[var(--ink-medium)]" />
+                      <span>Save to playlist</span>
+                    </span>
+                    <span className="text-[10px] text-[var(--ink-medium)]">{playlistMenuOpen ? '−' : '+'}</span>
+                  </button>
+                  {playlistMenuOpen && (
+                    <div className="mt-1 space-y-0.5 pl-2 max-h-32 overflow-y-auto">
+                      {playlists.map((pl) => {
+                        const inPlaylist = pl.videoIds.includes(video.id);
+                        return (
+                          <button
+                            key={pl.id}
+                            type="button"
+                            onClick={() => {
+                              onAddToPlaylist(pl.id, video.id);
+                              setMenuOpen(false);
+                            }}
+                            className="flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] text-[var(--ink)] hover:bg-[var(--card-hover)] cursor-pointer"
+                          >
+                            <span className="truncate">{pl.title}</span>
+                            {inPlaylist && <Check className="h-3.5 w-3.5 text-[#FF0000] shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {onRemoveFromHistory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onRemoveFromHistory(video.id);
+                    setMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Remove from history</span>
+                </button>
+              )}
             </div>
           )}
         </div>

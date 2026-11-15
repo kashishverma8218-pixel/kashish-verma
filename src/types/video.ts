@@ -30,15 +30,28 @@ export interface CommentReply {
 export interface Comment {
   id: string;
   videoId: string;
+  userId?: string;
   authorName: string;
   authorHandle: string;
   authorAvatar: string;
   content: string;
   timestamp: string;
+  createdAt?: number;
   likes: number;
   userLiked: boolean;
   userDisliked?: boolean;
   replies?: CommentReply[];
+}
+
+export interface PlaylistItem {
+  id: string;
+  userId?: string;
+  title: string;
+  description?: string;
+  videoIds: string[];
+  isPublic?: boolean;
+  createdAt: number;
+  updatedAt?: number;
 }
 
 export interface VideoItem {
@@ -74,6 +87,12 @@ export interface VideoItem {
   hlsManifestUrl?: string;
   backupStreams?: string[];
   transcodingStatus?: 'ready' | 'processing' | 'failed';
+  sourceObjectPath?: string;
+  hlsOutputPrefix?: string;
+  transcoderJobName?: string;
+  transcodingError?: string;
+  sourceWidth?: number;
+  sourceHeight?: number;
   chapters?: VideoChapter[];
 }
 
@@ -177,5 +196,11 @@ export interface ReelItem {
   tags: string[];
   userLiked?: boolean;
   userSaved?: boolean;
+  visibility?: 'public' | 'unlisted' | 'private';
   createdAt?: string;
+  sourceObjectPath?: string;
+  hlsOutputPrefix?: string;
+  hlsManifestUrl?: string;
+  transcodingStatus?: 'ready' | 'processing' | 'failed';
+  streamQualities?: VideoStreamQuality[];
 }

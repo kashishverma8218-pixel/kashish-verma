@@ -207,7 +207,7 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-purple-600 via-pink-600 to-amber-500 text-white shadow-md shadow-purple-500/20">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#FF0000] text-white shadow-md">
             <Activity className="h-6 w-6" />
           </div>
           <div>
@@ -234,7 +234,7 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
                 value={selectedVideoId}
                 onChange={(e) => setSelectedVideoId(e.target.value)}
                 aria-label="Select video for telemetry"
-                className="min-h-[40px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] px-3 pr-8 text-base sm:text-xs font-semibold text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="min-h-[40px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] px-3 pr-8 text-base sm:text-xs font-semibold text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[#FF0000]"
               >
                 {videos.map((v) => (
                   <option key={v.id} value={v.id}>
@@ -251,11 +251,11 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
             onClick={() => setIsLiveMonitoring(!isLiveMonitoring)}
             className={`min-h-[40px] flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               isLiveMonitoring
-                ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
+                ? 'bg-[#FF0000]/15 text-[#FF0000] border border-[#FF0000]/30'
                 : 'bg-[var(--bg)] text-[var(--ink-medium)] border border-[var(--ink-faint)]'
             }`}
           >
-            <Radio className={`h-3.5 w-3.5 ${isLiveMonitoring ? 'text-purple-500 animate-pulse' : ''}`} />
+            <Radio className={`h-3.5 w-3.5 ${isLiveMonitoring ? 'text-[#FF0000] animate-pulse' : ''}`} />
             <span>{isLiveMonitoring ? 'Monitoring' : 'Paused'}</span>
           </button>
         </div>
@@ -338,7 +338,7 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
         <div className="p-5 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">Live Rendition Bitrate</span>
-            <Signal className="h-4 w-4 text-purple-500" />
+            <Signal className="h-4 w-4 text-[var(--link)]" />
           </div>
 
           <div className="flex items-baseline gap-2">
@@ -355,7 +355,7 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
               return (
                 <div
                   key={i}
-                  className="flex-1 rounded-t-sm bg-purple-500/60 transition-all duration-300"
+                  className="flex-1 rounded-t-sm bg-[#3EA6FF]/75 transition-all duration-300"
                   style={{ height: `${hPct}%` }}
                   title={`${val} kbps`}
                 />
@@ -365,7 +365,7 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
 
           <div className="mt-2.5 flex items-center justify-between text-[11px] text-[var(--ink-medium)]">
             <span>Rendition: 1080p60 FHD</span>
-            <span className="font-mono text-purple-500 font-bold">ABR Auto-Locked</span>
+            <span className="font-mono text-[var(--link)] font-bold">ABR Auto-Locked</span>
           </div>
         </div>
 
@@ -395,9 +395,9 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
       </div>
 
       {/* Interactive Simulation & Stress Testing Controls */}
-      <div className="p-4 rounded-2xl border border-purple-500/30 bg-[var(--surface)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="p-4 rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <Sliders className="h-4 w-4 text-purple-500 shrink-0" />
+          <Sliders className="h-4 w-4 text-[#FF0000] shrink-0" />
           <div>
             <div className="text-xs font-bold text-[var(--ink)]">
               Adaptive Bitrate (ABR) Stress Testing
@@ -422,7 +422,7 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
                 onClick={() => setNetworkProfile(p.id as any)}
                 className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                   networkProfile === p.id
-                    ? 'bg-purple-600 text-white shadow-xs'
+                    ? 'bg-[#FF0000] text-white shadow-xs'
                     : 'text-[var(--ink-medium)] hover:text-[var(--ink)]'
                 }`}
               >
@@ -447,13 +447,13 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
       <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs overflow-hidden">
         <div className="px-6 py-4 border-b border-[var(--ink-faint)] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Layers className="h-4 w-4 text-purple-500" />
+            <Layers className="h-4 w-4 text-[#FF0000]" />
             <h4 className="text-sm font-bold text-[var(--ink)]">
               HLS ABR Transcoding Ladder Renditions & CDN Edge Performance
             </h4>
           </div>
           <span className="text-xs text-[var(--ink-medium)] font-mono">
-            Master Manifest: <code className="text-purple-400">/api/stream/manifest/{selectedVideoId}.m3u8</code>
+            Master Manifest: <code className="text-[var(--link)]">/api/stream/manifest/{selectedVideoId}.m3u8</code>
           </span>
         </div>
 
@@ -488,13 +488,13 @@ export const HlsStreamingMetricsPanel: React.FC<HlsStreamingMetricsPanelProps> =
                   <td className="px-4 py-3.5 text-[var(--ink-medium)]">
                     {tier.segmentDuration.toFixed(1)}s (fMP4)
                   </td>
-                  <td className="px-4 py-3.5 text-purple-400">
+                  <td className="px-4 py-3.5 text-[var(--link)]">
                     {tier.codec}
                   </td>
                   <td className="px-4 py-3.5 text-[var(--ink)]">
                     <div className="flex items-center gap-2">
                       <div className="w-16 bg-[var(--bg)] h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-purple-500 h-full rounded-full" style={{ width: `${tier.activeViewersPct}%` }} />
+                        <div className="bg-[#FF0000] h-full rounded-full" style={{ width: `${tier.activeViewersPct}%` }} />
                       </div>
                       <span className="text-[11px] font-bold">{tier.activeViewersPct}%</span>
                     </div>

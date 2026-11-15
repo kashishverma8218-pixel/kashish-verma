@@ -36,11 +36,11 @@ export const VioLogo: React.FC<VioLogoProps> = ({
       </div>
 
       {showWordmark && (
-        <div className="flex items-center gap-2 leading-none whitespace-nowrap">
+        <div className="flex items-center gap-1.5 sm:gap-2 leading-none whitespace-nowrap">
           <span className={`font-display font-extrabold ${textSizes[size]} tracking-[-0.03em] text-[var(--accent-ink)] uppercase`}>
             VIO
           </span>
-          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--ink)]/75">
+          <span className="hidden min-[380px]:inline font-mono text-[10px] uppercase tracking-[0.14em] sm:tracking-[0.16em] text-[var(--ink)]/75">
             streaming
           </span>
         </div>

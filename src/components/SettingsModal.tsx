@@ -46,7 +46,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return localStorage.getItem('vio_pref_autoplay') !== 'false';
   });
   const [defaultQuality, setDefaultQuality] = useState<string>(() => {
-    return localStorage.getItem('vio_pref_quality') || '1080p';
+    const saved = localStorage.getItem('vio_pref_quality');
+    if (saved === '1080p') return '1080p HD';
+    if (saved === '720p') return '720p HD';
+    if (saved === '1440p' || saved === '4K UHD') return '1080p HD';
+    return saved || 'Auto';
   });
   const [ambientMode, setAmbientMode] = useState<boolean>(() => {
     return localStorage.getItem('vio_pref_ambient') !== 'false';
@@ -78,6 +82,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   });
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
   const [showInfra, setShowInfra] = useState<boolean>(false);
+  const [avatarFailed, setAvatarFailed] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -265,15 +270,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {currentUser ? (
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                   <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={userProfile?.photoURL || currentUser.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80'}
-                      alt="Avatar"
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        e.currentTarget.style.opacity = '0.4';
-                      }}
-                      className="h-14 w-14 rounded-full object-cover ring-2 ring-[#FF0000]/40 shrink-0"
-                    />
+                    <div className="h-14 w-14 rounded-full overflow-hidden ring-2 ring-[#FF0000]/40 shrink-0 bg-[#FF0000]/15 flex items-center justify-center">
+                      {avatarFailed || !(userProfile?.photoURL || currentUser.photoURL) ? (
+                        <span className="text-lg font-bold text-[#FF0000]">
+                          {(userProfile?.displayName || currentUser.displayName || 'V').charAt(0).toUpperCase()}
+                        </span>
+                      ) : (
+                        <img
+                          src={userProfile?.photoURL || currentUser.photoURL || ''}
+                          alt="Avatar"
+                          referrerPolicy="no-referrer"
+                          onError={() => setAvatarFailed(true)}
+                          className="h-full w-full object-cover"
+                        />
+                      )}
+                    </div>
                     <div className="min-w-0">
                       <div className="font-bold text-sm text-[var(--ink)] truncate">
                         {userProfile?.displayName || currentUser.displayName || 'Vio Creator'}
@@ -315,8 +326,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="p-6 rounded-2xl bg-gradient-to-br from-red-500/10 via-purple-500/10 to-transparent border border-red-500/20 text-center">
-                  <div className="h-12 w-12 mx-auto mb-3 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg">
+                <div className="p-6 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] text-center">
+                  <div className="h-12 w-12 mx-auto mb-3 rounded-full bg-[#FF0000] text-white flex items-center justify-center shadow-lg">
                     <User className="h-6 w-6" />
                   </div>
                   <h4 className="text-base font-bold text-[var(--ink)]">Sign in to your Vio streaming account</h4>
@@ -387,8 +398,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="text-xs font-bold text-[var(--ink)]">Default Video Streaming Quality</div>
                   <div className="text-[11px] text-[var(--ink-medium)]">Preferred playback resolution on Wi-Fi and high-speed broadband</div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                  {['Auto', '1080p', '1440p', '4K UHD'].map((q) => (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1">
+                  {['Auto', '1080p HD', '720p HD', '480p', '360p'].map((q) => (
                     <button
                       key={q}
                       type="button"
@@ -448,18 +459,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {/* Cloud Infrastructure & CDN Edge Status */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--ink-faint)]">
                 <div>
                   <div className="text-xs font-bold text-[var(--ink)] flex items-center gap-1.5">
-                    <Server className="h-3.5 w-3.5 text-purple-500 shrink-0" />
-                    <span>Cloud Streaming, Auto-Scale & Global CDN</span>
+                    <Server className="h-3.5 w-3.5 text-[#FF0000] shrink-0" />
+                    <span>Cloud Streaming & HLS Transcoding</span>
                   </div>
-                  <div className="text-[11px] text-[var(--ink-medium)]">Auto-scale pods, Anycast CDN edge (285 PoPs) & HLS Transcoding</div>
+                  <div className="text-[11px] text-[var(--ink-medium)]">Adaptive bitrate ladder (360p–1080p) & storage inspection</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowInfra(true)}
-                  className="min-h-[40px] px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-xs transition-colors shrink-0 cursor-pointer"
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[var(--ink)] text-[var(--bg)] hover:opacity-90 text-xs font-semibold shadow-xs transition-opacity shrink-0 cursor-pointer"
                 >
                   View Cloud Stats
                 </button>

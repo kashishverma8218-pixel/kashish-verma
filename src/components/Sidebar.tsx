@@ -184,13 +184,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={channel.id}
                 onClick={() => (isMobileDrawer ? handleChannelSelect(channel.id) : onSelectChannel(channel.id))}
-                className="flex w-full items-center gap-4 px-3 py-2 rounded-[10px] text-[14px] text-[var(--ink)]/90 hover:bg-[var(--card-hover)]/70 transition-colors"
+                className="flex w-full items-center gap-4 px-3 py-2 rounded-[10px] text-[14px] text-[var(--ink)]/90 hover:bg-[var(--card-hover)]/70 transition-colors cursor-pointer"
               >
                 <img
                   src={channel.avatar}
                   alt={channel.name}
                   referrerPolicy="no-referrer"
-                  className="h-6 w-6 rounded-full object-cover shrink-0"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
+                  className="h-6 w-6 rounded-full object-cover shrink-0 bg-[var(--card-hover)]"
                 />
                 <span className="truncate">{channel.name}</span>
               </button>
@@ -369,7 +372,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       onCloseMobile?.();
                       onOpenAuth?.();
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[var(--ink-faint)] px-3.5 py-1.5 text-xs font-medium text-[#3EA6FF] hover:bg-[#3EA6FF]/10 transition-colors"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[var(--ink-faint)] px-3.5 py-2 text-xs font-medium text-[var(--link)] hover:bg-[var(--link)]/10 transition-colors cursor-pointer"
                   >
                     <UserCircle2 className="h-4 w-4" />
                     <span>Sign in</span>

@@ -1,20 +1,18 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   Sparkles,
   Flame,
   Clock,
   Compass,
-  Cpu,
   SlidersHorizontal,
   TrendingUp,
   RefreshCw,
-  Eye,
-  ThumbsUp,
   CheckCircle2,
   Film
 } from 'lucide-react';
-import { VideoItem, Channel } from '../types/video';
+import { VideoItem, Channel, PlaylistItem } from '../types/video';
 import { VideoCard } from './VideoCard';
+import { CATEGORIES } from '../data/mockData';
 
 interface CustomFeedViewProps {
   videos: VideoItem[];
@@ -23,6 +21,8 @@ interface CustomFeedViewProps {
   onSelectChannel: (channelId: string) => void;
   onToggleWatchLater: (videoId: string) => void;
   watchLaterIds: string[];
+  playlists?: PlaylistItem[];
+  onAddToPlaylist?: (playlistId: string, videoId: string) => void;
 }
 
 export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
@@ -32,43 +32,57 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
   onSelectChannel,
   onToggleWatchLater,
   watchLaterIds,
+  playlists = [],
+  onAddToPlaylist,
 }) => {
-  // Algorithm tuning profiles
+  // Feed sorting profiles
   const [algoMode, setAlgoMode] = useState<'smart' | 'viral' | 'fresh' | 'underrated'>('smart');
   const [tagFilter, setTagFilter] = useState<string>('all');
-  
+
   // Lazy Loading state: start with 4 videos, incrementally load 4 more
   const [visibleCount, setVisibleCount] = useState<number>(4);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
-  // Compute algorithmic score for each video
+  const filterCategories = useMemo(() => {
+    const base = CATEGORIES.filter(
+      (c) =>
+        c !== 'All' &&
+        c !== 'Reels' &&
+        c !== 'Custom Feed' &&
+        c !== 'Trending' &&
+        c !== 'Recently Uploaded'
+    );
+    const dynamic = videos
+      .map((v) => v.category)
+      .filter((cat): cat is string => Boolean(cat) && !base.includes(cat));
+    return ['all', ...Array.from(new Set([...base, ...dynamic]))];
+  }, [videos]);
+
+  // Compute score for each video
   const scoredVideos = useMemo(() => {
     return videos
+      .filter((v) => (v.visibility || 'public') !== 'private')
       .map((video) => {
-        const channel = channels[video.channelId];
         const views = video.views || 0;
         const likes = video.likes || 0;
         const likeRatio = views > 0 ? (likes / views) * 100 : 0;
-        const subCount = channel?.subscribersCount || 0;
 
-        // Recency score
         let recencyWeight = 1.0;
-        if (video.publishedAt.includes('day') || video.publishedAt.includes('hour')) recencyWeight = 3.0;
-        else if (video.publishedAt.includes('week')) recencyWeight = 2.0;
+        if (video.publishedAt.includes('day') || video.publishedAt.includes('hour') || video.publishedAt.includes('Just')) {
+          recencyWeight = 3.0;
+        } else if (video.publishedAt.includes('week')) {
+          recencyWeight = 2.0;
+        }
 
         let score = 0;
         if (algoMode === 'smart') {
-          // Balanced multi-factor algorithm: engagement rate + recency + visual quality
           score = views * 0.2 + likes * 2.5 + likeRatio * 50 + recencyWeight * 100;
         } else if (algoMode === 'viral') {
-          // Prioritize pure velocity and raw engagement
           score = views * 0.6 + likes * 3.0 + (video.isTrending ? 500 : 0);
         } else if (algoMode === 'fresh') {
-          // Prioritize new uploads and low age
-          score = recencyWeight * 300 + likes * 1.5;
+          score = recencyWeight * 300 + (video.createdAt || 0) * 0.000001 + likes * 1.5;
         } else if (algoMode === 'underrated') {
-          // High like ratio relative to view count
           score = likeRatio * 150 + (views < 200000 ? 300 : 50);
         }
 
@@ -83,12 +97,21 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
       })
       .sort((a, b) => b.score - a.score)
       .map(({ video }) => video);
-  }, [videos, channels, algoMode, tagFilter]);
+  }, [videos, algoMode, tagFilter]);
 
-  // Reset pagination when algorithm filters change
+  // Reset pagination when filters change
   useEffect(() => {
     setVisibleCount(4);
   }, [algoMode, tagFilter]);
+
+  const handleLoadMore = useCallback(() => {
+    if (visibleCount >= scoredVideos.length || isLoadingMore) return;
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setVisibleCount((prev) => Math.min(prev + 4, scoredVideos.length));
+      setIsLoadingMore(false);
+    }, 350);
+  }, [visibleCount, scoredVideos.length, isLoadingMore]);
 
   // IntersectionObserver for automatic lazy loading when user scrolls near bottom
   useEffect(() => {
@@ -106,77 +129,68 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
     }
 
     return () => observer.disconnect();
-  }, [visibleCount, scoredVideos.length, isLoadingMore]);
-
-  const handleLoadMore = () => {
-    if (visibleCount >= scoredVideos.length) return;
-    setIsLoadingMore(true);
-    setTimeout(() => {
-      setVisibleCount((prev) => Math.min(prev + 4, scoredVideos.length));
-      setIsLoadingMore(false);
-    }, 450);
-  };
+  }, [visibleCount, scoredVideos.length, isLoadingMore, handleLoadMore]);
 
   const visibleVideos = scoredVideos.slice(0, visibleCount);
 
   return (
     <div className="mx-auto max-w-7xl px-3 sm:px-6 py-4 sm:py-6 space-y-6">
-      {/* Header with 24dp icons (h-6 w-6 = 24px / 24dp) */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-3xl bg-gradient-to-r from-purple-950/20 via-slate-900/10 to-transparent border border-purple-500/20 dark:border-purple-500/30">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-3xl bg-[var(--surface)] border border-[var(--ink-faint)]">
         <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-600/30">
-            {/* 24dp icon: h-6 w-6 = 24px */}
-            <Cpu className="h-6 w-6" />
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FF0000] text-white shadow-md">
+            <SlidersHorizontal className="h-6 w-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-                Vio streaming Algorithmic Feed
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-black text-[var(--ink)] tracking-tight">
+                Custom Discovery Feed
               </h1>
-              <span className="rounded-full bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 text-xs px-2.5 py-0.5 font-bold flex items-center gap-1">
-                {/* 24dp scaled down indicator */}
-                <Sparkles className="h-3.5 w-3.5" />
-                Neural Rank v2
+              <span className="rounded-md bg-[#FF0000]/10 text-[#FF0000] text-xs px-2.5 py-0.5 font-bold">
+                Live Ranking
               </span>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Personalized neural feed ranking content in real-time based on watch habits, like ratios, and cinematic score.
+            <p className="text-xs text-[var(--ink-medium)] mt-1">
+              Tune how your feed prioritizes engagement, freshness, or under-discovered creators.
             </p>
           </div>
         </div>
 
-        {/* Algorithm Tuning Modes */}
+        {/* Feed Tuning Modes */}
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1">
           <button
+            type="button"
             onClick={() => setAlgoMode('smart')}
-            className={`flex items-center gap-2 min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-2 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
               algoMode === 'smart'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                ? 'bg-[#FF0000] text-white shadow-sm'
+                : 'bg-[var(--bg)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
             }`}
           >
             <Sparkles className="h-4 w-4 shrink-0" />
-            <span>Smart Affinity</span>
+            <span>Balanced</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setAlgoMode('viral')}
-            className={`flex items-center gap-2 min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-2 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
               algoMode === 'viral'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                ? 'bg-[#FF0000] text-white shadow-sm'
+                : 'bg-[var(--bg)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
             }`}
           >
             <Flame className="h-4 w-4 shrink-0" />
-            <span>Velocity Surge</span>
+            <span>Most Viewed</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setAlgoMode('fresh')}
-            className={`flex items-center gap-2 min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-2 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
               algoMode === 'fresh'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                ? 'bg-[#FF0000] text-white shadow-sm'
+                : 'bg-[var(--bg)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
             }`}
           >
             <Clock className="h-4 w-4 shrink-0" />
@@ -184,11 +198,12 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
           </button>
 
           <button
+            type="button"
             onClick={() => setAlgoMode('underrated')}
-            className={`flex items-center gap-2 min-h-[38px] px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+            className={`flex items-center gap-2 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
               algoMode === 'underrated'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                ? 'bg-[#FF0000] text-white shadow-sm'
+                : 'bg-[var(--bg)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
             }`}
           >
             <Compass className="h-4 w-4 shrink-0" />
@@ -197,23 +212,24 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
         </div>
       </div>
 
-      {/* Filter Chips */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+      {/* Category Filter Chips */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs scrollbar-none">
         <span className="flex items-center gap-1.5 font-bold text-[var(--ink-medium)] uppercase tracking-wider text-[11px] shrink-0 mr-1">
-          <SlidersHorizontal className="h-4 w-4 text-purple-500" />
+          <SlidersHorizontal className="h-4 w-4 text-[#FF0000]" />
           Filter:
         </span>
-        {['all', 'Animation', 'Sci-Fi', 'Film', 'Tutorial', 'Technology'].map((cat) => (
+        {filterCategories.map((cat) => (
           <button
             key={cat}
+            type="button"
             onClick={() => setTagFilter(cat)}
-            className={`px-3 py-1.5 rounded-full font-semibold transition-colors shrink-0 capitalize ${
+            className={`min-h-[36px] px-3.5 py-1.5 rounded-full font-semibold transition-colors shrink-0 capitalize cursor-pointer ${
               tagFilter === cat
-                ? 'bg-purple-600 text-white shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                ? 'bg-[var(--ink)] text-[var(--bg)] shadow-xs'
+                : 'bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]'
             }`}
           >
-            {cat}
+            {cat === 'all' ? 'All Categories' : cat}
           </button>
         ))}
       </div>
@@ -221,29 +237,28 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
       {/* Video Grid */}
       {visibleVideos.length === 0 ? (
         <div className="py-20 text-center text-[var(--ink-medium)]">
-          <Film className="h-8 w-8 mx-auto mb-2 text-purple-500" />
+          <Film className="h-8 w-8 mx-auto mb-2 text-[#FF0000]" />
           <p className="text-base font-bold text-[var(--ink)]">
-            No videos match the current algorithmic criteria
+            No videos match this category filter
           </p>
-          <p className="text-xs text-[var(--ink-medium)] mt-1">Try switching to Smart Affinity or clear filters.</p>
+          <p className="text-xs text-[var(--ink-medium)] mt-1">
+            Try switching to Balanced mode or selecting All Categories.
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-          {visibleVideos.map((video, idx) => (
-            <div key={video.id} className="relative group">
-              <div className="absolute top-2 left-2 z-20 flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-900/80 backdrop-blur-md text-white text-[10px] font-bold shadow-md">
-                <Sparkles className="h-3 w-3 text-amber-300" />
-                <span>Rank #{idx + 1}</span>
-              </div>
-              <VideoCard
-                video={video}
-                channel={channels[video.channelId]}
-                onPlay={onPlayVideo}
-                onSelectChannel={onSelectChannel}
-                onToggleWatchLater={onToggleWatchLater}
-                isWatchLater={watchLaterIds.includes(video.id)}
-              />
-            </div>
+          {visibleVideos.map((video) => (
+            <VideoCard
+              key={video.id}
+              video={video}
+              channel={channels[video.channelId]}
+              onPlay={onPlayVideo}
+              onSelectChannel={onSelectChannel}
+              onToggleWatchLater={onToggleWatchLater}
+              isWatchLater={watchLaterIds.includes(video.id)}
+              playlists={playlists}
+              onAddToPlaylist={onAddToPlaylist}
+            />
           ))}
         </div>
       )}
@@ -251,22 +266,23 @@ export const CustomFeedView: React.FC<CustomFeedViewProps> = ({
       {/* Lazy Loading Sentinel & Trigger */}
       <div ref={loadMoreRef} className="py-6 flex flex-col items-center justify-center">
         {isLoadingMore ? (
-          <div className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-300 text-xs font-bold border border-purple-200 dark:border-purple-800/50 animate-pulse">
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            <span>Calculating next algorithmic recommendations...</span>
+          <div className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-[var(--surface)] text-[var(--ink)] text-xs font-bold border border-[var(--ink-faint)]">
+            <RefreshCw className="h-4 w-4 animate-spin text-[#FF0000]" />
+            <span>Loading more recommendations...</span>
           </div>
         ) : visibleCount < scoredVideos.length ? (
           <button
+            type="button"
             onClick={handleLoadMore}
-            className="flex items-center gap-2 min-h-[42px] px-6 py-2.5 rounded-2xl bg-[var(--surface)] border border-[var(--ink-faint)] hover:bg-purple-600 hover:text-white text-[var(--ink)] text-xs font-bold transition-all shadow-xs group"
+            className="flex items-center gap-2 min-h-[42px] px-6 py-2.5 rounded-full bg-[var(--surface)] border border-[var(--ink-faint)] hover:bg-[#FF0000] hover:text-white hover:border-[#FF0000] text-[var(--ink)] text-xs font-bold transition-all shadow-xs group cursor-pointer"
           >
-            <TrendingUp className="h-4 w-4 text-purple-500 group-hover:text-white transition-colors" />
+            <TrendingUp className="h-4 w-4 text-[#FF0000] group-hover:text-white transition-colors" />
             <span>Load More ({scoredVideos.length - visibleCount} remaining)</span>
           </button>
         ) : (
           <div className="flex items-center gap-2 text-xs text-[var(--ink-medium)]">
             <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            <span>You've explored all algorithmic recommendations for now</span>
+            <span>You've reached the end of this custom feed</span>
           </div>
         )}
       </div>

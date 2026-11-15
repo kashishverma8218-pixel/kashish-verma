@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Heart,
   MessageCircle,
@@ -15,18 +15,31 @@ import {
   X,
   Send,
   Sparkles,
-  UserPlus,
-  UserCheck,
   Disc,
   ArrowLeft,
   Plus,
   Layers,
-  ListVideo,
   Maximize2,
-  Minimize2
+  Minimize2,
+  MoreVertical,
+  AlignLeft,
+  EyeOff,
+  Eye,
+  Gauge,
+  Flag,
+  MessageSquarePlus,
+  Check
 } from 'lucide-react';
+import Hls from 'hls.js';
+import { auth } from '../firebase';
 import { ReelItem, ReelComment, Channel } from '../types/video';
-import { DEFAULT_PLAYABLE_REEL_URL, sanitizePlayableVideoUrl } from '../services/streamingService';
+import {
+  DEFAULT_PLAYABLE_REEL_URL,
+  fetchPlaybackSession,
+  sanitizePlayableVideoUrl,
+} from '../services/streamingService';
+import { formatViews } from '../data/mockData';
+import { ReportModal } from './ReportModal';
 
 export interface ShortsSeries {
   id: string;
@@ -74,10 +87,16 @@ interface ReelsViewProps {
   onLikeComment: (reelId: string, commentId: string) => void;
   onToggleLikeReel: (reelId: string) => void;
   onToggleSaveReel: (reelId: string) => void;
+  onReelView?: (reelId: string) => void;
   onNavigateHome: () => void;
   onOpenUpload?: () => void;
   initialReelId?: string;
 }
+
+const FALLBACK_AVATAR =
+  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
+const FALLBACK_POSTER =
+  'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=800&q=80';
 
 export const ReelsView: React.FC<ReelsViewProps> = ({
   reels,
@@ -89,6 +108,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   onLikeComment,
   onToggleLikeReel,
   onToggleSaveReel,
+  onReelView,
   onNavigateHome,
   onOpenUpload,
   initialReelId,
@@ -105,20 +125,24 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   const [showHeartAnimation, setShowHeartAnimation] = useState(false);
   const [playIndicator, setPlayIndicator] = useState<'play' | 'pause' | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const [reportModalMode, setReportModalMode] = useState<'report' | 'feedback' | null>(null);
+  const [clearScreen, setClearScreen] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [newCommentText, setNewCommentText] = useState('');
-  const [copiedToast, setCopiedToast] = useState(false);
-  const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
-  const [fitToast, setFitToast] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [fitMode, setFitMode] = useState<'auto' | 'contain' | 'cover'>('auto');
+  const [videoRatios, setVideoRatios] = useState<Record<string, number>>({});
   const [progress, setProgress] = useState(0);
   const [viewMode, setViewMode] = useState<'feed' | 'series'>('feed');
-  const [touchOffsetY, setTouchOffsetY] = useState(0);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollFeedRef = useRef<HTMLDivElement>(null);
+  const slideRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const activeVideoElRef = useRef<HTMLVideoElement | null>(null);
   const lastTapRef = useRef<number>(0);
-  const touchStartYRef = useRef<number | null>(null);
-  const touchMovedRef = useRef<boolean>(false);
   const lastWheelRef = useRef<number>(0);
+  const hlsRef = useRef<Hls | null>(null);
 
   const FALLBACK_REEL_SRC = DEFAULT_PLAYABLE_REEL_URL;
   const activeReel = reels[activeIndex] || reels[0];
@@ -130,54 +154,221 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   );
   const activeChannel = activeReel ? channels[activeReel.channelId] : null;
   const isFollowing = activeChannel?.isSubscribed ?? false;
-  const activeComments = activeReel ? (commentsMap[activeReel.id] || []) : [];
+  const activeComments = activeReel ? commentsMap[activeReel.id] || [] : [];
 
-  // Sync activeIndex when initialReelId changes (e.g. deep link or post-publish)
+  const [resolvedReelSrc, setResolvedReelSrc] = useState<string>(activeVideoSrc);
+  const [isReelHlsActive, setIsReelHlsActive] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (activeReel?.id && onReelView) {
+      onReelView(activeReel.id);
+    }
+  }, [activeReel?.id, onReelView]);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => {
+      setToastMsg((curr) => (curr === msg ? null : curr));
+    }, 2400);
+  }, []);
+
+  const scrollToReel = useCallback(
+    (index: number, instant: boolean = false) => {
+      if (reels.length === 0) return;
+      const clamped = ((index % reels.length) + reels.length) % reels.length;
+      setActiveIndex(clamped);
+      const slideEl = slideRefs.current[clamped];
+      if (slideEl) {
+        slideEl.scrollIntoView({
+          behavior: instant ? 'auto' : 'smooth',
+          block: 'start',
+        });
+      }
+    },
+    [reels.length]
+  );
+
+  // Sync activeIndex and scroll position when initialReelId changes
   useEffect(() => {
     if (!initialReelId) return;
     const idx = reels.findIndex((r) => r.id === initialReelId);
     if (idx >= 0) {
       setActiveIndex(idx);
+      requestAnimationFrame(() => {
+        const slideEl = slideRefs.current[idx];
+        slideEl?.scrollIntoView({ behavior: 'auto', block: 'start' });
+      });
     }
   }, [initialReelId, reels]);
 
-  // Reset video playback on index change
+  // Observe visible reel slide during native swipe / scroll snap
   useEffect(() => {
-    if (videoRef.current && activeVideoSrc) {
-      videoRef.current.dataset.fallbackApplied = 'false';
-      videoRef.current.currentTime = 0;
-      setProgress(0);
-      videoRef.current.play().then(() => {
-        setIsPlaying(true);
-      }).catch(() => {
-        setIsPlaying(false);
-      });
-    }
-  }, [activeIndex, activeVideoSrc]);
+    const feedEl = scrollFeedRef.current;
+    if (!feedEl || reels.length === 0) return;
 
-  // Handle video progress updates
-  const handleTimeUpdate = () => {
-    if (videoRef.current && videoRef.current.duration) {
-      const pct = (videoRef.current.currentTime / videoRef.current.duration) * 100;
-      setProgress(pct);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+            const idxAttr = entry.target.getAttribute('data-reel-index');
+            if (idxAttr !== null) {
+              const parsed = parseInt(idxAttr, 10);
+              if (!Number.isNaN(parsed)) {
+                setActiveIndex((prev) => (prev !== parsed ? parsed : prev));
+              }
+            }
+          }
+        }
+      },
+      {
+        root: feedEl,
+        threshold: [0.6, 0.85],
+      }
+    );
+
+    Object.values(slideRefs.current).forEach((el) => {
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, [reels.length]);
+
+  // Attach playback session & HLS stream to the active reel's <video>
+  useEffect(() => {
+    let cancelled = false;
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+    setIsReelHlsActive(false);
+
+    const videoEl = activeVideoElRef.current;
+    if (!videoEl || !activeReel) return;
+
+    videoEl.dataset.fallbackApplied = 'false';
+    videoEl.currentTime = 0;
+    videoEl.playbackRate = playbackSpeed;
+    setProgress(0);
+
+    const attachReelHls = async (hlsManifestUrl: string, fallbackUrl?: string | null) => {
+      if (Hls.isSupported()) {
+        const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+        if (cancelled) return;
+        const hls = new Hls({
+          enableWorker: true,
+          capLevelToPlayerSize: true,
+          xhrSetup: (xhr) => {
+            if (idToken) xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);
+          },
+        });
+        hlsRef.current = hls;
+        setIsReelHlsActive(true);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (cancelled) return;
+          videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        });
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (!data.fatal) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+            return;
+          }
+          hls.destroy();
+          hlsRef.current = null;
+          setIsReelHlsActive(false);
+          if (fallbackUrl) setResolvedReelSrc(fallbackUrl);
+        });
+        hls.loadSource(hlsManifestUrl);
+        hls.attachMedia(videoEl);
+        return;
+      }
+
+      if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        setResolvedReelSrc(hlsManifestUrl);
+        videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        return;
+      }
+
+      if (fallbackUrl) {
+        setResolvedReelSrc(fallbackUrl);
+      }
+    };
+
+    const usesCloudPlayback =
+      Boolean(activeReel.sourceObjectPath) ||
+      Boolean(activeReel.hlsManifestUrl && activeReel.hlsManifestUrl.startsWith('/api/stream/hls/')) ||
+      Boolean(activeReel.videoUrl && activeReel.videoUrl.startsWith('/api/media/object/')) ||
+      activeReel.visibility === 'private';
+
+    if (usesCloudPlayback) {
+      fetchPlaybackSession(activeReel.id)
+        .then((session) => {
+          if (cancelled) return;
+          if (session.hlsUrl) {
+            return attachReelHls(session.hlsUrl, session.fallbackUrl);
+          }
+          if (session.fallbackUrl) {
+            setResolvedReelSrc(session.fallbackUrl);
+            videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setResolvedReelSrc(activeVideoSrc);
+        });
+    } else {
+      setResolvedReelSrc(activeVideoSrc);
+      videoEl
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
+    }
+
+    return () => {
+      cancelled = true;
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [activeIndex, activeReel?.id, activeVideoSrc]);
+
+  // Keep playbackRate synchronized when user adjusts speed
+  useEffect(() => {
+    if (activeVideoElRef.current) {
+      activeVideoElRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed]);
+
+  const handleTimeUpdate = (reelId: string, e: React.SyntheticEvent<HTMLVideoElement>) => {
+    if (reelId !== activeReel?.id) return;
+    const vid = e.currentTarget;
+    if (vid.duration) {
+      setProgress((vid.currentTime / vid.duration) * 100);
     }
   };
 
   const handleNextReel = useCallback(() => {
-    if (activeIndex < reels.length - 1) {
-      setActiveIndex((prev) => prev + 1);
-    } else {
-      setActiveIndex(0); // loop back
-    }
-  }, [activeIndex, reels.length]);
+    scrollToReel(activeIndex + 1);
+  }, [activeIndex, scrollToReel]);
 
   const handlePrevReel = useCallback(() => {
-    if (activeIndex > 0) {
-      setActiveIndex((prev) => prev - 1);
+    scrollToReel(activeIndex - 1);
+  }, [activeIndex, scrollToReel]);
+
+  const togglePlayPause = useCallback(() => {
+    const vid = activeVideoElRef.current;
+    if (!vid) return;
+    if (vid.paused) {
+      vid.play().catch(() => {});
+      setIsPlaying(true);
+      setPlayIndicator('play');
     } else {
-      setActiveIndex(reels.length - 1); // loop to end
+      vid.pause();
+      setIsPlaying(false);
+      setPlayIndicator('pause');
     }
-  }, [activeIndex, reels.length]);
+    setTimeout(() => setPlayIndicator(null), 550);
+  }, []);
 
   // Keyboard navigation
   useEffect(() => {
@@ -194,6 +385,16 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
       }
 
       if (e.key === 'Escape') {
+        if (moreMenuOpen) {
+          e.preventDefault();
+          setMoreMenuOpen(false);
+          return;
+        }
+        if (descriptionOpen) {
+          e.preventDefault();
+          setDescriptionOpen(false);
+          return;
+        }
         if (commentsOpen) {
           e.preventDefault();
           setCommentsOpen(false);
@@ -204,9 +405,14 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
           setViewMode('feed');
           return;
         }
+        if (clearScreen) {
+          e.preventDefault();
+          setClearScreen(false);
+          return;
+        }
       }
 
-      if (commentsOpen || viewMode === 'series') return;
+      if (commentsOpen || viewMode === 'series' || moreMenuOpen || descriptionOpen) return;
 
       if (e.key === 'ArrowDown' || e.key === 'j') {
         e.preventDefault();
@@ -225,65 +431,12 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleNextReel, handlePrevReel, commentsOpen, viewMode]);
-
-  const togglePlayPause = () => {
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
-      setPlayIndicator('play');
-    } else {
-      videoRef.current.pause();
-      setIsPlaying(false);
-      setPlayIndicator('pause');
-    }
-    setTimeout(() => setPlayIndicator(null), 600);
-  };
-
-  // Touch swipe up/down for next & previous reel on mobile
-  const handleReelTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (commentsOpen || viewMode === 'series') return;
-    if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
-      return;
-    }
-    const touch = e.touches[0];
-    if (!touch) return;
-    touchStartYRef.current = touch.clientY;
-    touchMovedRef.current = false;
-  };
-
-  const handleReelTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (touchStartYRef.current === null || commentsOpen || viewMode === 'series') return;
-    const touch = e.touches[0];
-    if (!touch) return;
-    const delta = touch.clientY - touchStartYRef.current;
-    if (Math.abs(delta) > 8) {
-      touchMovedRef.current = true;
-      setTouchOffsetY(Math.max(-120, Math.min(120, delta * 0.45)));
-    }
-  };
-
-  const handleReelTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (touchStartYRef.current === null) return;
-    const touch = e.changedTouches[0];
-    const startY = touchStartYRef.current;
-    touchStartYRef.current = null;
-    setTouchOffsetY(0);
-
-    if (!touch) return;
-    const deltaY = touch.clientY - startY;
-    if (deltaY < -55) {
-      handleNextReel();
-    } else if (deltaY > 55) {
-      handlePrevReel();
-    }
-  };
+  }, [handleNextReel, handlePrevReel, togglePlayPause, commentsOpen, viewMode, moreMenuOpen, descriptionOpen, clearScreen]);
 
   const handleWheelScroll = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (commentsOpen || viewMode === 'series') return;
+    if (commentsOpen || viewMode === 'series' || moreMenuOpen || descriptionOpen) return;
     const now = Date.now();
-    if (now - lastWheelRef.current < 480) return;
+    if (now - lastWheelRef.current < 420) return;
     if (Math.abs(e.deltaY) > 35) {
       lastWheelRef.current = now;
       if (e.deltaY > 0) handleNextReel();
@@ -291,19 +444,19 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
     }
   };
 
-  const handleVideoClick = () => {
-    if (touchMovedRef.current) {
-      touchMovedRef.current = false;
+  const handleVideoClick = (reel: ReelItem) => {
+    if (clearScreen) {
+      setClearScreen(false);
       return;
     }
     const now = Date.now();
-    const DOUBLE_TAP_DELAY = 300;
+    const DOUBLE_TAP_DELAY = 260;
     if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
-      if (!activeReel.userLiked) {
-        onToggleLikeReel(activeReel.id);
+      if (!reel.userLiked) {
+        onToggleLikeReel(reel.id);
       }
       setShowHeartAnimation(true);
-      setTimeout(() => setShowHeartAnimation(false), 900);
+      setTimeout(() => setShowHeartAnimation(false), 850);
       lastTapRef.current = 0;
     } else {
       lastTapRef.current = now;
@@ -316,7 +469,18 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
     }
   };
 
+  const handleSeekBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const vid = activeVideoElRef.current;
+    if (!vid || !vid.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    vid.currentTime = ratio * vid.duration;
+    setProgress(ratio * 100);
+  };
+
   const handleShare = async () => {
+    if (!activeReel) return;
     const url = `${window.location.origin}${window.location.pathname}?reel=${activeReel.id}`;
     if (navigator.share) {
       try {
@@ -327,7 +491,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         });
         return;
       } catch {
-        // User cancelled or share unsupported in iframe; fall back to copy
+        // Fallback to copy
       }
     }
     try {
@@ -344,12 +508,22 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         document.execCommand('copy');
         textArea.remove();
       }
-      setCopiedToast(true);
-      setTimeout(() => setCopiedToast(false), 2500);
+      showToast('Reel link copied to clipboard');
     } catch {
-      setCopiedToast(true);
-      setTimeout(() => setCopiedToast(false), 2500);
+      showToast('Reel link ready to share');
     }
+  };
+
+  const handleCycleFitMode = () => {
+    const next = fitMode === 'auto' ? 'cover' : fitMode === 'cover' ? 'contain' : 'auto';
+    setFitMode(next);
+    showToast(
+      next === 'auto'
+        ? 'Smart Fit: Auto framing enabled'
+        : next === 'cover'
+        ? 'Fill Screen: Full-bleed view'
+        : 'Fit Screen: Full frame, zero crop'
+    );
   };
 
   const handlePostComment = (e: React.FormEvent) => {
@@ -365,13 +539,22 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
     return `${num}`;
   };
 
+  const resolveObjectFitClass = (reelId: string) => {
+    if (fitMode === 'cover') return 'object-cover';
+    if (fitMode === 'contain') return 'object-contain';
+    const ratio = videoRatios[reelId];
+    // Portrait / vertical reels fill cleanly edge-to-edge; horizontal clips avoid side clipping
+    if (ratio && ratio <= 1.05) return 'object-cover';
+    return 'object-contain';
+  };
+
   if (!activeReel) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <p className="text-base font-bold text-slate-700 dark:text-slate-200">No reels found</p>
+      <div className="flex flex-col items-center justify-center h-full py-20 text-center">
+        <p className="text-base font-bold text-[var(--ink)]">No reels found</p>
         <button
           onClick={onNavigateHome}
-          className="mt-4 px-4 py-2 rounded-xl bg-red-600 text-white font-semibold text-xs"
+          className="mt-4 px-5 py-2.5 rounded-full bg-[#FF0000] text-white font-semibold text-xs"
         >
           Back to Home
         </button>
@@ -381,450 +564,739 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
 
   return (
     <div
-      ref={containerRef}
       onWheel={handleWheelScroll}
-      className="relative flex items-center justify-center min-h-[calc(100dvh-8.5rem)] sm:min-h-[calc(100vh-4.75rem)] py-2 sm:py-4 px-2 sm:px-6 bg-[var(--surface)] text-[var(--ink)] overflow-hidden select-none transition-colors"
+      className="relative flex items-center justify-center w-full h-full md:py-3 md:px-6 bg-black md:bg-[var(--bg)] text-[var(--ink)] overflow-hidden select-none transition-colors"
     >
-      {/* Toast Notification */}
-      {copiedToast && (
-        <div className="fixed top-16 z-50 rounded-xl bg-slate-900/95 text-white px-4 py-2 text-xs font-semibold shadow-xl border border-white/10 backdrop-blur-md animate-in fade-in duration-200">
-          Reel link copied to clipboard!
+      {/* Floating Toast */}
+      {toastMsg && (
+        <div className="fixed top-14 md:top-16 left-1/2 -translate-x-1/2 z-50 rounded-full bg-[#212121]/95 text-white px-4 py-2 text-xs font-semibold shadow-xl border border-white/15 backdrop-blur-md animate-in fade-in duration-150 whitespace-nowrap">
+          {toastMsg}
         </div>
       )}
 
-      {fitToast && (
-        <div className="fixed top-16 z-50 rounded-xl bg-[#212121]/95 text-white px-4 py-2 text-xs font-semibold shadow-xl border border-[#FF0000]/40 backdrop-blur-md animate-in fade-in duration-200 flex items-center gap-2">
-          <Sparkles className="h-3.5 w-3.5 text-[#FF0000]" />
-          <span>{fitToast}</span>
-        </div>
-      )}
-
-      {/* Main Reels Center Column */}
-      <div className="relative flex items-center justify-center sm:gap-7 max-w-full w-full sm:w-auto">
-        {/* Vertical Reel Container (strict 9:16 aspect ratio bounded inside viewport on every screen) */}
-        <div
-          onTouchStart={handleReelTouchStart}
-          onTouchMove={handleReelTouchMove}
-          onTouchEnd={handleReelTouchEnd}
-          style={{
-            transform: touchOffsetY !== 0 ? `translateY(${touchOffsetY}px)` : undefined,
-          }}
-          className="relative w-[min(calc(100vw-1rem),calc((100dvh-9.25rem)*9/16))] sm:w-[min(420px,calc((100dvh-6.75rem)*9/16))] max-h-[800px] aspect-[9/16] rounded-2xl sm:rounded-3xl overflow-hidden bg-black shadow-2xl border border-black/15 dark:border-white/10 flex items-center justify-center transition-transform duration-150 touch-pan-x"
-        >
-          {/* Ambient Glow Backdrop for seamless non-clipped framing */}
-          <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            <img
-              src={activeReel.poster}
-              alt=""
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover blur-2xl opacity-45 scale-125 transition-all duration-500"
-            />
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
-          </div>
-
-          {/* Main Foreground Video Element */}
-          <video
-            ref={videoRef}
-            src={activeVideoSrc}
-            poster={activeReel.poster}
-            loop
-            muted={isMuted}
-            playsInline
-            onTimeUpdate={handleTimeUpdate}
-            onClick={handleVideoClick}
-            onError={(e) => {
-              const target = e.currentTarget;
-              if (target.dataset.fallbackApplied === 'true') return;
-              if (target.src !== FALLBACK_REEL_SRC) {
-                target.dataset.fallbackApplied = 'true';
-                target.src = FALLBACK_REEL_SRC;
-                target.load();
-                target.play().catch(() => {});
-              }
-            }}
-            className={`relative z-10 w-full h-full cursor-pointer transition-all duration-300 ${
-              fitMode === 'contain' ? 'object-contain' : 'object-cover'
-            }`}
-          />
-
-          {/* Top Scrim & Controls */}
-          <div className="absolute top-0 inset-x-0 p-3 sm:p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent flex items-center justify-between gap-2 pointer-events-auto z-20">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="font-extrabold text-sm sm:text-base tracking-wide text-white drop-shadow-sm flex items-center gap-1.5 shrink-0">
-                <Sparkles className="h-4 w-4 text-red-500 fill-red-500" />
-                Reels
-              </span>
-              <div className="flex items-center gap-1 bg-white/10 backdrop-blur-md rounded-full p-0.5 border border-white/10 shrink-0">
+      {/* Main Center Reels Stage */}
+      <div className="relative flex items-center justify-center md:gap-5 w-full h-full md:w-auto">
+        {/* Vertical Scroll-Snap Shorts Viewport (Edge-to-edge on mobile, crisp 9:16 card on desktop) */}
+        <div className="relative w-full h-full md:w-auto md:h-[calc(100%-0.5rem)] md:max-h-[820px] md:aspect-[9/16] md:max-w-[calc(100vw-11rem)] md:rounded-2xl overflow-hidden bg-black md:shadow-2xl md:border md:border-[var(--ink-faint)]">
+          {/* Persistent Top Overlay Header (YouTube Shorts style) */}
+          {!clearScreen && (
+            <div className="absolute top-0 inset-x-0 z-30 px-3 pt-2.5 pb-6 bg-gradient-to-b from-black/80 via-black/35 to-transparent flex items-center justify-between gap-2 pointer-events-none">
+              <div className="flex items-center gap-1.5 min-w-0 pointer-events-auto">
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setViewMode('feed');
-                  }}
-                  className={`min-h-[30px] px-2.5 py-1 rounded-full text-[10px] font-bold transition-all ${
-                    viewMode === 'feed'
-                      ? 'bg-[#FF0000] text-white shadow-xs'
-                      : 'text-white/75 hover:text-white'
-                  }`}
+                  type="button"
+                  onClick={onNavigateHome}
+                  aria-label="Back to Home"
+                  className="flex md:hidden h-10 w-10 items-center justify-center rounded-full text-white hover:bg-white/15 active:scale-95 transition-all shrink-0"
                 >
-                  Feed
+                  <ArrowLeft className="h-5 w-5" />
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setViewMode('series');
-                  }}
-                  className={`flex items-center gap-1 min-h-[30px] px-2.5 py-1 rounded-full text-[10px] font-bold transition-all ${
-                    viewMode === 'series'
-                      ? 'bg-[#FF0000] text-white shadow-xs'
-                      : 'text-white/75 hover:text-white'
-                  }`}
-                >
-                  <Layers className="h-2.5 w-2.5" />
-                  <span>Series</span>
-                </button>
+
+                <div className="flex items-center gap-1.5 font-extrabold text-sm sm:text-base tracking-tight text-white shrink-0">
+                  <Sparkles className="h-4 w-4 text-[#FF0000] fill-[#FF0000]" />
+                  <span>Reels</span>
+                </div>
+
+                <div className="flex items-center gap-0.5 bg-white/15 backdrop-blur-md rounded-full p-0.5 ml-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('feed')}
+                    className={`min-h-[28px] px-2.5 py-0.5 rounded-full text-[11px] font-bold transition-all ${
+                      viewMode === 'feed'
+                        ? 'bg-[#FF0000] text-white'
+                        : 'text-white/80 hover:text-white'
+                    }`}
+                  >
+                    Feed
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('series')}
+                    className={`flex items-center gap-1 min-h-[28px] px-2.5 py-0.5 rounded-full text-[11px] font-bold transition-all ${
+                      viewMode === 'series'
+                        ? 'bg-[#FF0000] text-white'
+                        : 'text-white/80 hover:text-white'
+                    }`}
+                  >
+                    <Layers className="h-3 w-3" />
+                    <span>Series</span>
+                  </button>
+                </div>
               </div>
-            </div>
 
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              {onOpenUpload && (
-                <button
-                  onClick={onOpenUpload}
-                  title="Upload Reel"
-                  aria-label="Upload Reel"
-                  className="flex items-center justify-center gap-1 min-h-[36px] min-w-[36px] bg-white/20 hover:bg-white/30 text-white rounded-full px-2.5 py-1 text-xs font-bold backdrop-blur-md transition-colors"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Create</span>
-                </button>
-              )}
-              {/* Aspect Ratio Fit / Fill Toggle */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const next = fitMode === 'contain' ? 'cover' : 'contain';
-                  setFitMode(next);
-                  setFitToast(
-                    next === 'contain'
-                      ? 'Fit Screen: full frame, zero clipping'
-                      : 'Fill Screen: immersive full bleed'
-                  );
-                  setTimeout(() => setFitToast(null), 2500);
-                }}
-                title={fitMode === 'contain' ? 'Current: Fit Screen (No clipping) • Click to Fill' : 'Current: Fill Screen • Click to Fit'}
-                aria-label="Toggle video aspect fit"
-                className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full backdrop-blur-md transition-all active:scale-95 ${
-                  fitMode === 'contain'
-                    ? 'bg-[#FF0000]/90 text-white shadow-md shadow-red-600/30 ring-1 ring-white/20'
-                    : 'bg-black/40 text-white/90 hover:bg-black/60'
-                }`}
-              >
-                {fitMode === 'contain' ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsMuted(!isMuted);
-                }}
-                aria-label={isMuted ? 'Unmute' : 'Mute'}
-                className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 backdrop-blur-md transition-all active:scale-95"
-              >
-                {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Center Play/Pause indicator flash */}
-          {playIndicator && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 animate-in zoom-in-50 fade-out duration-500">
-              <div className="h-16 w-16 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white shadow-xl">
-                {playIndicator === 'play' ? (
-                  <Play className="h-8 w-8 fill-white ml-1" />
-                ) : (
-                  <Pause className="h-8 w-8 fill-white" />
+              <div className="flex items-center gap-1 shrink-0 pointer-events-auto">
+                {onOpenUpload && (
+                  <button
+                    type="button"
+                    onClick={onOpenUpload}
+                    title="Upload Reel"
+                    aria-label="Upload Reel"
+                    className="flex items-center justify-center gap-1 h-10 min-w-[40px] px-2.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-bold backdrop-blur-md transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span className="hidden sm:inline">Create</span>
+                  </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsMuted((prev) => !prev)}
+                  aria-label={isMuted ? 'Unmute' : 'Mute'}
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-black/35 hover:bg-black/55 text-white backdrop-blur-md transition-all active:scale-95"
+                >
+                  {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMoreMenuOpen(true)}
+                  aria-label="More options"
+                  title="More options"
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-black/35 hover:bg-black/55 text-white backdrop-blur-md transition-all active:scale-95"
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </button>
               </div>
             </div>
           )}
 
-          {/* Heart burst animation on double tap */}
-          {showHeartAnimation && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 animate-in zoom-in-75 fade-out duration-700">
-              <Heart className="h-24 w-24 text-red-500 fill-red-500 drop-shadow-2xl scale-125 transition-transform" />
-            </div>
-          )}
+          {/* Smooth Vertical Snap Feed Track */}
+          <div
+            ref={scrollFeedRef}
+            className="h-full w-full overflow-y-auto snap-y snap-mandatory no-scrollbar overscroll-y-contain"
+          >
+            {reels.map((reel, idx) => {
+              const isActive = idx === activeIndex;
+              const isNear = Math.abs(idx - activeIndex) <= 1;
+              const slideChannel = channels[reel.channelId];
+              const slideFollowing = slideChannel?.isSubscribed ?? false;
+              const slideComments = commentsMap[reel.id] || [];
+              const slideVideoSrc = isActive
+                ? isReelHlsActive
+                  ? undefined
+                  : resolvedReelSrc || sanitizePlayableVideoUrl(reel.videoUrl, reel.id, 'reel', false)
+                : sanitizePlayableVideoUrl(reel.videoUrl, reel.id, 'reel', false);
 
-          {/* Bottom Scrim & Info Overlay (Right-padded on mobile so right action rail never overlaps text or Follow button) */}
-          <div className="absolute bottom-0 inset-x-0 p-3.5 sm:p-4 pb-3.5 sm:pb-4 pr-[4.75rem] sm:pr-4 bg-gradient-to-t from-black/95 via-black/65 to-transparent pointer-events-auto z-20 space-y-1.5 sm:space-y-2">
-            {/* Channel info with Follow / Following button */}
-            <div className="flex items-center justify-between gap-2">
-              <div
-                onClick={() => activeChannel && onSelectChannel(activeChannel.id)}
-                className="flex items-center gap-2.5 cursor-pointer min-w-0 group"
-              >
-                <div className="relative shrink-0">
-                  <img
-                    src={activeChannel?.avatar || activeReel.poster}
-                    alt={activeChannel?.name || 'Creator'}
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      const target = e.currentTarget as HTMLImageElement;
-                      const fallback = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
-                      if (target.src !== fallback) target.src = fallback;
-                    }}
-                    className="h-9 w-9 rounded-full object-cover ring-2 ring-white/60 group-hover:ring-[#FF0000] transition-all shrink-0"
-                  />
-                  {!isFollowing && (
+              return (
+                <div
+                  key={reel.id}
+                  data-reel-index={idx}
+                  ref={(el) => {
+                    slideRefs.current[idx] = el;
+                  }}
+                  className="relative w-full h-full snap-start snap-always shrink-0 overflow-hidden bg-black flex items-center justify-center"
+                >
+                  {/* Ambient Soft Glow Layer (eliminates harsh letterbox black bars) */}
+                  <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                    <img
+                      src={reel.poster || FALLBACK_POSTER}
+                      alt=""
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover blur-3xl opacity-60 scale-125"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-black/15 to-black/55" />
+                  </div>
+
+                  {/* Render active/adjacent <video> for fluid transitions */}
+                  {isNear ? (
+                    <video
+                      ref={isActive ? activeVideoElRef : undefined}
+                      src={slideVideoSrc}
+                      poster={reel.poster || FALLBACK_POSTER}
+                      loop
+                      muted={isActive ? isMuted : true}
+                      playsInline
+                      preload={isActive ? 'auto' : 'metadata'}
+                      onLoadedMetadata={(e) => {
+                        const vw = e.currentTarget.videoWidth;
+                        const vh = e.currentTarget.videoHeight;
+                        if (vw > 0 && vh > 0) {
+                          setVideoRatios((prev) => ({
+                            ...prev,
+                            [reel.id]: vw / vh,
+                          }));
+                        }
+                      }}
+                      onTimeUpdate={(e) => handleTimeUpdate(reel.id, e)}
+                      onClick={() => handleVideoClick(reel)}
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (target.dataset.fallbackApplied === 'true') return;
+                        if (target.src !== FALLBACK_REEL_SRC) {
+                          target.dataset.fallbackApplied = 'true';
+                          target.src = FALLBACK_REEL_SRC;
+                          target.load();
+                          if (isActive) target.play().catch(() => {});
+                        }
+                      }}
+                      className={`relative z-10 w-full h-full cursor-pointer transition-all duration-200 ${resolveObjectFitClass(
+                        reel.id
+                      )}`}
+                    />
+                  ) : (
+                    <img
+                      src={reel.poster || FALLBACK_POSTER}
+                      alt={reel.title}
+                      referrerPolicy="no-referrer"
+                      className="relative z-10 w-full h-full object-cover"
+                    />
+                  )}
+
+                  {/* Center Play/Pause Flash */}
+                  {isActive && playIndicator && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 animate-in zoom-in-50 fade-out duration-500">
+                      <div className="h-16 w-16 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white shadow-xl">
+                        {playIndicator === 'play' ? (
+                          <Play className="h-8 w-8 fill-white ml-1" />
+                        ) : (
+                          <Pause className="h-8 w-8 fill-white" />
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Double-tap Heart Animation */}
+                  {isActive && showHeartAnimation && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 animate-in zoom-in-75 fade-out duration-700">
+                      <Heart className="h-24 w-24 text-[#FF0000] fill-[#FF0000] drop-shadow-2xl scale-125 transition-transform" />
+                    </div>
+                  )}
+
+                  {/* Clear Screen Restore Pill */}
+                  {isActive && clearScreen && (
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (activeChannel) onToggleFollow(activeChannel.id);
+                        setClearScreen(false);
                       }}
-                      title="Follow channel"
-                      aria-label="Quick follow channel"
-                      className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#FF0000] text-white shadow-sm ring-1 ring-black"
+                      className="absolute bottom-5 right-4 z-40 flex items-center gap-1.5 rounded-full bg-black/65 px-3.5 py-2 text-xs font-semibold text-white backdrop-blur-md border border-white/20 hover:bg-black/80"
                     >
-                      <Plus className="h-3 w-3 stroke-[3]" />
+                      <Eye className="h-3.5 w-3.5" />
+                      <span>Show controls</span>
                     </button>
                   )}
+
+                  {/* Bottom-Left Creator & Title Overlay (clean YouTube Shorts spacing, zero collision with right rail) */}
+                  {!clearScreen && (
+                    <div className="absolute bottom-0 inset-x-0 px-3.5 sm:px-4 pt-16 pb-4 pr-[4.5rem] md:pr-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none z-20 space-y-2">
+                      <div className="flex items-center gap-2 pointer-events-auto min-w-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (slideChannel) onSelectChannel(slideChannel.id);
+                          }}
+                          className="flex items-center gap-2 min-w-0 group text-left"
+                        >
+                          <img
+                            src={slideChannel?.avatar || reel.poster || FALLBACK_AVATAR}
+                            alt={slideChannel?.name || 'Creator'}
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              if (e.currentTarget.src !== FALLBACK_AVATAR) {
+                                e.currentTarget.src = FALLBACK_AVATAR;
+                              }
+                            }}
+                            className="h-9 w-9 rounded-full object-cover ring-1 ring-white/50 shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1">
+                              <span className="font-bold text-sm text-white truncate drop-shadow-sm group-hover:underline">
+                                {slideChannel?.handle || slideChannel?.name || '@creator'}
+                              </span>
+                              {slideChannel?.verified && (
+                                <CheckCircle2 className="h-3.5 w-3.5 text-white/90 shrink-0" />
+                              )}
+                            </div>
+                          </div>
+                        </button>
+
+                        {slideChannel && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleFollow(slideChannel.id);
+                            }}
+                            className={`min-h-[32px] rounded-full px-3.5 py-1 text-xs font-bold transition-all shrink-0 active:scale-95 ${
+                              slideFollowing
+                                ? 'bg-white/20 text-white border border-white/25 hover:bg-white/30 backdrop-blur-md'
+                                : 'bg-white text-black hover:bg-white/90 shadow-sm'
+                            }`}
+                          >
+                            {slideFollowing ? 'Following' : 'Follow'}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Tappable Title -> Opens Description Sheet */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDescriptionOpen(true);
+                        }}
+                        className="pointer-events-auto block w-full text-left text-white drop-shadow-sm"
+                      >
+                        <p className="font-semibold text-[13px] sm:text-sm text-white/95 line-clamp-2 leading-snug">
+                          {reel.title}
+                        </p>
+                      </button>
+
+                      {/* Audio Track Line */}
+                      <div className="flex items-center gap-1.5 text-white/85 text-[11px] font-medium min-w-0">
+                        <Music className="h-3 w-3 text-white/90 shrink-0" />
+                        <span className="truncate">{reel.audioTrack}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mobile Inside-Right Action Rail (YouTube Shorts ergonomic bottom-right stack) */}
+                  {!clearScreen && (
+                    <div className="md:hidden absolute right-2.5 bottom-4 z-30 flex flex-col items-center gap-3">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleLikeReel(reel.id);
+                          }}
+                          aria-label={reel.userLiked ? 'Unlike' : 'Like'}
+                          className={`flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-md transition-all active:scale-90 ${
+                            reel.userLiked
+                              ? 'bg-[#FF0000] text-white shadow-lg shadow-red-600/30'
+                              : 'bg-black/45 text-white'
+                          }`}
+                        >
+                          <Heart className={`h-5 w-5 ${reel.userLiked ? 'fill-white' : ''}`} />
+                        </button>
+                        <span className="text-[11px] font-semibold text-white tabular-nums drop-shadow">
+                          {formatReelLikes(reel.likes)}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCommentsOpen(true);
+                          }}
+                          aria-label="Comments"
+                          className="flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-md transition-all active:scale-90"
+                        >
+                          <MessageCircle className="h-5 w-5" />
+                        </button>
+                        <span className="text-[11px] font-semibold text-white tabular-nums drop-shadow">
+                          {formatReelLikes(Math.max(reel.commentsCount || 0, slideComments.length))}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleSaveReel(reel.id);
+                          }}
+                          aria-label={reel.userSaved ? 'Saved' : 'Save'}
+                          className={`flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-md transition-all active:scale-90 ${
+                            reel.userSaved
+                              ? 'bg-amber-400 text-[#0c0c0e]'
+                              : 'bg-black/45 text-white'
+                          }`}
+                        >
+                          <Bookmark className={`h-5 w-5 ${reel.userSaved ? 'fill-[#0c0c0e]' : ''}`} />
+                        </button>
+                        <span className="text-[11px] font-semibold text-white drop-shadow">
+                          {reel.userSaved ? 'Saved' : 'Save'}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleShare();
+                          }}
+                          aria-label="Share reel"
+                          className="flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-md transition-all active:scale-90"
+                        >
+                          <Share2 className="h-5 w-5" />
+                        </button>
+                        <span className="text-[11px] font-semibold text-white drop-shadow">
+                          Share
+                        </span>
+                      </div>
+
+                      {/* Spinning Audio Disc */}
+                      <div
+                        className={`h-9 w-9 rounded-lg bg-[#181818] border border-white/30 flex items-center justify-center overflow-hidden ${
+                          isActive && isPlaying ? 'animate-spin' : ''
+                        }`}
+                        style={{ animationDuration: '5s' }}
+                      >
+                        <Disc className="h-4 w-4 text-white" />
+                      </div>
+                    </div>
+                  )}
                 </div>
-
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-sm text-white truncate drop-shadow-sm group-hover:underline">
-                      {activeChannel?.name || 'Creator'}
-                    </span>
-                    {activeChannel?.verified && (
-                      <CheckCircle2 className="h-3.5 w-3.5 text-sky-400 fill-sky-400/20 shrink-0" />
-                    )}
-                  </div>
-                  <span className="text-[11px] text-white/75 block truncate">
-                    {activeChannel?.handle || '@creator'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Prominent Follow / Following Button */}
-              {activeChannel && (
-                <button
-                  onClick={() => onToggleFollow(activeChannel.id)}
-                  className={`min-h-[36px] rounded-full px-3.5 py-1.5 text-xs font-bold transition-all shrink-0 active:scale-95 ${
-                    isFollowing
-                      ? 'bg-white/20 text-white border border-white/30 hover:bg-white/30 backdrop-blur-md'
-                      : 'bg-[#FF0000] text-white hover:bg-[#CC0000] shadow-md'
-                  }`}
-                >
-                  {isFollowing ? 'Following' : 'Follow'}
-                </button>
-              )}
-            </div>
-
-            {/* Reel Title & Caption */}
-            <div className="text-white text-xs leading-relaxed drop-shadow-sm">
-              <p className="font-semibold text-white/95 line-clamp-2">
-                {activeReel.title}
-              </p>
-              <p className="text-white/80 text-[11px] mt-0.5 line-clamp-2">
-                {activeReel.description}
-              </p>
-            </div>
-
-            {/* Audio Track Tag with Spinning Vinyl */}
-            <div className="flex items-center justify-between pt-0.5 gap-2">
-              <div className="flex items-center gap-2 text-white/80 text-[11px] font-medium min-w-0 truncate">
-                <Music className="h-3.5 w-3.5 text-white/90 shrink-0 animate-pulse" />
-                <span className="truncate">
-                  {activeReel.audioTrack}
-                </span>
-              </div>
-
-              {/* Spinning Disc */}
-              <div className={`h-7 w-7 rounded-full bg-slate-900 border border-white/30 flex items-center justify-center shrink-0 ${isPlaying ? 'animate-spin' : ''}`} style={{ animationDuration: '4s' }}>
-                <Disc className="h-4 w-4 text-white" />
-              </div>
-            </div>
+              );
+            })}
           </div>
 
-          {/* Thin Progress Bar at bottom */}
-          <div className="absolute bottom-0 inset-x-0 h-1 bg-white/20 z-30">
+          {/* Seekable Progress Bar Flush at Bottom */}
+          {!clearScreen && (
             <div
-              className="h-full bg-[#FF0000] transition-all duration-100"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-
-          {/* Mobile Inside-Right Action Rail (Keeps Like, Comment, Save, Share strictly inside 9:16 bounds on mobile) */}
-          <div className="sm:hidden absolute right-2 bottom-14 z-30 flex flex-col items-center gap-2.5">
-            {/* Like Button */}
-            <div className="flex flex-col items-center gap-0.5">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleLikeReel(activeReel.id);
-                }}
-                aria-label={activeReel.userLiked ? 'Unlike' : 'Like'}
-                className={`flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-md transition-all active:scale-90 shadow-lg ${
-                  activeReel.userLiked
-                    ? 'bg-[#FF0000] text-white scale-105'
-                    : 'bg-black/45 text-white border border-white/20'
-                }`}
-              >
-                <Heart className={`h-5 w-5 ${activeReel.userLiked ? 'fill-white' : ''}`} />
-              </button>
-              <span className="text-[10px] font-mono font-bold text-white tabular-nums drop-shadow">
-                {formatReelLikes(activeReel.likes)}
-              </span>
+              onClick={handleSeekBarClick}
+              title="Click to seek"
+              className="absolute bottom-0 inset-x-0 h-2.5 flex items-end cursor-pointer z-30 group"
+            >
+              <div className="w-full h-[3px] group-hover:h-1.5 bg-white/25 transition-all">
+                <div
+                  className="h-full bg-[#FF0000] transition-all duration-100"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
             </div>
-
-            {/* Comments Button */}
-            <div className="flex flex-col items-center gap-0.5">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCommentsOpen(true);
-                }}
-                aria-label="Comments"
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white border border-white/20 backdrop-blur-md transition-all active:scale-90 shadow-lg"
-              >
-                <MessageCircle className="h-5 w-5" />
-              </button>
-              <span className="text-[10px] font-mono font-bold text-white tabular-nums drop-shadow">
-                {activeComments.length || activeReel.commentsCount}
-              </span>
-            </div>
-
-            {/* Save Button */}
-            <div className="flex flex-col items-center gap-0.5">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleSaveReel(activeReel.id);
-                }}
-                aria-label={activeReel.userSaved ? 'Saved' : 'Save'}
-                className={`flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-md transition-all active:scale-90 shadow-lg ${
-                  activeReel.userSaved
-                    ? 'bg-amber-400 text-[#0c0c0e]'
-                    : 'bg-black/45 text-white border border-white/20'
-                }`}
-              >
-                <Bookmark className={`h-5 w-5 ${activeReel.userSaved ? 'fill-[#0c0c0e]' : ''}`} />
-              </button>
-              <span className="text-[10px] font-mono font-bold text-white drop-shadow">
-                {activeReel.userSaved ? 'Saved' : 'Save'}
-              </span>
-            </div>
-
-            {/* Share Button */}
-            <div className="flex flex-col items-center gap-0.5">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleShare();
-                }}
-                aria-label="Share reel"
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white border border-white/20 backdrop-blur-md transition-all active:scale-90 shadow-lg"
-              >
-                <Share2 className="h-5 w-5" />
-              </button>
-              <span className="text-[10px] font-mono font-bold text-white drop-shadow">
-                Share
-              </span>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* Desktop Side Action Rail (Design Variation 2 Architectural Buttons) */}
-        <div className="hidden sm:flex flex-col items-center gap-5 pb-4 z-30">
-          {/* Like Button */}
-          <div className="flex flex-col items-center gap-1.5">
+        {/* Desktop Side Action Rail (md+ screens) */}
+        <div className="hidden md:flex flex-col items-center gap-4 pb-2 z-30">
+          <div className="flex flex-col items-center gap-1">
             <button
+              type="button"
               onClick={() => onToggleLikeReel(activeReel.id)}
               aria-label={activeReel.userLiked ? 'Unlike' : 'Like'}
-              className={`flex h-12 w-12 items-center justify-center rounded-[4px] border transition-all active:scale-90 ${
+              className={`flex h-12 w-12 items-center justify-center rounded-full border transition-all active:scale-90 ${
                 activeReel.userLiked
-                  ? 'bg-[#FF0000] text-white border-[#FF0000] scale-105 shadow-[0_0_20px_rgba(255,0,0,0.3)]'
-                  : 'bg-[var(--bg)] text-[var(--ink)] border-[var(--ink-faint)] hover:border-[var(--ink)] hover:scale-105'
+                  ? 'bg-[#FF0000] text-white border-[#FF0000] shadow-lg shadow-red-600/25'
+                  : 'bg-[var(--surface)] text-[var(--ink)] border-[var(--ink-faint)] hover:bg-[var(--card-hover)]'
               }`}
             >
-              <Heart
-                className={`h-5 w-5 transition-transform ${
-                  activeReel.userLiked ? 'fill-white scale-110' : ''
-                }`}
-              />
+              <Heart className={`h-5 w-5 ${activeReel.userLiked ? 'fill-white' : ''}`} />
             </button>
-            <span className="font-mono text-[11px] font-medium text-[var(--ink)]/80 tabular-nums">
+            <span className="text-xs font-semibold text-[var(--ink-medium)] tabular-nums">
               {formatReelLikes(activeReel.likes)}
             </span>
           </div>
 
-          {/* Comments Button */}
-          <div className="flex flex-col items-center gap-1.5">
+          <div className="flex flex-col items-center gap-1">
             <button
+              type="button"
               onClick={() => setCommentsOpen(true)}
               aria-label="Comments"
-              className="flex h-12 w-12 items-center justify-center rounded-[4px] bg-[var(--bg)] text-[var(--ink)] border border-[var(--ink-faint)] hover:border-[var(--ink)] hover:scale-105 transition-all active:scale-90"
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--ink-faint)] hover:bg-[var(--card-hover)] transition-all active:scale-90"
             >
               <MessageCircle className="h-5 w-5" />
             </button>
-            <span className="font-mono text-[11px] font-medium text-[var(--ink)]/80 tabular-nums">
-              {activeComments.length || activeReel.commentsCount}
+            <span className="text-xs font-semibold text-[var(--ink-medium)] tabular-nums">
+              {formatReelLikes(Math.max(activeReel.commentsCount || 0, activeComments.length))}
             </span>
           </div>
 
-          {/* Bookmark / Save Button */}
-          <div className="flex flex-col items-center gap-1.5">
+          <div className="flex flex-col items-center gap-1">
             <button
+              type="button"
               onClick={() => onToggleSaveReel(activeReel.id)}
               aria-label={activeReel.userSaved ? 'Saved' : 'Save'}
-              className={`flex h-12 w-12 items-center justify-center rounded-[4px] border transition-all active:scale-90 ${
+              className={`flex h-12 w-12 items-center justify-center rounded-full border transition-all active:scale-90 ${
                 activeReel.userSaved
-                  ? 'bg-[var(--ink)] text-[var(--bg)] border-transparent scale-105'
-                  : 'bg-[var(--bg)] text-[var(--ink)] border-[var(--ink-faint)] hover:border-[var(--ink)] hover:scale-105'
+                  ? 'bg-[var(--ink)] text-[var(--bg)] border-transparent'
+                  : 'bg-[var(--surface)] text-[var(--ink)] border-[var(--ink-faint)] hover:bg-[var(--card-hover)]'
               }`}
             >
-              <Bookmark
-                className={`h-5 w-5 ${
-                  activeReel.userSaved ? 'fill-current' : ''
-                }`}
-              />
+              <Bookmark className={`h-5 w-5 ${activeReel.userSaved ? 'fill-current' : ''}`} />
             </button>
-            <span className="font-mono text-[11px] font-medium text-[var(--ink)]/80">
+            <span className="text-xs font-semibold text-[var(--ink-medium)]">
               {activeReel.userSaved ? 'Saved' : 'Save'}
             </span>
           </div>
 
-          {/* Share Button */}
-          <div className="flex flex-col items-center gap-1.5">
+          <div className="flex flex-col items-center gap-1">
             <button
+              type="button"
               onClick={handleShare}
               aria-label="Share reel"
-              className="flex h-12 w-12 items-center justify-center rounded-[4px] bg-[var(--bg)] text-[var(--ink)] border border-[var(--ink-faint)] hover:border-[var(--ink)] hover:scale-105 transition-all active:scale-90"
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--ink-faint)] hover:bg-[var(--card-hover)] transition-all active:scale-90"
             >
               <Share2 className="h-5 w-5" />
             </button>
-            <span className="font-mono text-[11px] font-medium text-[var(--ink)]/80">
-              Share
-            </span>
+            <span className="text-xs font-semibold text-[var(--ink-medium)]">Share</span>
           </div>
 
-          {/* Desktop Navigation Up / Down Arrows */}
-          <div className="flex flex-col gap-2 mt-1 pt-3 border-t border-[var(--ink-faint)]">
+          <button
+            type="button"
+            onClick={() => setMoreMenuOpen(true)}
+            aria-label="More options"
+            title="More options"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--ink-faint)] hover:bg-[var(--card-hover)] transition-all"
+          >
+            <MoreVertical className="h-5 w-5" />
+          </button>
+
+          {/* Desktop Up/Down Navigation */}
+          <div className="flex flex-col gap-2 pt-2 border-t border-[var(--ink-faint)]">
             <button
+              type="button"
               onClick={handlePrevReel}
               title="Previous Reel (Up Arrow)"
-              className="flex h-10 w-10 items-center justify-center rounded-[4px] bg-[var(--bg)] text-[var(--ink)] border border-[var(--ink-faint)] hover:border-[var(--ink)] transition-all"
+              aria-label="Previous Reel"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--ink-faint)] hover:bg-[var(--card-hover)] transition-all"
             >
               <ChevronUp className="h-5 w-5" />
             </button>
             <button
+              type="button"
               onClick={handleNextReel}
               title="Next Reel (Down Arrow)"
-              className="flex h-10 w-10 items-center justify-center rounded-[4px] bg-[var(--bg)] text-[var(--ink)] border border-[var(--ink-faint)] hover:border-[var(--ink)] transition-all"
+              aria-label="Next Reel"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--surface)] text-[var(--ink)] border border-[var(--ink-faint)] hover:bg-[var(--card-hover)] transition-all"
             >
               <ChevronDown className="h-5 w-5" />
             </button>
           </div>
         </div>
       </div>
+
+      {/* YOUTUBE SHORTS 3-DOT MORE ACTION SHEET */}
+      {moreMenuOpen && (
+        <div
+          onClick={() => setMoreMenuOpen(false)}
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl bg-[var(--surface-elevated)] text-[var(--ink)] border border-[var(--ink-faint)] p-2 pb-5 sm:pb-3 shadow-2xl animate-in slide-in-from-bottom duration-200"
+          >
+            <div className="w-10 h-1 rounded-full bg-[var(--ink-medium)]/30 mx-auto my-2 sm:hidden" />
+
+            <div className="space-y-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  setDescriptionOpen(true);
+                }}
+                className="flex w-full items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors"
+              >
+                <AlignLeft className="h-5 w-5 text-[var(--ink)]" />
+                <span>Description</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  setClearScreen((prev) => !prev);
+                }}
+                className="flex w-full items-center justify-between px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors"
+              >
+                <div className="flex items-center gap-4">
+                  <EyeOff className="h-5 w-5 text-[var(--ink)]" />
+                  <span>Clear screen</span>
+                </div>
+                {clearScreen && <Check className="h-4 w-4 text-[#FF0000]" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleCycleFitMode();
+                  setMoreMenuOpen(false);
+                }}
+                className="flex w-full items-center justify-between px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors"
+              >
+                <div className="flex items-center gap-4">
+                  {fitMode === 'cover' ? (
+                    <Maximize2 className="h-5 w-5 text-[var(--ink)]" />
+                  ) : (
+                    <Minimize2 className="h-5 w-5 text-[var(--ink)]" />
+                  )}
+                  <span>Screen framing</span>
+                </div>
+                <span className="text-xs text-[var(--ink-medium)] capitalize">
+                  {fitMode === 'auto' ? 'Auto' : fitMode === 'contain' ? 'Fit (No crop)' : 'Fill'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const speeds = [0.5, 1, 1.25, 1.5, 2];
+                  const next = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
+                  setPlaybackSpeed(next);
+                  showToast(`Playback speed: ${next}x`);
+                }}
+                className="flex w-full items-center justify-between px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors"
+              >
+                <div className="flex items-center gap-4">
+                  <Gauge className="h-5 w-5 text-[var(--ink)]" />
+                  <span>Playback speed</span>
+                </div>
+                <span className="text-xs font-mono text-[var(--ink-medium)]">{playbackSpeed}x</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  handleShare();
+                }}
+                className="flex w-full items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors"
+              >
+                <Share2 className="h-5 w-5 text-[var(--ink)]" />
+                <span>Share</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  setReportModalMode('report');
+                }}
+                className="flex w-full items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors cursor-pointer"
+              >
+                <Flag className="h-5 w-5 text-[var(--ink)]" />
+                <span>Report</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  setReportModalMode('feedback');
+                }}
+                className="flex w-full items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors cursor-pointer"
+              >
+                <MessageSquarePlus className="h-5 w-5 text-[var(--ink)]" />
+                <span>Send feedback</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* YOUTUBE SHORTS DESCRIPTION BOTTOM SHEET */}
+      {descriptionOpen && (
+        <div
+          onClick={() => setDescriptionOpen(false)}
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-md max-h-[75vh] rounded-t-3xl sm:rounded-3xl bg-[var(--surface-elevated)] text-[var(--ink)] border border-[var(--ink-faint)] shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-200"
+          >
+            <div className="w-10 h-1 rounded-full bg-[var(--ink-medium)]/30 mx-auto mt-2.5 sm:hidden" />
+
+            {/* Sheet Header */}
+            <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-[var(--ink-faint)]">
+              <h3 className="text-base sm:text-lg font-bold text-[var(--ink)] leading-snug">
+                {activeReel.title}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setDescriptionOpen(false)}
+                aria-label="Close description"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--ink-medium)] hover:text-[var(--ink)] hover:bg-[var(--card-hover)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {/* Creator Info */}
+              {activeChannel && (
+                <div className="flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDescriptionOpen(false);
+                      onSelectChannel(activeChannel.id);
+                    }}
+                    className="flex items-center gap-2.5 min-w-0 text-left"
+                  >
+                    <img
+                      src={activeChannel.avatar || FALLBACK_AVATAR}
+                      alt={activeChannel.name}
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        if (e.currentTarget.src !== FALLBACK_AVATAR) {
+                          e.currentTarget.src = FALLBACK_AVATAR;
+                        }
+                      }}
+                      className="h-9 w-9 rounded-full object-cover shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="font-bold text-sm text-[var(--ink)] truncate">
+                          {activeChannel.name}
+                        </span>
+                        {activeChannel.verified && (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-[var(--accent-ink)] shrink-0" />
+                        )}
+                      </div>
+                      <span className="text-xs text-[var(--ink-medium)] truncate block">
+                        {activeChannel.handle}
+                      </span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onToggleFollow(activeChannel.id)}
+                    className={`min-h-[36px] rounded-full px-4 py-1.5 text-xs font-bold shrink-0 transition-all ${
+                      isFollowing
+                        ? 'bg-[var(--card-hover)] text-[var(--ink)]'
+                        : 'bg-[#FF0000] text-white hover:bg-[#CC0000]'
+                    }`}
+                  >
+                    {isFollowing ? 'Following' : 'Follow'}
+                  </button>
+                </div>
+              )}
+
+              {/* 3-Column Metrics Row (YouTube Shorts style) */}
+              <div className="grid grid-cols-3 gap-3 text-center py-2">
+                <div>
+                  <div className="text-lg font-extrabold text-[var(--ink)] tabular-nums">
+                    {formatReelLikes(activeReel.likes)}
+                  </div>
+                  <div className="text-xs text-[var(--ink-medium)]">Likes</div>
+                </div>
+                <div>
+                  <div className="text-lg font-extrabold text-[var(--ink)] tabular-nums">
+                    {formatViews(activeReel.views).replace(' views', '')}
+                  </div>
+                  <div className="text-xs text-[var(--ink-medium)]">Views</div>
+                </div>
+                <div>
+                  <div className="text-lg font-extrabold text-[var(--ink)]">
+                    {activeReel.createdAt || '2026'}
+                  </div>
+                  <div className="text-xs text-[var(--ink-medium)]">Published</div>
+                </div>
+              </div>
+
+              {/* Description Text Card */}
+              <div className="rounded-2xl bg-[var(--surface)] border border-[var(--ink-faint)] p-4 text-sm text-[var(--ink)] leading-relaxed space-y-3">
+                <p>{activeReel.description}</p>
+                {activeReel.tags && activeReel.tags.length > 0 && (
+                  <p className="text-xs text-[var(--accent-ink)] font-medium">
+                    {activeReel.tags.map((t) => `#${t.replace(/\s+/g, '')}`).join(' ')}
+                  </p>
+                )}
+                <div className="pt-2 border-t border-[var(--ink-faint)] flex items-center gap-2 text-xs text-[var(--ink-medium)]">
+                  <Music className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{activeReel.audioTrack}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* COMMENTS MODAL / DRAWER */}
       {commentsOpen && (
@@ -836,12 +1308,11 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
             className="w-full sm:max-w-md h-[70vh] sm:h-[580px] bg-[var(--surface)] text-[var(--ink)] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-[var(--ink-faint)] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-200"
             onClick={(e) => e.stopPropagation()}
           >
+            <div className="w-10 h-1 rounded-full bg-[var(--ink-medium)]/30 mx-auto mt-2.5 sm:hidden" />
             {/* Drawer Header */}
             <div className="flex items-center justify-between p-4 border-b border-[var(--ink-faint)]">
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-[var(--ink)] text-sm">
-                  Comments
-                </h3>
+                <h3 className="font-bold text-[var(--ink)] text-sm">Comments</h3>
                 <span className="text-xs text-[var(--ink-medium)] tabular-nums">
                   ({activeComments.length})
                 </span>
@@ -871,16 +1342,15 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                       alt={comment.authorName}
                       referrerPolicy="no-referrer"
                       onError={(e) => {
-                        const fallback = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
-                        if (e.currentTarget.src !== fallback) e.currentTarget.src = fallback;
+                        if (e.currentTarget.src !== FALLBACK_AVATAR) {
+                          e.currentTarget.src = FALLBACK_AVATAR;
+                        }
                       }}
                       className="h-8 w-8 rounded-full object-cover shrink-0 ring-1 ring-[var(--ink-faint)]"
                     />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-[var(--ink)]">
-                          {comment.authorName}
-                        </span>
+                        <span className="font-bold text-[var(--ink)]">{comment.authorName}</span>
                         <span className="text-[10px] text-[var(--ink-medium)]">
                           {comment.timestamp}
                         </span>
@@ -896,7 +1366,9 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                             comment.userLiked ? 'text-[#FF0000] font-bold' : ''
                           }`}
                         >
-                          <Heart className={`h-3.5 w-3.5 ${comment.userLiked ? 'fill-[#FF0000]' : ''}`} />
+                          <Heart
+                            className={`h-3.5 w-3.5 ${comment.userLiked ? 'fill-[#FF0000]' : ''}`}
+                          />
                           <span className="tabular-nums">{comment.likes}</span>
                         </button>
                       </div>
@@ -931,7 +1403,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         </div>
       )}
 
-      {/* SHORTS SERIES PLAYLIST GROUPING MODAL (Grid thumbnail size 150x150 pixels) */}
+      {/* SHORTS SERIES PLAYLIST GROUPING MODAL */}
       {viewMode === 'series' && (
         <div
           onClick={() => setViewMode('feed')}
@@ -950,9 +1422,6 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                 <div>
                   <h3 className="text-base font-extrabold flex items-center gap-2 text-[var(--ink)]">
                     Shorts Series Playlists
-                    <span className="rounded-full bg-[#FF0000]/15 text-[#FF0000] text-[10px] px-2 py-0.5 font-bold">
-                      Binge Mode
-                    </span>
                   </h3>
                   <p className="text-xs text-[var(--ink-medium)]">
                     Episodic vertical playlists curated by top creators on Vio streaming.
@@ -985,19 +1454,22 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                           alt={series.creator}
                           referrerPolicy="no-referrer"
                           onError={(e) => {
-                            const fallback = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
-                            if (e.currentTarget.src !== fallback) e.currentTarget.src = fallback;
+                            if (e.currentTarget.src !== FALLBACK_AVATAR) {
+                              e.currentTarget.src = FALLBACK_AVATAR;
+                            }
                           }}
                           className="h-9 w-9 rounded-full object-cover ring-2 ring-[#FF0000]/30"
                         />
                         <div>
                           <h4 className="font-bold text-sm text-[var(--ink)] flex flex-wrap items-center gap-2">
                             {series.title}
-                            <span className="text-[10px] rounded-md bg-[var(--surface)] border border-[var(--ink-faint)] text-[var(--ink-medium)] px-1.5 py-0.5 font-mono">
-                              {seriesReels.length} Episodes
+                            <span className="text-xs text-[var(--ink-medium)] font-normal">
+                              · {seriesReels.length} Episodes
                             </span>
                           </h4>
-                          <p className="text-[11px] text-[var(--ink-medium)]">{series.description}</p>
+                          <p className="text-[11px] text-[var(--ink-medium)]">
+                            {series.description}
+                          </p>
                         </div>
                       </div>
 
@@ -1005,7 +1477,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                         type="button"
                         onClick={() => {
                           const firstIdx = reels.findIndex((r) => series.reelIds.includes(r.id));
-                          if (firstIdx !== -1) setActiveIndex(firstIdx);
+                          if (firstIdx !== -1) scrollToReel(firstIdx, true);
                           setViewMode('feed');
                         }}
                         className="flex items-center justify-center gap-1.5 min-h-[38px] px-3.5 py-1.5 rounded-full bg-[#FF0000] hover:bg-[#CC0000] text-white text-xs font-bold transition-all shadow-md shadow-[#FF0000]/25 shrink-0 self-start sm:self-auto cursor-pointer"
@@ -1015,26 +1487,27 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                       </button>
                     </div>
 
-                    {/* Responsive Playlist Grouping Grid */}
-                    <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-none pt-1">
+                    {/* Horizontal Playlist Strip */}
+                    <div className="flex items-center gap-3 overflow-x-auto pb-2 no-scrollbar pt-1">
                       {seriesReels.map((reel, epIndex) => (
                         <div
                           key={reel.id}
                           onClick={() => {
                             const idx = reels.findIndex((r) => r.id === reel.id);
-                            if (idx !== -1) setActiveIndex(idx);
+                            if (idx !== -1) scrollToReel(idx, true);
                             setViewMode('feed');
                           }}
                           className="group relative cursor-pointer shrink-0 transition-transform hover:scale-105"
                         >
-                          <div className="relative w-[132px] h-[132px] sm:w-[150px] sm:h-[150px] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10 group-hover:ring-purple-500 transition-all shadow-md">
+                          <div className="relative w-[132px] h-[132px] sm:w-[150px] sm:h-[150px] overflow-hidden rounded-2xl bg-black ring-1 ring-white/10 group-hover:ring-[#FF0000] transition-all shadow-md">
                             <img
-                              src={reel.poster}
+                              src={reel.poster || FALLBACK_POSTER}
                               alt={reel.title}
                               referrerPolicy="no-referrer"
                               onError={(e) => {
-                                const fallback = 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=400&q=80';
-                                if (e.currentTarget.src !== fallback) e.currentTarget.src = fallback;
+                                if (e.currentTarget.src !== FALLBACK_POSTER) {
+                                  e.currentTarget.src = FALLBACK_POSTER;
+                                }
                               }}
                               className="w-full h-full object-cover"
                             />
@@ -1045,7 +1518,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                             </div>
 
                             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                              <div className="h-10 w-10 rounded-full bg-purple-600 text-white flex items-center justify-center shadow-lg">
+                              <div className="h-10 w-10 rounded-full bg-[#FF0000] text-white flex items-center justify-center shadow-lg">
                                 <Play className="h-4 w-4 fill-white ml-0.5" />
                               </div>
                             </div>
@@ -1063,6 +1536,18 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Reel Report & Feedback Modal */}
+      {activeReel && (
+        <ReportModal
+          isOpen={reportModalMode !== null}
+          onClose={() => setReportModalMode(null)}
+          targetId={activeReel.id}
+          targetType="reel"
+          targetTitle={activeReel.title}
+          mode={reportModalMode || 'report'}
+        />
       )}
     </div>
   );
