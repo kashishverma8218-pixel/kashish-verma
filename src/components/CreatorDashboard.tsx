@@ -37,11 +37,9 @@ import {
   RefreshCw,
   Download,
   Activity,
-  Signal,
-  Cpu,
-  Layers
+  Clapperboard
 } from 'lucide-react';
-import { VideoItem, Channel, Comment } from '../types/video';
+import { VideoItem, ReelItem, Channel, Comment } from '../types/video';
 import { formatTime } from '../utils/formatTime';
 import { DEFAULT_PLAYABLE_VIDEO_URL, sanitizePlayableVideoUrl } from '../services/streamingService';
 import { formatViews, formatSubscribers } from '../data/mockData';
@@ -50,14 +48,23 @@ import { calculateRevenueSplit, estimateEarningsFromViews } from '../utils/reven
 import { HlsStreamingMetricsPanel } from './HlsStreamingMetricsPanel';
 import { uploadImageAsset } from '../services/firebaseDatabaseService';
 
+const FALLBACK_POSTER =
+  'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=800&q=80';
+const FALLBACK_AVATAR =
+  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80';
+
 interface CreatorDashboardProps {
   channel: Channel;
   videos: VideoItem[];
+  reels?: ReelItem[];
   comments: Record<string, Comment[]>;
   onPlayVideo: (video: VideoItem) => void;
+  onPlayReel?: (reelId: string) => void;
   onOpenUpload: () => void;
   onUpdateVideo: (video: VideoItem) => void;
   onDeleteVideo: (videoId: string) => void;
+  onUpdateReel?: (reel: ReelItem) => void;
+  onDeleteReel?: (reelId: string) => void;
   onUpdateChannel: (channel: Channel) => void;
   onDeleteComment: (videoId: string, commentId: string) => void;
 }
@@ -65,17 +72,22 @@ interface CreatorDashboardProps {
 export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   channel,
   videos,
+  reels = [],
   comments,
   onPlayVideo,
+  onPlayReel,
   onOpenUpload,
   onUpdateVideo,
   onDeleteVideo,
+  onUpdateReel,
+  onDeleteReel,
   onUpdateChannel,
   onDeleteComment,
 }) => {
   const [activeTab, setActiveTab] = useState<
     'overview' | 'content' | 'analytics' | 'hls-metrics' | 'customization' | 'comments' | 'monetization' | 'ai-editor'
   >('overview');
+  const [contentMediaType, setContentMediaType] = useState<'videos' | 'reels'>('videos');
   const [searchQuery, setSearchQuery] = useState('');
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'unlisted' | 'private'>('all');
   const [editingVideo, setEditingVideo] = useState<VideoItem | null>(null);
@@ -85,7 +97,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   // Revenue Sharing Calculator State
   const [calcEarningsInput, setCalcEarningsInput] = useState<number>(3500);
 
-  // AI Video Studio Editor State
+  // Studio Color & Framing Lab State
   const [selectedEditorVideoId, setSelectedEditorVideoId] = useState<string>(
     videos.find((v) => v.channelId === channel.id)?.id || videos[0]?.id || ''
   );
@@ -149,12 +161,24 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
     }
   };
 
-  // Channel Specific Videos
+  // Channel Specific Videos & Reels
   const channelVideos = videos.filter((v) => v.channelId === channel.id);
-  const totalViews = channelVideos.reduce((acc, v) => acc + (v.views || 0), 0);
-  const totalLikes = channelVideos.reduce((acc, v) => acc + (v.likes || 0), 0);
-  const totalDurationSec = channelVideos.reduce((acc, v) => acc + (v.duration || 0), 0);
-  const totalWatchHours = ((totalViews * 45) / 3600).toFixed(1); // estimated watch hours
+  const channelReels = reels.filter((r) => r.channelId === channel.id);
+  const totalVideoViews = channelVideos.reduce((acc, v) => acc + (v.views || 0), 0);
+  const totalReelViews = channelReels.reduce((acc, r) => acc + (r.views || 0), 0);
+  const totalViews = totalVideoViews + totalReelViews;
+  const totalLikes =
+    channelVideos.reduce((acc, v) => acc + (v.likes || 0), 0) +
+    channelReels.reduce((acc, r) => acc + (r.likes || 0), 0);
+  const totalUploadsCount = channelVideos.length + channelReels.length;
+  const avgViewsPerUpload = totalUploadsCount > 0 ? Math.round(totalViews / totalUploadsCount) : 0;
+  const likeRatePct = totalViews > 0 ? ((totalLikes / totalViews) * 100).toFixed(1) : '0.0';
+  const totalWatchHours = ((totalViews * 45) / 3600).toFixed(1);
+
+  const hlsEnabledCount = channelVideos.filter((v) => Boolean(v.hlsManifestUrl)).length;
+  const readyVideosCount = channelVideos.filter((v) => (v.transcodingStatus || 'ready') === 'ready').length;
+  const processingVideosCount = channelVideos.filter((v) => v.transcodingStatus === 'processing').length;
+  const failedVideosCount = channelVideos.filter((v) => v.transcodingStatus === 'failed').length;
 
   const latestVideo = channelVideos[0];
 
@@ -165,6 +189,15 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
       (v.description && v.description.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesVis =
       visibilityFilter === 'all' || (v.visibility || 'public') === visibilityFilter;
+    return matchesSearch && matchesVis;
+  });
+
+  const filteredReels = channelReels.filter((r) => {
+    const matchesSearch =
+      r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (r.description && r.description.toLowerCase().includes(searchQuery.toLowerCase()));
+    const matchesVis =
+      visibilityFilter === 'all' || (r.visibility || 'public') === visibilityFilter;
     return matchesSearch && matchesVis;
   });
 
@@ -205,11 +238,12 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <img
-              src={channel.avatar}
+              src={channel.avatar || FALLBACK_AVATAR}
               alt={channel.name}
               referrerPolicy="no-referrer"
               onError={(e) => {
-                e.currentTarget.style.opacity = '0.4';
+                const target = e.currentTarget;
+                if (target.src !== FALLBACK_AVATAR) target.src = FALLBACK_AVATAR;
               }}
               className="h-16 w-16 rounded-2xl object-cover ring-2 ring-[var(--ink-faint)] shadow-md shrink-0"
             />
@@ -227,7 +261,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                 <span aria-hidden="true">·</span>
                 <span>{formatSubscribers(channel.subscribersCount)}</span>
                 <span aria-hidden="true">·</span>
-                <span>{channelVideos.length} uploaded videos</span>
+                <span>{channelVideos.length} videos · {channelReels.length} reels</span>
               </div>
             </div>
           </div>
@@ -252,7 +286,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             { id: 'analytics', name: 'Channel Analytics', icon: BarChart3 },
             { id: 'hls-metrics', name: 'HLS Streaming Telemetry', icon: Activity },
             { id: 'monetization', name: 'Monetization (30/70)', icon: DollarSign },
-            { id: 'ai-editor', name: 'AI Video Studio', icon: Wand2 },
+            { id: 'ai-editor', name: 'Color & Framing Lab', icon: SlidersHorizontal },
             { id: 'comments', name: 'Comments', icon: MessageSquare },
             { id: 'customization', name: 'Branding & Customization', icon: Paintbrush },
           ].map((tab) => {
@@ -285,28 +319,27 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 shadow-xs">
               <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
                 <span>Total Views</span>
-                <Eye className="h-4 w-4 text-[#3EA6FF]" />
+                <Eye className="h-4 w-4 text-[var(--link)]" />
               </div>
               <div className="mt-2 text-2xl font-black tabular-nums text-[var(--ink)]">
                 {totalViews.toLocaleString()}
               </div>
-              <div className="mt-1 flex items-center gap-1 text-xs text-emerald-500 font-semibold">
-                <TrendingUp className="h-3.5 w-3.5" />
-                <span>+14.8% vs last 28 days</span>
+              <div className="mt-1 flex items-center gap-1 text-xs text-[var(--ink-medium)] font-semibold">
+                <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
+                <span className="tabular-nums">{avgViewsPerUpload.toLocaleString()} avg / upload</span>
               </div>
             </div>
 
             <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 shadow-xs">
               <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
-                <span>Watch Time (Hours)</span>
+                <span>Est. Watch Time</span>
                 <Clock className="h-4 w-4 text-amber-500" />
               </div>
               <div className="mt-2 text-2xl font-black tabular-nums text-[var(--ink)]">
                 {totalWatchHours} hrs
               </div>
-              <div className="mt-1 flex items-center gap-1 text-xs text-emerald-500 font-semibold">
-                <TrendingUp className="h-3.5 w-3.5" />
-                <span>+9.2% engagement</span>
+              <div className="mt-1 flex items-center gap-1 text-xs text-[var(--ink-medium)] font-semibold">
+                <span>Across {totalUploadsCount} total uploads</span>
               </div>
             </div>
 
@@ -318,9 +351,8 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               <div className="mt-2 text-2xl font-black tabular-nums text-[var(--ink)]">
                 {channel.subscribersCount.toLocaleString()}
               </div>
-              <div className="mt-1 flex items-center gap-1 text-xs text-emerald-500 font-semibold">
-                <TrendingUp className="h-3.5 w-3.5" />
-                <span>+1,240 new followers</span>
+              <div className="mt-1 flex items-center gap-1 text-xs text-[var(--ink-medium)] font-semibold truncate">
+                <span>{channel.handle}</span>
               </div>
             </div>
 
@@ -333,8 +365,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                 {totalLikes.toLocaleString()}
               </div>
               <div className="mt-1 flex items-center gap-1 text-xs text-emerald-500 font-semibold">
-                <TrendingUp className="h-3.5 w-3.5" />
-                <span>99.2% positive rating</span>
+                <span className="tabular-nums">{likeRatePct}% like-to-view rate</span>
               </div>
             </div>
           </div>
@@ -357,11 +388,12 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                     className="relative aspect-video w-full sm:w-56 shrink-0 overflow-hidden rounded-2xl bg-black cursor-pointer group"
                   >
                     <img
-                      src={latestVideo.poster}
+                      src={latestVideo.poster || FALLBACK_POSTER}
                       alt={latestVideo.title}
                       referrerPolicy="no-referrer"
                       onError={(e) => {
-                        e.currentTarget.style.opacity = '0.4';
+                        const target = e.currentTarget;
+                        if (target.src !== FALLBACK_POSTER) target.src = FALLBACK_POSTER;
                       }}
                       className="h-full w-full object-cover transition-transform group-hover:scale-105"
                     />
@@ -499,25 +531,24 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             </div>
           </div>
 
-          {/* Real-time HLS Streaming & Cloud-Transcoding Quick Monitor */}
-          <div className="rounded-3xl border border-purple-500/25 bg-[var(--surface)] p-6">
+          {/* HLS & Encoding Readiness Summary */}
+          <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-purple-600 text-white shadow-md shadow-purple-500/20">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#FF0000] text-white shadow-sm">
                   <Activity className="h-5 w-5" />
                 </div>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-sm font-bold text-[var(--ink)]">
-                      HLS Streaming & Cloud-Transcoding Performance
+                      HLS & Cloud Transcoding Readiness
                     </h3>
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Live Stream Telemetry
+                      {readyVideosCount} Ready
                     </span>
                   </div>
                   <p className="text-xs text-[var(--ink-medium)]">
-                    Real-time buffer health, rebuffering frequency, and ABR bitrates across active viewers
+                    Live encoding status derived from your {channelVideos.length} uploaded channel videos
                   </p>
                 </div>
               </div>
@@ -525,50 +556,84 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('hls-metrics')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 active:scale-95 text-white text-xs font-bold shadow-md transition-all whitespace-nowrap self-start sm:self-auto cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--ink)] text-[var(--bg)] hover:opacity-90 active:scale-95 text-xs font-bold shadow-xs transition-all whitespace-nowrap self-start sm:self-auto cursor-pointer"
               >
-                <span>Open Full HLS Studio</span>
+                <span>Open HLS Telemetry</span>
                 <ArrowUpRight className="h-3.5 w-3.5" />
               </button>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div className="p-3.5 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)]">
-                <span className="text-[11px] font-medium text-[var(--ink-medium)] block mb-0.5">Buffer Health</span>
-                <div className="text-xl font-black font-mono text-emerald-500">14.6s</div>
-                <span className="text-[10px] text-[var(--ink-medium)]">Optimal (Zero Stalls)</span>
+                <span className="text-[11px] font-medium text-[var(--ink-medium)] block mb-0.5">Ready for Playback</span>
+                <div className="text-xl font-black font-mono tabular-nums text-emerald-500">{readyVideosCount}</div>
+                <span className="text-[10px] text-[var(--ink-medium)]">Videos ready</span>
               </div>
               <div className="p-3.5 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)]">
-                <span className="text-[11px] font-medium text-[var(--ink-medium)] block mb-0.5">Rebuffer Frequency</span>
-                <div className="text-xl font-black font-mono text-[var(--ink)]">0.02</div>
-                <span className="text-[10px] text-[var(--ink-medium)]">Stalls / Stream Hour</span>
+                <span className="text-[11px] font-medium text-[var(--ink-medium)] block mb-0.5">HLS Adaptive Ladder</span>
+                <div className="text-xl font-black font-mono tabular-nums text-[var(--link)]">{hlsEnabledCount}</div>
+                <span className="text-[10px] text-[var(--ink-medium)]">ABR manifests linked</span>
               </div>
               <div className="p-3.5 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)]">
-                <span className="text-[11px] font-medium text-[var(--ink-medium)] block mb-0.5">1080p60 Bitrate</span>
-                <div className="text-xl font-black font-mono text-purple-500">6.18 Mbps</div>
-                <span className="text-[10px] text-[var(--ink-medium)]">VBR Dynamic Ladder</span>
+                <span className="text-[11px] font-medium text-[var(--ink-medium)] block mb-0.5">Processing Queue</span>
+                <div className="text-xl font-black font-mono tabular-nums text-amber-500">{processingVideosCount}</div>
+                <span className="text-[10px] text-[var(--ink-medium)]">Transcoding active</span>
               </div>
               <div className="p-3.5 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)]">
-                <span className="text-[11px] font-medium text-[var(--ink-medium)] block mb-0.5">Anycast CDN Cache</span>
-                <div className="text-xl font-black font-mono text-[#3EA6FF]">98.9%</div>
-                <span className="text-[10px] text-[var(--ink-medium)]">285 Edge Locations</span>
+                <span className="text-[11px] font-medium text-[var(--ink-medium)] block mb-0.5">Failed Jobs</span>
+                <div className={`text-xl font-black font-mono tabular-nums ${failedVideosCount > 0 ? 'text-[#FF0000]' : 'text-[var(--ink)]'}`}>
+                  {failedVideosCount}
+                </div>
+                <span className="text-[10px] text-[var(--ink-medium)]">Needs attention</span>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* TAB 2: CONTENT / VIDEO MANAGER TABLE */}
+      {/* TAB 2: CONTENT / VIDEO & REELS MANAGER TABLE */}
       {activeTab === 'content' && (
         <div className="space-y-4 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 shadow-xs">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 pb-4 border-b border-[var(--ink-faint)]">
-            <div>
-              <h2 className="text-lg font-bold text-[var(--ink)]">
-                Channel Content
-              </h2>
-              <p className="text-xs text-[var(--ink-medium)]">
-                {channelVideos.length} total videos uploaded to this channel
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--ink)]">
+                  Channel Content
+                </h2>
+                <p className="text-xs text-[var(--ink-medium)]">
+                  {channelVideos.length} videos · {channelReels.length} reels uploaded to this channel
+                </p>
+              </div>
+              <div className="inline-flex rounded-xl bg-[var(--bg)] p-1 border border-[var(--ink-faint)] self-start">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setContentMediaType('videos');
+                    setConfirmDeleteId(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                    contentMediaType === 'videos'
+                      ? 'bg-[var(--ink)] text-[var(--bg)]'
+                      : 'text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                  }`}
+                >
+                  Videos ({channelVideos.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setContentMediaType('reels');
+                    setConfirmDeleteId(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                    contentMediaType === 'reels'
+                      ? 'bg-[var(--ink)] text-[var(--bg)]'
+                      : 'text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                  }`}
+                >
+                  Reels ({channelReels.length})
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -577,7 +642,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--ink-medium)]" />
                 <input
                   type="text"
-                  placeholder="Filter videos..."
+                  placeholder={contentMediaType === 'videos' ? 'Filter videos...' : 'Filter reels...'}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full min-h-[40px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] py-1.5 pl-8 pr-3 text-base sm:text-xs text-[var(--ink)] placeholder:text-[var(--ink-medium)] focus:border-[var(--ink)] focus:outline-none"
@@ -607,8 +672,150 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             </div>
           </div>
 
-          {/* Videos Table */}
-          {filteredContent.length === 0 ? (
+          {contentMediaType === 'reels' ? (
+            filteredReels.length === 0 ? (
+              <div className="py-16 px-4 text-center">
+                <div className="h-14 w-14 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] text-[var(--ink-medium)] flex items-center justify-center mx-auto mb-3 shadow-xs">
+                  <Clapperboard className="h-7 w-7 opacity-75" />
+                </div>
+                <h4 className="text-sm font-bold text-[var(--ink)]">No Matching Reels</h4>
+                <p className="mt-1 text-xs text-[var(--ink-medium)] max-w-sm mx-auto">
+                  {channelReels.length === 0
+                    ? 'No Shorts & Reels have been published from this channel yet.'
+                    : 'No reels match your current search or visibility filter.'}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-[var(--ink-faint)] text-[var(--ink-medium)] font-bold uppercase tracking-wider text-[11px]">
+                      <th className="py-3 px-2">Reel</th>
+                      <th className="py-3 px-2">Visibility</th>
+                      <th className="py-3 px-2 text-right">Views</th>
+                      <th className="py-3 px-2 text-right">Likes</th>
+                      <th className="py-3 px-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--ink-faint)]">
+                    {filteredReels.map((reel) => {
+                      const vis = reel.visibility || 'public';
+                      const nextVis: 'public' | 'unlisted' | 'private' =
+                        vis === 'public' ? 'unlisted' : vis === 'unlisted' ? 'private' : 'public';
+                      return (
+                        <tr key={reel.id} className="group hover:bg-[var(--card-hover)] transition-colors">
+                          <td className="py-3 px-2 min-w-[260px]">
+                            <div className="flex items-center gap-3">
+                              <div
+                                onClick={() => onPlayReel?.(reel.id)}
+                                className="relative h-16 w-11 shrink-0 overflow-hidden rounded-lg bg-black cursor-pointer group/thumb"
+                              >
+                                <img
+                                  src={reel.poster || FALLBACK_POSTER}
+                                  alt={reel.title}
+                                  referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    const target = e.currentTarget;
+                                    if (target.src !== FALLBACK_POSTER) target.src = FALLBACK_POSTER;
+                                  }}
+                                  className="h-full w-full object-cover"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover/thumb:opacity-100 transition-opacity">
+                                  <Play className="h-3.5 w-3.5 fill-white text-white" />
+                                </div>
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <h4
+                                  onClick={() => onPlayReel?.(reel.id)}
+                                  className="font-bold text-[var(--ink)] hover:text-[#FF0000] transition-colors cursor-pointer line-clamp-1"
+                                >
+                                  {reel.title}
+                                </h4>
+                                <p className="text-[11px] text-[var(--ink-medium)] line-clamp-1 mt-0.5">
+                                  {reel.audioTrack || 'Original Audio'}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-2 whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => onUpdateReel?.({ ...reel, visibility: nextVis })}
+                              title="Click to cycle visibility"
+                              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold cursor-pointer ${
+                                vis === 'public'
+                                  ? 'bg-emerald-500/10 text-emerald-500'
+                                  : vis === 'unlisted'
+                                  ? 'bg-amber-500/10 text-amber-500'
+                                  : 'bg-[var(--bg)] text-[var(--ink-medium)] border border-[var(--ink-faint)]'
+                              }`}
+                            >
+                              {vis === 'public' && <Globe className="h-3 w-3" />}
+                              {vis === 'unlisted' && <EyeOff className="h-3 w-3" />}
+                              {vis === 'private' && <Lock className="h-3 w-3" />}
+                              <span className="capitalize">{vis}</span>
+                            </button>
+                          </td>
+                          <td className="py-3 px-2 text-right font-mono font-bold tabular-nums text-[var(--ink)]">
+                            {(reel.views || 0).toLocaleString()}
+                          </td>
+                          <td className="py-3 px-2 text-right font-mono font-bold tabular-nums text-[var(--ink)]">
+                            {(reel.likes || 0).toLocaleString()}
+                          </td>
+                          <td className="py-3 px-2 text-right whitespace-nowrap">
+                            {confirmDeleteId === reel.id ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onDeleteReel?.(reel.id);
+                                    setConfirmDeleteId(null);
+                                  }}
+                                  className="min-h-[34px] rounded-lg bg-[#FF0000] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#CC0000] cursor-pointer"
+                                >
+                                  Confirm Delete
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="min-h-[34px] rounded-lg border border-[var(--ink-faint)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ink)] hover:bg-[var(--card-hover)] cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => onPlayReel?.(reel.id)}
+                                  title="Play Reel"
+                                  aria-label={`Play ${reel.title}`}
+                                  className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--ink-medium)] hover:text-[#3EA6FF] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
+                                >
+                                  <Play className="h-4 w-4" />
+                                </button>
+                                {onDeleteReel && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(reel.id)}
+                                    title="Delete Reel"
+                                    aria-label={`Delete ${reel.title}`}
+                                    className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--ink-medium)] hover:text-[#FF0000] hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          ) : filteredContent.length === 0 ? (
             <div className="py-16 px-4 text-center">
               <div className="h-14 w-14 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] text-[var(--ink-medium)] flex items-center justify-center mx-auto mb-3 shadow-xs">
                 <Film className="h-7 w-7 opacity-75" />
@@ -667,11 +874,12 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                               className="relative h-14 w-24 shrink-0 overflow-hidden rounded-xl bg-black cursor-pointer group/thumb"
                             >
                               <img
-                                src={vid.poster}
+                                src={vid.poster || FALLBACK_POSTER}
                                 alt={vid.title}
                                 referrerPolicy="no-referrer"
                                 onError={(e) => {
-                                  e.currentTarget.style.opacity = '0.4';
+                                  const target = e.currentTarget;
+                                  if (target.src !== FALLBACK_POSTER) target.src = FALLBACK_POSTER;
                                 }}
                                 className="h-full w-full object-cover"
                               />
@@ -806,64 +1014,94 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         </div>
       )}
 
-      {/* TAB 3: CHANNEL ANALYTICS */}
-      {activeTab === 'analytics' && (
-        <div className="space-y-6">
-          <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 shadow-xs">
-            <h3 className="text-base font-bold text-[var(--ink)] mb-1">
-              Views Over Time (Last 7 Days)
-            </h3>
-            <p className="text-xs text-[var(--ink-medium)] mb-6">
-              Your channel got <strong className="text-[var(--ink)]">{totalViews.toLocaleString()} views</strong> in this period.
-            </p>
+      {/* TAB 3: CHANNEL ANALYTICS (Computed from real channel uploads) */}
+      {activeTab === 'analytics' && (() => {
+        const rankedUploads = [
+          ...channelVideos.map((v) => ({ id: v.id, title: v.title, views: v.views || 0, likes: v.likes || 0, kind: 'Video' })),
+          ...channelReels.map((r) => ({ id: r.id, title: r.title, views: r.views || 0, likes: r.likes || 0, kind: 'Reel' })),
+        ]
+          .sort((a, b) => b.views - a.views)
+          .slice(0, 6);
+        const maxViews = Math.max(1, ...rankedUploads.map((item) => item.views));
 
-            {/* Simulated Visual Analytics Bar Chart */}
-            <div className="flex items-end justify-between gap-2 h-44 pt-6 px-4 border-b border-[var(--ink-faint)]">
-              {[
-                { day: 'Mon', val: 45, label: '45K' },
-                { day: 'Tue', val: 62, label: '62K' },
-                { day: 'Wed', val: 85, label: '85K' },
-                { day: 'Thu', val: 74, label: '74K' },
-                { day: 'Fri', val: 110, label: '110K' },
-                { day: 'Sat', val: 140, label: '140K' },
-                { day: 'Sun', val: 165, label: '165K' },
-              ].map((item) => (
-                <div key={item.day} className="flex-1 flex flex-col items-center gap-2 group cursor-pointer">
-                  <span className="text-[10px] font-mono font-bold text-[var(--ink-medium)] opacity-0 group-hover:opacity-100 transition-opacity">
-                    {item.label}
-                  </span>
-                  <div
-                    className="w-full max-w-[48px] rounded-t-xl bg-[#FF0000] group-hover:bg-[#CC0000] transition-all shadow-xs"
-                    style={{ height: `${(item.val / 170) * 100}%` }}
-                  />
-                  <span className="text-xs font-semibold text-[var(--ink-medium)]">
-                    {item.day}
-                  </span>
+        const categoryCounts: Record<string, number> = {};
+        channelVideos.forEach((v) => {
+          const cat = v.category || 'Uncategorized';
+          categoryCounts[cat] = (categoryCounts[cat] || 0) + (v.views || 0);
+        });
+        const topCategories = Object.entries(categoryCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3);
+
+        return (
+          <div className="space-y-6">
+            <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 shadow-xs">
+              <h3 className="text-base font-bold text-[var(--ink)] mb-1">
+                Top Performing Uploads
+              </h3>
+              <p className="text-xs text-[var(--ink-medium)] mb-6">
+                Channel total: <strong className="text-[var(--ink)] tabular-nums">{totalViews.toLocaleString()} views</strong> across {channelVideos.length} videos & {channelReels.length} reels.
+              </p>
+
+              {rankedUploads.length === 0 ? (
+                <div className="py-12 text-center text-xs text-[var(--ink-medium)]">
+                  Upload videos or reels to view performance analytics.
                 </div>
-              ))}
-            </div>
+              ) : (
+                <div className="flex items-end justify-between gap-3 h-48 pt-6 px-2 sm:px-4 border-b border-[var(--ink-faint)]">
+                  {rankedUploads.map((item) => {
+                    const heightPct = Math.max(12, Math.round((item.views / maxViews) * 100));
+                    return (
+                      <div key={item.id} className="flex-1 min-w-0 flex flex-col items-center gap-2 group">
+                        <span className="text-[10px] font-mono font-bold tabular-nums text-[var(--ink)]">
+                          {formatViews(item.views).replace(' views', '')}
+                        </span>
+                        <div
+                          className="w-full max-w-[48px] rounded-t-xl bg-[#FF0000] group-hover:bg-[#CC0000] transition-all shadow-xs"
+                          style={{ height: `${heightPct}%` }}
+                          title={`${item.title}: ${item.views.toLocaleString()} views`}
+                        />
+                        <span className="text-[11px] font-semibold text-[var(--ink-medium)] truncate max-w-full text-center" title={item.title}>
+                          {item.title.slice(0, 12)}{item.title.length > 12 ? '…' : ''}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
-            {/* Traffic Sources Breakdown */}
-            <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-              <div className="rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] p-4">
-                <span className="text-[var(--ink-medium)] font-semibold block text-[11px]">Vio streaming / Global Search</span>
-                <strong className="text-lg font-bold text-[var(--ink)] tabular-nums">48.2%</strong>
-                <p className="text-[11px] text-[var(--ink-medium)] mt-0.5">Top keyword: "Blender 3D VFX"</p>
-              </div>
-              <div className="rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] p-4">
-                <span className="text-[var(--ink-medium)] font-semibold block text-[11px]">Suggested Videos</span>
-                <strong className="text-lg font-bold text-[var(--ink)] tabular-nums">34.6%</strong>
-                <p className="text-[11px] text-[var(--ink-medium)] mt-0.5">From related open movie reels</p>
-              </div>
-              <div className="rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] p-4">
-                <span className="text-[var(--ink-medium)] font-semibold block text-[11px]">Direct / External Links</span>
-                <strong className="text-lg font-bold text-[var(--ink)] tabular-nums">17.2%</strong>
-                <p className="text-[11px] text-[var(--ink-medium)] mt-0.5">Social shares & embed players</p>
+              {/* Computed Category & Engagement Breakdown */}
+              <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                <div className="rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] p-4">
+                  <span className="text-[var(--ink-medium)] font-semibold block text-[11px]">Top Category by Views</span>
+                  <strong className="text-lg font-bold text-[var(--ink)] truncate block">
+                    {topCategories[0]?.[0] || 'General'}
+                  </strong>
+                  <p className="text-[11px] text-[var(--ink-medium)] mt-0.5 tabular-nums">
+                    {(topCategories[0]?.[1] || 0).toLocaleString()} views in category
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] p-4">
+                  <span className="text-[var(--ink-medium)] font-semibold block text-[11px]">Average Engagement</span>
+                  <strong className="text-lg font-bold text-[var(--ink)] tabular-nums">{likeRatePct}%</strong>
+                  <p className="text-[11px] text-[var(--ink-medium)] mt-0.5 tabular-nums">
+                    {totalLikes.toLocaleString()} total likes across uploads
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] p-4">
+                  <span className="text-[var(--ink-medium)] font-semibold block text-[11px]">Format Split</span>
+                  <strong className="text-lg font-bold text-[var(--ink)] tabular-nums">
+                    {channelVideos.length} Videos / {channelReels.length} Reels
+                  </strong>
+                  <p className="text-[11px] text-[var(--ink-medium)] mt-0.5">
+                    {channelVideos.filter((v) => (v.visibility || 'public') === 'public').length} public videos active
+                  </p>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* TAB: REAL-TIME HLS STREAMING & CLOUD TRANSCODING TELEMETRY */}
       {activeTab === 'hls-metrics' && (
@@ -896,11 +1134,12 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                 >
                   <div className="flex items-start gap-3 min-w-0">
                     <img
-                      src={comment.authorAvatar}
+                      src={comment.authorAvatar || FALLBACK_AVATAR}
                       alt={comment.authorName}
                       referrerPolicy="no-referrer"
                       onError={(e) => {
-                        e.currentTarget.style.opacity = '0.4';
+                        const target = e.currentTarget;
+                        if (target.src !== FALLBACK_AVATAR) target.src = FALLBACK_AVATAR;
                       }}
                       className="h-9 w-9 rounded-full object-cover shrink-0 ring-1 ring-[var(--ink-faint)]"
                     />
@@ -1028,11 +1267,12 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               </div>
               <div className="flex items-center gap-3">
                 <img
-                  src={channelAvatar || channel.avatar}
+                  src={channelAvatar || channel.avatar || FALLBACK_AVATAR}
                   alt="Avatar preview"
                   referrerPolicy="no-referrer"
                   onError={(e) => {
-                    e.currentTarget.style.opacity = '0.4';
+                    const target = e.currentTarget;
+                    if (target.src !== FALLBACK_AVATAR) target.src = FALLBACK_AVATAR;
                   }}
                   className="h-12 w-12 rounded-full object-cover ring-1 ring-[var(--ink-faint)] shrink-0"
                 />
@@ -1069,13 +1309,14 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                 />
               </div>
               {(channelBanner || channel.banner) && (
-                <div className="mb-2 h-24 w-full overflow-hidden rounded-xl border border-[var(--ink-faint)] bg-black">
+                <div className="mb-2 h-24 w-full overflow-hidden rounded-xl border border-[var(--ink-faint)] bg-gradient-to-br from-[#1f1f24] via-[#141416] to-[#261111]">
                   <img
                     src={channelBanner || channel.banner}
                     alt="Channel banner preview"
                     referrerPolicy="no-referrer"
                     onError={(e) => {
-                      e.currentTarget.style.opacity = '0.35';
+                      const target = e.currentTarget;
+                      if (target.src !== FALLBACK_POSTER) target.src = FALLBACK_POSTER;
                     }}
                     className="h-full w-full object-cover"
                   />
@@ -1309,11 +1550,12 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                               <td className="p-3.5 pl-5">
                                 <div className="flex items-center gap-3">
                                   <img
-                                    src={v.poster}
+                                    src={v.poster || FALLBACK_POSTER}
                                     alt=""
                                     referrerPolicy="no-referrer"
                                     onError={(e) => {
-                                      e.currentTarget.style.opacity = '0.4';
+                                      const target = e.currentTarget;
+                                      if (target.src !== FALLBACK_POSTER) target.src = FALLBACK_POSTER;
                                     }}
                                     className="h-10 w-16 rounded-lg object-cover ring-1 ring-[var(--ink-faint)] shrink-0"
                                   />
@@ -1352,28 +1594,27 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         </div>
       )}
 
-      {/* TAB 7: AI VIDEO EDITING STUDIO (Toolbar buttons exactly 40x40 pixels with active states) */}
+      {/* TAB 7: STUDIO COLOR & FRAMING LAB (40x40px controls with live preview) */}
       {activeTab === 'ai-editor' && (
         <div className="space-y-6">
           {/* Header */}
-          <div className="rounded-3xl border border-purple-500/30 bg-gradient-to-r from-purple-950/20 via-[var(--surface)] to-transparent p-6">
+          <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-600/30">
-                  <Wand2 className="h-6 w-6" />
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FF0000] text-white shadow-md">
+                  <SlidersHorizontal className="h-6 w-6" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <h2 className="text-xl font-black text-[var(--ink)]">
-                      Vio streaming AI Video Studio
+                      Color & Framing Lab
                     </h2>
-                    <span className="rounded-full bg-purple-500/15 px-2.5 py-0.5 text-xs font-bold text-purple-400 flex items-center gap-1">
-                      <Sparkles className="h-3 w-3" />
-                      Pro Suite
+                    <span className="rounded-md bg-[#FF0000]/10 px-2.5 py-0.5 text-xs font-bold text-[#FF0000]">
+                      Studio Preview
                     </span>
                   </div>
                   <p className="text-xs text-[var(--ink-medium)] mt-0.5">
-                    Automated silence cut, speech captions, cinematic LUT color grading, audio ducking, and 9:16 Shorts reformatting.
+                    Preview color LUTs, subtitle styling, and 9:16 vertical crop framing before exporting.
                   </p>
                 </div>
               </div>
@@ -1386,7 +1627,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                   onChange={(e) => setSelectedEditorVideoId(e.target.value)}
                   className="min-h-[40px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] px-3 py-2 text-base sm:text-xs font-bold text-[var(--ink)] focus:outline-none max-w-[200px] truncate"
                 >
-                  {channelVideos.map((v) => (
+                  {(channelVideos.length > 0 ? channelVideos : videos).map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.title}
                     </option>
@@ -1404,7 +1645,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             const toggleTool = (toolKey: keyof typeof aiTools) => {
               setAiTools((prev) => {
                 const next = { ...prev, [toolKey]: !prev[toolKey] };
-                setAiStatusMsg(`AI ${String(toolKey)} set to ${next[toolKey] ? 'Active' : 'Disabled'}`);
+                setAiStatusMsg(`Preset updated: ${next[toolKey] ? 'Enabled' : 'Disabled'}`);
                 setTimeout(() => setAiStatusMsg(null), 2000);
                 return next;
               });
@@ -1414,17 +1655,17 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               setIsProcessingAI(true);
               setTimeout(() => {
                 setIsProcessingAI(false);
-                setAiStatusMsg('AI rendering complete! Video enhancements applied successfully.');
+                setAiStatusMsg('Studio look & framing preset saved for this preview.');
                 setTimeout(() => setAiStatusMsg(null), 3000);
-              }, 1200);
+              }, 800);
             };
 
             return (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Left: Video Preview Canvas */}
-                <div className="lg:col-span-8 rounded-3xl border border-slate-200 bg-black p-4 shadow-xl dark:border-slate-800 flex flex-col items-center justify-center relative overflow-hidden">
+                <div className="lg:col-span-8 rounded-3xl border border-[var(--ink-faint)] bg-black p-4 shadow-xl flex flex-col items-center justify-center relative overflow-hidden">
                   <div
-                    className={`relative overflow-hidden rounded-2xl bg-slate-900 transition-all duration-300 ${
+                    className={`relative overflow-hidden rounded-2xl bg-[#181818] transition-all duration-300 ${
                       aiTools.shortsFormat
                         ? 'w-[min(280px,100%)] aspect-[9/16] max-h-[65vh]'
                         : 'w-full aspect-video max-h-[460px]'
@@ -1446,14 +1687,14 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                       }}
                       className={`w-full h-full object-cover transition-all ${
                         aiTools.lutGrade ? 'saturate-125 contrast-110 brightness-105' : ''
-                      }`}
+                      } ${aiTools.autoZoom ? 'scale-105' : ''}`}
                     />
 
-                    {/* Auto-Captions Overlay Preview */}
+                    {/* Captions Overlay Preview */}
                     {aiTools.autoCaptions && (
                       <div className="absolute bottom-12 inset-x-4 flex justify-center pointer-events-none">
                         <span className="rounded-lg bg-black/80 px-3 py-1 text-xs font-bold text-yellow-300 shadow-md backdrop-blur-xs text-center">
-                          "Transforming creative vision into high-definition reality on Vio streaming..."
+                          {currentEditVideo?.title || 'Live caption preview'}
                         </span>
                       </div>
                     )}
@@ -1461,29 +1702,29 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                     {/* Active Processing Indicator */}
                     {isProcessingAI && (
                       <div className="absolute inset-0 bg-black/70 backdrop-blur-xs flex flex-col items-center justify-center text-white gap-3 z-30 animate-in fade-in">
-                        <RefreshCw className="h-8 w-8 animate-spin text-purple-400" />
-                        <span className="text-sm font-bold">Applying AI Neural Color & Silence Cuts...</span>
+                        <RefreshCw className="h-8 w-8 animate-spin text-[#FF0000]" />
+                        <span className="text-sm font-bold">Applying color LUT & framing preset...</span>
                       </div>
                     )}
                   </div>
 
                   {/* Status Banner */}
                   {aiStatusMsg && (
-                    <div className="mt-3 px-3 py-1 rounded-full bg-purple-600/90 text-white text-xs font-semibold shadow-md animate-in fade-in">
+                    <div className="mt-3 px-3 py-1 rounded-full bg-[#FF0000] text-white text-xs font-semibold shadow-md animate-in fade-in">
                       {aiStatusMsg}
                     </div>
                   )}
                 </div>
 
-                {/* Right: Dedicated AI Toolbar (Toolbar buttons 40x40 pixels with active states) */}
+                {/* Right: Dedicated 40x40px Studio Toolbar */}
                 <div className="lg:col-span-4 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 shadow-xs space-y-5">
                   <div>
                     <h3 className="text-sm font-bold text-[var(--ink)] flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-purple-500" />
-                      AI Studio Toolbar
+                      <SlidersHorizontal className="h-4 w-4 text-[#FF0000]" />
+                      Studio Adjustments
                     </h3>
                     <p className="text-[11px] text-[var(--ink-medium)] mt-0.5">
-                      40x40px quick toggles with live preview feedback.
+                      Toggle color grade, subtitles, zoom & vertical framing live.
                     </p>
                   </div>
 
@@ -1492,50 +1733,50 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                     {[
                       {
                         key: 'autoCut' as const,
-                        name: 'Auto-Cut & Silence Remover',
-                        desc: 'Trim dead air & pauses',
+                        name: 'Trim Dead Air Markers',
+                        desc: 'Mark quiet gaps in timeline',
                         icon: Scissors,
                       },
                       {
                         key: 'autoCaptions' as const,
-                        name: 'AI Dynamic Subtitles',
-                        desc: 'Generate animated subtitles',
+                        name: 'Preview Subtitles',
+                        desc: 'Display burned-in caption bar',
                         icon: Subtitles,
                       },
                       {
                         key: 'lutGrade' as const,
-                        name: 'Cinematic Color Grading',
-                        desc: 'Kodak 4K color profile',
+                        name: 'Cinematic Color Grade',
+                        desc: 'Warm contrast & saturation LUT',
                         icon: Palette,
                       },
                       {
                         key: 'audioDucking' as const,
-                        name: 'Audio Ducking & Voice Clarity',
-                        desc: 'Suppress background noise',
+                        name: 'Voice Clarity Leveler',
+                        desc: 'Normalize vocal headroom',
                         icon: Volume2,
                       },
                       {
                         key: 'highlights' as const,
-                        name: 'AI Viral Highlights',
-                        desc: 'Extract key moments',
+                        name: 'Chapter Markers',
+                        desc: 'Highlight key timestamps',
                         icon: Sparkles,
                       },
                       {
                         key: 'shortsFormat' as const,
-                        name: '9:16 Shorts Reformatter',
-                        desc: 'Vertical crop & face tracking',
+                        name: '9:16 Vertical Framing',
+                        desc: 'Switch preview to Shorts ratio',
                         icon: Smartphone,
                       },
                       {
                         key: 'autoZoom' as const,
-                        name: 'Dynamic Motion & Zoom',
-                        desc: 'Subtle punch-in on emphasis',
+                        name: '1.05x Punch-In Crop',
+                        desc: 'Subtle tight framing zoom',
                         icon: Maximize2,
                       },
                       {
                         key: 'sfxEnhance' as const,
-                        name: 'Audio SFX Enhancer',
-                        desc: 'Crisp transients & bass',
+                        name: 'Loudness Target (-14 LUFS)',
+                        desc: 'Streaming audio normalization',
                         icon: SlidersHorizontal,
                       },
                     ].map((tool) => {
@@ -1548,18 +1789,14 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                           className="flex items-center justify-between p-2.5 rounded-2xl border border-[var(--ink-faint)] hover:bg-[var(--card-hover)] transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0 pr-2">
-                            {/* 
-                              Exact toolbar button dimension: 40x40 pixels 
-                              w-10 h-10 (40x40px) with active state styles
-                            */}
                             <button
                               type="button"
                               onClick={() => toggleTool(tool.key)}
                               title={`${tool.name} (${isActive ? 'Active' : 'Inactive'})`}
                               style={{ width: '40px', height: '40px' }}
-                              className={`w-10 h-10 w-[40px] h-[40px] rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer ${
+                              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer ${
                                 isActive
-                                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 ring-2 ring-purple-400 scale-105'
+                                  ? 'bg-[#FF0000] text-white shadow-sm'
                                   : 'bg-[var(--bg)] hover:bg-[var(--card-hover)] border border-[var(--ink-faint)] text-[var(--ink)]'
                               }`}
                             >
@@ -1574,13 +1811,12 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                             </div>
                           </div>
 
-                          {/* Active state pill */}
                           <button
                             type="button"
                             onClick={() => toggleTool(tool.key)}
                             className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition-all cursor-pointer ${
                               isActive
-                                ? 'bg-purple-500/20 text-purple-400'
+                                ? 'bg-[#FF0000]/15 text-[#FF0000]'
                                 : 'bg-[var(--bg)] text-[var(--ink-medium)] border border-[var(--ink-faint)]'
                             }`}
                           >
@@ -1591,27 +1827,27 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                     })}
                   </div>
 
-                  {/* Render & Export Action */}
+                  {/* Save & Export Action */}
                   <div className="pt-2 border-t border-[var(--ink-faint)] flex items-center gap-2">
                     <button
                       type="button"
                       onClick={handleRunRender}
                       disabled={isProcessingAI}
-                      className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-purple-600/30 hover:bg-purple-700 disabled:opacity-50 transition-all cursor-pointer"
+                      className="flex-1 min-h-[42px] flex items-center justify-center gap-2 rounded-xl bg-[#FF0000] px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-[#CC0000] disabled:opacity-50 transition-all cursor-pointer"
                     >
-                      <Sparkles className="h-4 w-4" />
-                      <span>Process & Apply AI</span>
+                      <Save className="h-4 w-4" />
+                      <span>Apply Preview Preset</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => {
-                        setAiStatusMsg('Master copy exported to Vio streaming CDN.');
+                        setAiStatusMsg('Preset saved to current studio session.');
                         setTimeout(() => setAiStatusMsg(null), 2500);
                       }}
-                      title="Export Video"
-                      aria-label="Export Video"
-                      className="p-2.5 rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] hover:bg-[var(--card-hover)] text-[var(--ink)] cursor-pointer"
+                      title="Save Preset"
+                      aria-label="Save Preset"
+                      className="min-h-[42px] min-w-[42px] flex items-center justify-center p-2.5 rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] hover:bg-[var(--card-hover)] text-[var(--ink)] cursor-pointer"
                     >
                       <Download className="h-4 w-4" />
                     </button>

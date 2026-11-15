@@ -18,7 +18,8 @@ import {
   User,
   LogOut,
   Settings,
-  UserCircle2
+  UserCircle2,
+  ListVideo
 } from 'lucide-react';
 import { Channel } from '../types/video';
 import { useAuth } from '../context/AuthContext';
@@ -33,6 +34,7 @@ export type NavigationPage =
   | 'history'
   | 'liked'
   | 'watchLater'
+  | 'playlists'
   | 'channel'
   | 'studio';
 
@@ -147,6 +149,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <Clock className="h-5 w-5 shrink-0" />
           <span>Watch later</span>
+        </button>
+
+        <button
+          onClick={() => (isMobileDrawer ? handleNav('playlists') : onNavigate('playlists'))}
+          className={navItemClass(currentPage === 'playlists')}
+        >
+          <ListVideo className="h-5 w-5 shrink-0" />
+          <span>Playlists</span>
         </button>
 
         <button
@@ -429,7 +439,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             onClick={() => onNavigate('history')}
             className={`flex flex-col items-center justify-center rounded-[10px] py-3.5 px-1 w-full text-[10px] font-medium transition-colors ${
-              currentPage === 'history' || currentPage === 'liked' || currentPage === 'watchLater'
+              currentPage === 'history' || currentPage === 'liked' || currentPage === 'watchLater' || currentPage === 'playlists'
                 ? 'text-[var(--ink)] bg-[var(--card-hover)] font-semibold'
                 : 'text-[var(--ink-medium)] hover:bg-[var(--card-hover)]/70 hover:text-[var(--ink)]'
             }`}

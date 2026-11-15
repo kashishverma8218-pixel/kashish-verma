@@ -25,11 +25,15 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
     { key: '↑ / ↓', desc: 'Increase / decrease volume by 5%' },
     { key: 'M', desc: 'Mute / Unmute audio' },
     { key: 'C', desc: 'Toggle Subtitles / Captions' },
+    { key: 'T', desc: 'Toggle Theater Mode' },
+    { key: 'I', desc: 'Minimize to Floating Miniplayer' },
     { key: 'F', desc: 'Toggle Fullscreen mode' },
     { key: 'P', desc: 'Toggle Picture-in-Picture window' },
     { key: 'S', desc: 'Capture high-res frame snapshot (PNG)' },
     { key: 'B', desc: 'Add bookmark timestamp with note' },
+    { key: '[ / ]', desc: 'Previous / Next video chapter' },
     { key: '0 – 9', desc: 'Seek to 0% through 90% of duration' },
+    { key: '?', desc: 'Show keyboard shortcuts cheat sheet' },
     { key: 'Double Click', desc: 'Double click video to fullscreen (or left/right to seek)' },
   ];
 

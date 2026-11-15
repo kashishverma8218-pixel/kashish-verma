@@ -177,8 +177,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             if (event.results[0].isFinal) {
               setTimeout(() => {
                 setVoiceSearchActive(false);
-                onSearchSubmit();
-                setMobileSearchOpen(false);
+                triggerSearch(transcript);
               }, 400);
             }
           }
@@ -206,10 +205,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     setVoiceSearchActive(true);
     setVoiceStatusText('Listening to voice sample...');
     setTimeout(() => {
-      setSearchQuery('Big Buck Bunny 4K Animation');
+      const sampleQuery = 'Big Buck Bunny 4K Animation';
       setVoiceSearchActive(false);
-      onSearchSubmit();
-      setMobileSearchOpen(false);
+      triggerSearch(sampleQuery);
     }, 1200);
   };
 

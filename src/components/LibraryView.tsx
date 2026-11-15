@@ -24,6 +24,7 @@ interface LibraryViewProps {
   onToggleVideoInPlaylist?: (playlistId: string, videoId: string) => void;
   onOpenReel?: (reelId: string) => void;
   onToggleSaveReel?: (reelId: string) => void;
+  onPlayQueue?: (title: string, videoIds: string[]) => void;
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({
@@ -45,6 +46,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onToggleVideoInPlaylist,
   onOpenReel,
   onToggleSaveReel,
+  onPlayQueue,
 }) => {
   const [activeTab, setActiveTab] = useState<LibraryTab>(initialTab);
   const [newPlaylistTitle, setNewPlaylistTitle] = useState('');
@@ -190,9 +192,21 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
       {activeTab === 'liked' && (
         <div className="space-y-4">
-          <h2 className="text-lg font-bold text-[var(--ink)] pb-2 border-b border-[var(--ink-faint)]">
-            Liked Videos
-          </h2>
+          <div className="flex items-center justify-between gap-2 pb-2 border-b border-[var(--ink-faint)]">
+            <h2 className="text-lg font-bold text-[var(--ink)]">
+              Liked Videos
+            </h2>
+            {likedVideos.length > 0 && onPlayQueue && (
+              <button
+                type="button"
+                onClick={() => onPlayQueue('Liked Videos', likedVideos.map((v) => v.id))}
+                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-full bg-[#FF0000] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#CC0000] transition-colors shrink-0 cursor-pointer"
+              >
+                <Play className="h-3.5 w-3.5 fill-white" />
+                <span>Play all</span>
+              </button>
+            )}
+          </div>
           {likedVideos.length === 0 ? (
             <div className="py-16 text-center text-[var(--ink-medium)]">
               <ThumbsUp className="h-12 w-12 mx-auto mb-2 opacity-40" />
@@ -221,9 +235,21 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
       {activeTab === 'watchLater' && (
         <div className="space-y-4">
-          <h2 className="text-lg font-bold text-[var(--ink)] pb-2 border-b border-[var(--ink-faint)]">
-            Watch Later
-          </h2>
+          <div className="flex items-center justify-between gap-2 pb-2 border-b border-[var(--ink-faint)]">
+            <h2 className="text-lg font-bold text-[var(--ink)]">
+              Watch Later
+            </h2>
+            {watchLaterVideos.length > 0 && onPlayQueue && (
+              <button
+                type="button"
+                onClick={() => onPlayQueue('Watch Later', watchLaterVideos.map((v) => v.id))}
+                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-full bg-[#FF0000] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#CC0000] transition-colors shrink-0 cursor-pointer"
+              >
+                <Play className="h-3.5 w-3.5 fill-white" />
+                <span>Play all</span>
+              </button>
+            )}
+          </div>
           {watchLaterVideos.length === 0 ? (
             <div className="py-16 text-center text-[var(--ink-medium)]">
               <Clock className="h-12 w-12 mx-auto mb-2 opacity-40" />
@@ -361,10 +387,20 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               {/* Selected Playlist Videos */}
               {selectedPlaylist && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <h3 className="text-base font-bold text-[var(--ink)]">
                       {selectedPlaylist.title} ({selectedPlaylistVideos.length})
                     </h3>
+                    {selectedPlaylistVideos.length > 0 && onPlayQueue && (
+                      <button
+                        type="button"
+                        onClick={() => onPlayQueue(selectedPlaylist.title, selectedPlaylistVideos.map((v) => v.id))}
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-full bg-[#FF0000] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#CC0000] transition-colors shrink-0 cursor-pointer"
+                      >
+                        <Play className="h-3.5 w-3.5 fill-white" />
+                        <span>Play all</span>
+                      </button>
+                    )}
                   </div>
 
                   {selectedPlaylistVideos.length === 0 ? (

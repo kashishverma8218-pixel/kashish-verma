@@ -40,6 +40,8 @@ export interface Comment {
   likes: number;
   userLiked: boolean;
   userDisliked?: boolean;
+  isPinned?: boolean;
+  isEdited?: boolean;
   replies?: CommentReply[];
 }
 
@@ -56,6 +58,8 @@ export interface PlaylistItem {
 
 export interface VideoItem {
   id: string;
+  ownerId?: string;
+  userId?: string;
   title: string;
   description: string;
   url: string;

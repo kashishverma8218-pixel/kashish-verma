@@ -250,6 +250,8 @@ export function subscribeVideos(
 
         vids.push({
           id: d.id,
+          ownerId: data.ownerId,
+          userId: data.userId,
           title: data.title || 'Untitled',
           description: data.description || '',
           url: videoUrl,
@@ -358,6 +360,8 @@ export async function fetchMoreVideos(
 
     vids.push({
       id: d.id,
+      ownerId: data.ownerId,
+      userId: data.userId,
       title: data.title || 'Untitled',
       description: data.description || '',
       url: videoUrl,
@@ -695,6 +699,8 @@ export function subscribeComments(
           createdAt: getCreatedAtMillis(data.createdAt),
           likes: data.likes || 0,
           userLiked: false,
+          isPinned: Boolean(data.isPinned),
+          isEdited: Boolean(data.isEdited),
         });
       });
       comms.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -754,6 +760,41 @@ export async function toggleCommentLikeDoc(commentId: string, nextLiked: boolean
   }
 }
 
+export async function updateCommentContentDoc(commentId: string, content: string): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    await updateDoc(doc(db, COLLECTIONS.COMMENTS, commentId), {
+      content,
+      text: content,
+      isEdited: true,
+    });
+  } catch (error) {
+    console.warn(`Could not update comment ${commentId}:`, error);
+  }
+}
+
+export async function pinCommentDoc(commentId: string, isPinned: boolean): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    await updateDoc(doc(db, COLLECTIONS.COMMENTS, commentId), {
+      isPinned,
+    });
+  } catch (error) {
+    console.warn(`Could not persist pin state for comment ${commentId}:`, error);
+  }
+}
+
+export async function incrementCommentRepliesDoc(commentId: string): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    await updateDoc(doc(db, COLLECTIONS.COMMENTS, commentId), {
+      repliesCount: increment(1),
+    });
+  } catch (error) {
+    console.warn(`Could not increment repliesCount for comment ${commentId}:`, error);
+  }
+}
+
 export async function deleteCommentDoc(commentId: string): Promise<void> {
   if (!auth.currentUser?.uid) return;
   try {
@@ -784,20 +825,23 @@ export async function toggleLike(
     const likeRef = doc(db, COLLECTIONS.LIKES, likeId);
     const existingSnap = await getDoc(likeRef);
     if (existingSnap.exists()) {
-      // Remove like
-      await deleteDoc(likeRef);
-      if (targetType === 'video') {
-        await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
-          likes: increment(-1),
-        }).catch(() => {});
-      } else if (targetType === 'reel') {
-        await updateDoc(doc(db, COLLECTIONS.REELS, targetId), {
-          likes: increment(-1),
-        }).catch(() => {});
+      const prevType = existingSnap.data()?.type === 'dislike' ? 'dislike' : 'like';
+      if (prevType === type) {
+        // Toggle off existing reaction
+        await deleteDoc(likeRef);
+        if (targetType === 'video') {
+          await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
+            [type === 'like' ? 'likes' : 'dislikes']: increment(-1),
+          }).catch(() => {});
+        } else if (targetType === 'reel' && type === 'like') {
+          await updateDoc(doc(db, COLLECTIONS.REELS, targetId), {
+            likes: increment(-1),
+          }).catch(() => {});
+        }
+        return false;
       }
-      return false;
-    } else {
-      // Add like
+
+      // Switch reaction between 'like' <-> 'dislike'
       await setDoc(likeRef, {
         id: likeId,
         userId: authUid,
@@ -808,9 +852,26 @@ export async function toggleLike(
       });
       if (targetType === 'video') {
         await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
-          likes: increment(1),
+          likes: increment(type === 'like' ? 1 : -1),
+          dislikes: increment(type === 'dislike' ? 1 : -1),
         }).catch(() => {});
-      } else if (targetType === 'reel') {
+      }
+      return true;
+    } else {
+      // Create new reaction
+      await setDoc(likeRef, {
+        id: likeId,
+        userId: authUid,
+        targetId,
+        targetType,
+        type,
+        createdAt: Date.now(),
+      });
+      if (targetType === 'video') {
+        await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
+          [type === 'like' ? 'likes' : 'dislikes']: increment(1),
+        }).catch(() => {});
+      } else if (targetType === 'reel' && type === 'like') {
         await updateDoc(doc(db, COLLECTIONS.REELS, targetId), {
           likes: increment(1),
         }).catch(() => {});
@@ -822,19 +883,32 @@ export async function toggleLike(
   }
 }
 
-export async function fetchUserLikes(userId: string): Promise<Set<string>> {
+export async function fetchUserReactions(
+  userId: string
+): Promise<{ likes: Set<string>; dislikes: Set<string> }> {
   const path = `${COLLECTIONS.LIKES}?userId=${userId}`;
   try {
     const q = query(collection(db, COLLECTIONS.LIKES), where('userId', '==', userId));
     const snap = await getDocs(q);
-    const set = new Set<string>();
+    const likes = new Set<string>();
+    const dislikes = new Set<string>();
     snap.forEach((d) => {
-      set.add(d.data().targetId);
+      const data = d.data();
+      if (data.type === 'dislike') {
+        dislikes.add(data.targetId);
+      } else {
+        likes.add(data.targetId);
+      }
     });
-    return set;
+    return { likes, dislikes };
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
+}
+
+export async function fetchUserLikes(userId: string): Promise<Set<string>> {
+  const { likes } = await fetchUserReactions(userId);
+  return likes;
 }
 
 // ----------------------------------------------------
@@ -958,13 +1032,22 @@ export function subscribeNotifications(
 }
 
 export async function markNotificationAsRead(notificationId: string): Promise<void> {
-  const path = `${COLLECTIONS.NOTIFICATIONS}/${notificationId}`;
+  if (!auth.currentUser?.uid) return;
   try {
     await updateDoc(doc(db, COLLECTIONS.NOTIFICATIONS, notificationId), {
       read: true,
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn(`Could not mark notification ${notificationId} as read:`, error);
+  }
+}
+
+export async function deleteNotificationDoc(notificationId: string): Promise<void> {
+  if (!auth.currentUser?.uid) return;
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.NOTIFICATIONS, notificationId));
+  } catch (error) {
+    console.warn(`Could not delete notification ${notificationId}:`, error);
   }
 }
 
@@ -1057,6 +1140,31 @@ export async function fetchWatchHistory(userId: string): Promise<any[]> {
     return results;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function removeWatchHistoryDoc(userId: string, videoId: string): Promise<void> {
+  if (!auth.currentUser?.uid || auth.currentUser.uid !== userId) return;
+  const historyId = `${userId}_${videoId}`;
+  try {
+    await deleteDoc(doc(db, COLLECTIONS.WATCH_HISTORY, historyId));
+  } catch (error) {
+    console.warn(`Could not delete watch history entry ${historyId}:`, error);
+  }
+}
+
+export async function clearWatchHistoryDocs(userId: string): Promise<void> {
+  if (!auth.currentUser?.uid || auth.currentUser.uid !== userId) return;
+  try {
+    const q = query(
+      collection(db, COLLECTIONS.WATCH_HISTORY),
+      where('userId', '==', userId),
+      limit(100)
+    );
+    const snap = await getDocs(q);
+    await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+  } catch (error) {
+    console.warn('Could not clear watch history in Firestore:', error);
   }
 }
 

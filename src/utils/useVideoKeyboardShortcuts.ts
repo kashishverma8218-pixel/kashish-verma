@@ -10,6 +10,10 @@ export interface VideoKeyboardShortcutsOptions {
   takeSnapshot?: () => void;
   handleAddBookmark?: () => void;
   toggleSubtitles?: () => void;
+  toggleTheater?: () => void;
+  toggleMiniplayer?: () => void;
+  togglePiP?: () => void;
+  onOpenShortcuts?: () => void;
   onNextChapter?: () => void;
   onPrevChapter?: () => void;
   toggleChapters?: () => void;
@@ -22,12 +26,18 @@ export interface VideoKeyboardShortcutsOptions {
  * Custom hook to handle comprehensive keyboard shortcuts for video player controls:
  * - Spacebar or 'k': Play / Pause
  * - 'f': Toggle Fullscreen
+ * - 't': Toggle Theater Mode
+ * - 'i': Toggle Miniplayer
+ * - 'p': Toggle Picture-in-Picture
  * - ArrowLeft / ArrowRight: Seek backward / forward 5s
  * - 'j' / 'l': Seek backward / forward 10s
  * - ArrowUp / ArrowDown: Volume up / down 5%
  * - 'm': Mute / Unmute
+ * - 'c': Toggle Subtitles / Captions
  * - 's': Capture snapshot / screenshot
  * - 'b': Add timestamp bookmark
+ * - '[' / ']': Previous / Next chapter
+ * - '?': Open keyboard shortcuts sheet
  * - Number keys 0-9: Jump to 0% - 90%
  */
 export function useVideoKeyboardShortcuts({
@@ -40,6 +50,10 @@ export function useVideoKeyboardShortcuts({
   takeSnapshot,
   handleAddBookmark,
   toggleSubtitles,
+  toggleTheater,
+  toggleMiniplayer,
+  togglePiP,
+  onOpenShortcuts,
   onNextChapter,
   onPrevChapter,
   toggleChapters,
@@ -58,6 +72,14 @@ export function useVideoKeyboardShortcuts({
         (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
           target.isContentEditable)
       ) {
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      if (e.key === '?' && onOpenShortcuts) {
+        e.preventDefault();
+        onOpenShortcuts();
         return;
       }
 
@@ -121,6 +143,27 @@ export function useVideoKeyboardShortcuts({
           toggleFullscreen();
           break;
 
+        case 't':
+          if (toggleTheater) {
+            e.preventDefault();
+            toggleTheater();
+          }
+          break;
+
+        case 'i':
+          if (toggleMiniplayer) {
+            e.preventDefault();
+            toggleMiniplayer();
+          }
+          break;
+
+        case 'p':
+          if (togglePiP) {
+            e.preventDefault();
+            togglePiP();
+          }
+          break;
+
         case 's':
           if (takeSnapshot) {
             e.preventDefault();
@@ -182,6 +225,10 @@ export function useVideoKeyboardShortcuts({
     takeSnapshot,
     handleAddBookmark,
     toggleSubtitles,
+    toggleTheater,
+    toggleMiniplayer,
+    togglePiP,
+    onOpenShortcuts,
     onNextChapter,
     onPrevChapter,
     toggleChapters,

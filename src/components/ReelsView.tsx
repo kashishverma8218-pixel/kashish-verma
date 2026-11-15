@@ -152,7 +152,29 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
     'reel',
     false
   );
-  const activeChannel = activeReel ? channels[activeReel.channelId] : null;
+  const resolveReelChannel = useCallback(
+    (reel?: ReelItem): Channel | null => {
+      if (!reel) return null;
+      if (channels[reel.channelId]) return channels[reel.channelId];
+      const name = reel.audioArtist || 'Vio Creator';
+      return {
+        id: reel.channelId || 'channel-vio',
+        name,
+        handle: `@${name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'creator'}`,
+        avatar: reel.poster || FALLBACK_AVATAR,
+        banner: reel.poster || FALLBACK_POSTER,
+        verified: false,
+        subscribersCount: 0,
+        isSubscribed: false,
+        notificationBell: 'personalized',
+        bio: 'Creator on Vio streaming.',
+        joinedDate: 'Joined recently',
+      };
+    },
+    [channels]
+  );
+
+  const activeChannel = resolveReelChannel(activeReel);
   const isFollowing = activeChannel?.isSubscribed ?? false;
   const activeComments = activeReel ? commentsMap[activeReel.id] || [] : [];
 
@@ -667,7 +689,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
             {reels.map((reel, idx) => {
               const isActive = idx === activeIndex;
               const isNear = Math.abs(idx - activeIndex) <= 1;
-              const slideChannel = channels[reel.channelId];
+              const slideChannel = resolveReelChannel(reel);
               const slideFollowing = slideChannel?.isSubscribed ?? false;
               const slideComments = commentsMap[reel.id] || [];
               const slideVideoSrc = isActive

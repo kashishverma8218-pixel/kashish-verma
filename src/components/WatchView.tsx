@@ -17,7 +17,12 @@ import {
   ListPlus,
   Flag,
   RotateCcw,
-  Plus
+  Plus,
+  ListVideo,
+  Shuffle,
+  Repeat,
+  Play,
+  X
 } from 'lucide-react';
 import { VideoItem, Channel, Comment, VideoFilters, AspectRatioMode, Bookmark, PlaylistItem } from '../types/video';
 import { VideoPlayer } from './VideoPlayer';
@@ -67,6 +72,22 @@ interface WatchViewProps {
   onToggleVideoInPlaylist?: (playlistId: string, videoId: string) => void;
   onCreatePlaylist?: (title: string, initialVideoId?: string) => void;
   ambientMode?: boolean;
+  isTheaterMode?: boolean;
+  onToggleTheaterMode?: () => void;
+  onEnterMiniplayer?: (currentTime: number) => void;
+  onOpenShortcuts?: () => void;
+  onEditComment?: (commentId: string, content: string) => void;
+  onPinComment?: (commentId: string) => void;
+  canPinComments?: boolean;
+  activePlaylist?: {
+    title: string;
+    videos: VideoItem[];
+    shuffle: boolean;
+    loop: boolean;
+  } | null;
+  onToggleQueueShuffle?: () => void;
+  onToggleQueueLoop?: () => void;
+  onCloseQueue?: () => void;
 }
 
 export const WatchView: React.FC<WatchViewProps> = ({
@@ -108,6 +129,17 @@ export const WatchView: React.FC<WatchViewProps> = ({
   onToggleVideoInPlaylist,
   onCreatePlaylist,
   ambientMode = false,
+  isTheaterMode = false,
+  onToggleTheaterMode,
+  onEnterMiniplayer,
+  onOpenShortcuts,
+  onEditComment,
+  onPinComment,
+  canPinComments = false,
+  activePlaylist = null,
+  onToggleQueueShuffle,
+  onToggleQueueLoop,
+  onCloseQueue,
 }) => {
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [bellDropdownOpen, setBellDropdownOpen] = useState(false);
@@ -193,32 +225,72 @@ export const WatchView: React.FC<WatchViewProps> = ({
     setIsShareModalOpen(true);
   };
 
-  const nextVideo = recommendedVideos[0];
+  const queueVideos = activePlaylist?.videos || [];
+  const queueIndex = queueVideos.findIndex((v) => v.id === video.id);
+
+  let prevVideo: VideoItem | undefined = undefined;
+  let nextQueueVideo: VideoItem | undefined = undefined;
+  if (queueVideos.length > 1) {
+    if (queueIndex > 0) {
+      prevVideo = queueVideos[queueIndex - 1];
+    } else if (activePlaylist?.loop) {
+      prevVideo = queueVideos[queueVideos.length - 1];
+    }
+
+    if (activePlaylist?.shuffle) {
+      const candidates = queueVideos.filter((v) => v.id !== video.id);
+      if (candidates.length > 0) {
+        nextQueueVideo = candidates[(Math.max(0, queueIndex) + 1) % candidates.length];
+      }
+    } else if (queueIndex >= 0 && queueIndex < queueVideos.length - 1) {
+      nextQueueVideo = queueVideos[queueIndex + 1];
+    } else if (activePlaylist?.loop) {
+      nextQueueVideo = queueVideos[0];
+    } else if (queueIndex === -1) {
+      nextQueueVideo = queueVideos[0];
+    }
+  }
+
+  const nextVideo = nextQueueVideo || recommendedVideos[0];
+  const nextChannelName = nextVideo ? (channels[nextVideo.channelId]?.name || nextVideo.author) : undefined;
+
+  const playerNode = (
+    <div className="relative overflow-visible rounded-xl sm:rounded-2xl bg-black shadow-2xl">
+      <VideoPlayer
+        video={video}
+        bookmarks={bookmarks}
+        onAddBookmark={onAddBookmark}
+        onOpenFilters={onOpenFilters}
+        onOpenInfo={onOpenInfo}
+        filters={filters}
+        aspectRatio={aspectRatio}
+        setAspectRatio={setAspectRatio}
+        onNextVideo={() => nextVideo && onPlayVideo(nextVideo)}
+        onPrevVideo={() => prevVideo && onPlayVideo(prevVideo)}
+        hasNextVideo={Boolean(nextVideo && (autoplayNext || queueVideos.length > 1))}
+        hasPrevVideo={Boolean(prevVideo)}
+        externalSeekTime={seekTime}
+        onExternalSeekConsumed={() => setSeekTime(null)}
+        onTimeUpdate={handlePlayerTimeUpdate}
+        ambientMode={ambientMode}
+        isTheaterMode={isTheaterMode}
+        onToggleTheaterMode={onToggleTheaterMode}
+        onEnterMiniplayer={onEnterMiniplayer}
+        onOpenShortcuts={onOpenShortcuts}
+        nextVideo={nextVideo}
+        nextChannelName={nextChannelName}
+      />
+    </div>
+  );
 
   return (
-    <div className="mx-auto max-w-[1720px] px-3 sm:px-6 py-4">
+    <div className={`mx-auto px-3 sm:px-6 py-4 ${isTheaterMode ? 'max-w-[1840px]' : 'max-w-[1720px]'}`}>
+      {isTheaterMode && <div className="mb-6">{playerNode}</div>}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Main Column: Player, Info, Channel, Actions, Comments */}
+        {/* Main Column: Player (default mode), Info, Channel, Actions, Comments */}
         <div className="lg:col-span-8 space-y-4">
-          {/* Custom Cinema Player */}
-          <div className="relative overflow-visible rounded-xl sm:rounded-2xl bg-black shadow-2xl">
-            <VideoPlayer
-              video={video}
-              bookmarks={bookmarks}
-              onAddBookmark={onAddBookmark}
-              onOpenFilters={onOpenFilters}
-              onOpenInfo={onOpenInfo}
-              filters={filters}
-              aspectRatio={aspectRatio}
-              setAspectRatio={setAspectRatio}
-              onNextVideo={() => nextVideo && onPlayVideo(nextVideo)}
-              hasNextVideo={autoplayNext && !!nextVideo}
-              externalSeekTime={seekTime}
-              onExternalSeekConsumed={() => setSeekTime(null)}
-              onTimeUpdate={handlePlayerTimeUpdate}
-              ambientMode={ambientMode}
-            />
-          </div>
+          {!isTheaterMode && playerNode}
 
           {resumedFromSec !== null && (
             <div className="flex items-center justify-between gap-2 rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] px-3.5 py-2 text-xs">
@@ -508,6 +580,9 @@ export const WatchView: React.FC<WatchViewProps> = ({
             onLikeComment={onLikeComment}
             onDislikeComment={onDislikeComment}
             onDeleteComment={onDeleteComment}
+            onEditComment={onEditComment}
+            onPinComment={onPinComment}
+            canPinComments={canPinComments}
             onAddReply={onAddReply}
             userAvatar={userAvatar}
             currentUserId={currentUserId}
@@ -516,8 +591,115 @@ export const WatchView: React.FC<WatchViewProps> = ({
           />
         </div>
 
-        {/* Right Column: Bookmarks & Up Next / Recommended Videos */}
+        {/* Right Column: Playlist Queue, Bookmarks & Up Next / Recommended Videos */}
         <div className="lg:col-span-4 space-y-4">
+          {activePlaylist && queueVideos.length > 0 && (
+            <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] overflow-hidden">
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--ink-faint)] bg-[var(--surface-elevated)]">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <ListVideo className="h-4 w-4 text-[#FF0000] shrink-0" />
+                    <h3 className="text-sm font-bold text-[var(--ink)] truncate">
+                      {activePlaylist.title}
+                    </h3>
+                  </div>
+                  <p className="text-[11px] text-[var(--ink-medium)] tabular-nums mt-0.5">
+                    {queueIndex >= 0 ? queueIndex + 1 : 1} / {queueVideos.length} videos
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  {onToggleQueueLoop && (
+                    <button
+                      type="button"
+                      onClick={onToggleQueueLoop}
+                      title="Loop queue"
+                      aria-label="Loop playlist queue"
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                        activePlaylist.loop
+                          ? 'bg-[#FF0000]/15 text-[#FF0000]'
+                          : 'text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]'
+                      }`}
+                    >
+                      <Repeat className="h-4 w-4" />
+                    </button>
+                  )}
+                  {onToggleQueueShuffle && (
+                    <button
+                      type="button"
+                      onClick={onToggleQueueShuffle}
+                      title="Shuffle queue"
+                      aria-label="Shuffle playlist queue"
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                        activePlaylist.shuffle
+                          ? 'bg-[#FF0000]/15 text-[#FF0000]'
+                          : 'text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)]'
+                      }`}
+                    >
+                      <Shuffle className="h-4 w-4" />
+                    </button>
+                  )}
+                  {onCloseQueue && (
+                    <button
+                      type="button"
+                      onClick={onCloseQueue}
+                      title="Close queue"
+                      aria-label="Close playlist queue"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--ink-medium)] hover:bg-[var(--card-hover)] hover:text-[var(--ink)] transition-colors cursor-pointer"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="max-h-72 overflow-y-auto divide-y divide-[var(--ink-faint)]/60">
+                {queueVideos.map((qVid, idx) => {
+                  const isCurrent = qVid.id === video.id;
+                  const qCh = channels[qVid.channelId];
+                  return (
+                    <button
+                      key={`queue-${qVid.id}-${idx}`}
+                      type="button"
+                      onClick={() => onPlayVideo(qVid)}
+                      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors cursor-pointer ${
+                        isCurrent
+                          ? 'bg-[#FF0000]/10'
+                          : 'hover:bg-[var(--card-hover)]'
+                      }`}
+                    >
+                      <span className="w-5 shrink-0 text-center text-[11px] font-mono font-bold text-[var(--ink-medium)] tabular-nums">
+                        {isCurrent ? (
+                          <Play className="h-3.5 w-3.5 text-[#FF0000] fill-[#FF0000] mx-auto" />
+                        ) : (
+                          idx + 1
+                        )}
+                      </span>
+                      <div className="relative aspect-video w-20 shrink-0 overflow-hidden rounded-lg bg-black">
+                        <img
+                          src={qVid.poster}
+                          alt={qVid.title}
+                          referrerPolicy="no-referrer"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`line-clamp-2 text-xs font-semibold leading-snug ${
+                          isCurrent ? 'text-[var(--accent-ink)]' : 'text-[var(--ink)]'
+                        }`}>
+                          {qVid.title}
+                        </p>
+                        <p className="text-[10px] text-[var(--ink-medium)] truncate mt-0.5">
+                          {qCh?.name || qVid.author || 'Creator'} · {formatTime(qVid.duration)}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <BookmarksPanel
             bookmarks={bookmarks}
             currentVideoId={video.id}

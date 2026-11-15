@@ -39,7 +39,9 @@ import {
   SkipBack,
   SkipForward,
   ArrowLeft,
-  Gauge
+  Gauge,
+  RectangleHorizontal,
+  Minimize2
 } from 'lucide-react';
 import { VideoItem, Bookmark, VideoFilters, AspectRatioMode, VideoStreamQuality, VideoChapter } from '../types/video';
 import { formatTime } from '../utils/formatTime';
@@ -86,6 +88,12 @@ interface VideoPlayerProps {
   onExternalSeekConsumed?: () => void;
   onTimeUpdate?: (time: number) => void;
   ambientMode?: boolean;
+  isTheaterMode?: boolean;
+  onToggleTheaterMode?: () => void;
+  onEnterMiniplayer?: (currentTime: number) => void;
+  onOpenShortcuts?: () => void;
+  nextVideo?: VideoItem;
+  nextChannelName?: string;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -105,6 +113,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onExternalSeekConsumed,
   onTimeUpdate,
   ambientMode = false,
+  isTheaterMode = false,
+  onToggleTheaterMode,
+  onEnterMiniplayer,
+  onOpenShortcuts,
+  nextVideo,
+  nextChannelName,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -124,6 +138,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isLooping, setIsLooping] = useState<boolean>(false);
   const [showTimeRemaining, setShowTimeRemaining] = useState<boolean>(false);
+  const [upNextCountdown, setUpNextCountdown] = useState<number | null>(null);
 
   // UI Interactivity State: Never auto-hide controls permanently on mobile
   const [isCleanMode, setIsCleanMode] = useState<boolean>(false);
@@ -639,7 +654,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setFailoverIndex(0);
     setNaturalVideoHeight(0);
     setErrorMessage(null);
+    setUpNextCountdown(null);
   }, [video.id, resolvedVideoUrl]);
+
+  useEffect(() => {
+    if (upNextCountdown === null) return;
+    if (upNextCountdown <= 0) {
+      setUpNextCountdown(null);
+      if (hasNextVideo && onNextVideo) {
+        onNextVideo();
+      }
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setUpNextCountdown((prev) => (prev !== null ? prev - 1 : null));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [upNextCountdown, hasNextVideo, onNextVideo]);
 
   const handleCopyVideoLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}?v=${video.id}`;
@@ -674,20 +705,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (isFullscreen) {
       return 'w-full h-full max-h-screen';
     }
+    const maxHClass = isTheaterMode ? 'max-h-[82vh]' : 'max-h-[75vh]';
     switch (aspectRatio) {
       case '16:9':
-        return 'w-full aspect-video max-h-[75vh]';
+        return `w-full aspect-video ${maxHClass}`;
       case '4:3':
-        return 'w-full aspect-[4/3] max-h-[75vh]';
+        return `w-full aspect-[4/3] ${maxHClass}`;
       case '21:9':
-        return 'w-full aspect-[21/9] max-h-[75vh]';
+        return `w-full aspect-[21/9] ${maxHClass}`;
       case '9:16':
         return 'w-full aspect-[9/16] max-h-[80vh] max-w-sm mx-auto';
       case 'cover':
-        return 'w-full aspect-video max-h-[75vh]';
+        return `w-full aspect-video ${maxHClass}`;
       case 'auto':
       default:
-        return 'w-full aspect-video max-h-[75vh]';
+        return `w-full aspect-video ${maxHClass}`;
     }
   };
 
@@ -1025,6 +1057,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     takeSnapshot,
     handleAddBookmark: handleAddBookmarkClick,
     toggleSubtitles,
+    toggleTheater: onToggleTheaterMode,
+    toggleMiniplayer: onEnterMiniplayer
+      ? () => onEnterMiniplayer(videoRef.current?.currentTime || currentTime)
+      : undefined,
+    togglePiP,
+    onOpenShortcuts,
     onNextChapter: handleNextChapter,
     onPrevChapter: handlePrevChapter,
     toggleChapters: () => setChaptersOverlayOpen((prev) => !prev),
@@ -1417,12 +1455,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             setIsBuffering(false);
             setIsPlaying(true);
             setErrorMessage(null);
+            setUpNextCountdown(null);
           }}
           onPause={() => setIsPlaying(false)}
           onEnded={() => {
             setIsPlaying(false);
-            if (hasNextVideo && onNextVideo) {
-              onNextVideo();
+            if (hasNextVideo && onNextVideo && !isLooping) {
+              if (nextVideo) {
+                setUpNextCountdown(5);
+              } else {
+                onNextVideo();
+              }
             }
           }}
           onError={() => {
@@ -1486,6 +1529,62 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <Signal className="h-3.5 w-3.5" />
                 <span>Reconnect via CDN Edge</span>
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Autoplay Up Next 5-Second Countdown Overlay */}
+        {upNextCountdown !== null && nextVideo && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 p-4 text-white backdrop-blur-md animate-in fade-in"
+          >
+            <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#18181b]/95 p-4 shadow-2xl space-y-3">
+              <div className="flex items-center justify-between text-xs text-slate-300">
+                <span className="font-semibold uppercase tracking-wider text-slate-400">Up Next</span>
+                <span className="font-mono font-bold text-[#FF0000] tabular-nums">
+                  Playing in {upNextCountdown}s
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="relative aspect-video w-28 shrink-0 overflow-hidden rounded-lg bg-black ring-1 ring-white/15">
+                  <img
+                    src={nextVideo.poster}
+                    alt={nextVideo.title}
+                    referrerPolicy="no-referrer"
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h4 className="line-clamp-2 text-sm font-bold leading-snug text-white">
+                    {nextVideo.title}
+                  </h4>
+                  <p className="mt-0.5 text-xs text-slate-400 truncate">
+                    {nextChannelName || nextVideo.author || 'Creator'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setUpNextCountdown(null)}
+                  className="flex-1 min-h-[38px] rounded-full border border-white/20 px-4 py-2 text-xs font-semibold text-white hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUpNextCountdown(null);
+                    onNextVideo?.();
+                  }}
+                  className="flex-1 min-h-[38px] rounded-full bg-white px-4 py-2 text-xs font-bold text-black hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  Play Now
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2476,13 +2575,43 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               )}
             </div>
 
+            {/* Floating Miniplayer (I) */}
+            {onEnterMiniplayer && (
+              <button
+                type="button"
+                onClick={() => onEnterMiniplayer(videoRef.current?.currentTime || currentTime)}
+                title="Miniplayer (I)"
+                aria-label="Open Miniplayer"
+                className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <Minimize2 className="h-4 w-4" />
+              </button>
+            )}
+
+            {/* Theater Mode (T) */}
+            {onToggleTheaterMode && !isFullscreen && (
+              <button
+                type="button"
+                onClick={onToggleTheaterMode}
+                title={isTheaterMode ? 'Default view (T)' : 'Theater mode (T)'}
+                aria-label={isTheaterMode ? 'Exit Theater Mode' : 'Enter Theater Mode'}
+                className={`hidden md:flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                  isTheaterMode
+                    ? 'bg-white/20 text-white'
+                    : 'text-slate-200 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <RectangleHorizontal className="h-4 w-4" />
+              </button>
+            )}
+
             {/* Picture in Picture (Desktop / Tablet) */}
             <button
               type="button"
               onClick={togglePiP}
-              title="Miniplayer / Picture-in-Picture (P)"
+              title="Picture-in-Picture (P)"
               aria-label="Picture in Picture"
-              className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
+              className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             >
               <PictureInPicture className="h-4 w-4" />
             </button>
@@ -2493,7 +2622,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onClick={toggleFullscreen}
               title="Fullscreen (F)"
               aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             >
               {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
             </button>
