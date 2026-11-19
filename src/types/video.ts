@@ -90,7 +90,7 @@ export interface VideoItem {
   streamQualities?: VideoStreamQuality[];
   hlsManifestUrl?: string;
   backupStreams?: string[];
-  transcodingStatus?: 'ready' | 'processing' | 'failed';
+  transcodingStatus?: 'pending' | 'ready' | 'processing' | 'failed';
   sourceObjectPath?: string;
   hlsOutputPrefix?: string;
   transcoderJobName?: string;
@@ -98,6 +98,19 @@ export interface VideoItem {
   sourceWidth?: number;
   sourceHeight?: number;
   chapters?: VideoChapter[];
+  language?: string;
+  monetizationEnabled?: boolean;
+  filterStyle?: string;
+  filterPreset?: string;
+  uploaderId?: string;
+  trimStart?: number;
+  trimEnd?: number;
+  cropAspect?: 'original' | '16:9' | '9:16' | '1:1' | '4:5';
+  cropFit?: 'contain' | 'cover';
+  isMutedAudio?: boolean;
+  storagePath?: string;
+  thumbnailStoragePath?: string;
+  hashtags?: string[];
 }
 
 export interface VideoChapter {
@@ -205,6 +218,22 @@ export interface ReelItem {
   sourceObjectPath?: string;
   hlsOutputPrefix?: string;
   hlsManifestUrl?: string;
-  transcodingStatus?: 'ready' | 'processing' | 'failed';
+  transcodingStatus?: 'pending' | 'ready' | 'processing' | 'failed';
   streamQualities?: VideoStreamQuality[];
+  category?: string;
+  language?: string;
+  monetizationEnabled?: boolean;
+  filterStyle?: string;
+  filterPreset?: string;
+  ownerId?: string;
+  uploaderId?: string;
+  duration?: number;
+  trimStart?: number;
+  trimEnd?: number;
+  cropAspect?: 'original' | '16:9' | '9:16' | '1:1' | '4:5';
+  cropFit?: 'contain' | 'cover';
+  isMutedAudio?: boolean;
+  storagePath?: string;
+  thumbnailStoragePath?: string;
+  hashtags?: string[];
 }

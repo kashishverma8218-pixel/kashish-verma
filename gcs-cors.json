@@ -1,11 +1,19 @@
 [
   {
-    "origin": ["*"],
+    "origin": [
+      "https://ais-dev-fpagfhdiyq4ciosw7vjens-189487773844.asia-northeast1.run.app",
+      "https://ais-pre-fpagfhdiyq4ciosw7vjens-189487773844.asia-northeast1.run.app",
+      "https://gen-lang-client-0261415020.web.app",
+      "https://gen-lang-client-0261415020.firebaseapp.com",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000"
+    ],
     "method": ["GET", "HEAD", "PUT", "POST", "OPTIONS"],
     "responseHeader": [
       "Content-Type",
       "Content-Length",
       "Content-Range",
+      "Accept-Ranges",
       "Range",
       "X-Goog-Resumable",
       "ETag"

@@ -38,6 +38,19 @@
         "status": { "type": "string", "description": "published, draft, unlisted, archived" },
         "visibility": { "type": "string", "description": "public, unlisted, private" },
         "channelId": { "type": "string", "description": "Channel identifier" },
+        "language": { "type": "string", "description": "Spoken or primary video language" },
+        "monetizationEnabled": { "type": "boolean", "description": "Whether creator monetization is active for this video" },
+        "filterStyle": { "type": "string", "description": "CSS color/filter preset applied to video" },
+        "filterPreset": { "type": "string", "description": "Filter preset name" },
+        "uploaderId": { "type": "string", "description": "Uploader user UID" },
+        "trimStart": { "type": "number", "description": "Trim start offset in seconds" },
+        "trimEnd": { "type": "number", "description": "Trim end offset in seconds" },
+        "cropAspect": { "type": "string", "description": "Selected crop/aspect ratio framing" },
+        "cropFit": { "type": "string", "description": "contain or cover crop mode" },
+        "isMutedAudio": { "type": "boolean", "description": "Whether original audio is muted by creator" },
+        "storagePath": { "type": "string", "description": "Firebase Storage path for video file" },
+        "thumbnailStoragePath": { "type": "string", "description": "Firebase Storage path for thumbnail file" },
+        "hashtags": { "type": "string", "description": "List of hashtags" },
         "createdAt": { "type": "number", "description": "Upload timestamp" }
       },
       "required": ["id", "ownerId", "title", "url"]
@@ -62,6 +75,20 @@
         "sharesCount": { "type": "number", "description": "Share counter" },
         "status": { "type": "string", "description": "published, draft" },
         "visibility": { "type": "string", "description": "public, unlisted, private" },
+        "category": { "type": "string", "description": "Content category e.g. Gaming" },
+        "language": { "type": "string", "description": "Primary reel language" },
+        "monetizationEnabled": { "type": "boolean", "description": "Whether creator monetization is active for this reel" },
+        "filterStyle": { "type": "string", "description": "CSS color/filter preset applied to reel" },
+        "filterPreset": { "type": "string", "description": "Filter preset name" },
+        "uploaderId": { "type": "string", "description": "Uploader user UID" },
+        "trimStart": { "type": "number", "description": "Trim start offset in seconds" },
+        "trimEnd": { "type": "number", "description": "Trim end offset in seconds" },
+        "cropAspect": { "type": "string", "description": "Selected crop/aspect ratio framing" },
+        "cropFit": { "type": "string", "description": "contain or cover crop mode" },
+        "isMutedAudio": { "type": "boolean", "description": "Whether original audio is muted by creator" },
+        "storagePath": { "type": "string", "description": "Firebase Storage path for vertical reel video" },
+        "thumbnailStoragePath": { "type": "string", "description": "Firebase Storage path for cover thumbnail" },
+        "hashtags": { "type": "string", "description": "List of reel hashtags" },
         "createdAt": { "type": "number", "description": "Creation timestamp" }
       },
       "required": ["id", "ownerId", "videoUrl"]
@@ -76,10 +103,17 @@
         "targetType": { "type": "string", "description": "video or reel" },
         "userId": { "type": "string", "description": "Author UID" },
         "userName": { "type": "string", "description": "Author display name" },
+        "authorName": { "type": "string", "description": "Author display name" },
+        "authorHandle": { "type": "string", "description": "Author handle e.g. @user" },
         "userAvatar": { "type": "string", "description": "Author avatar URL" },
+        "authorAvatar": { "type": "string", "description": "Author avatar URL" },
         "text": { "type": "string", "description": "Comment text content" },
+        "content": { "type": "string", "description": "Comment text content" },
         "likes": { "type": "number", "description": "Number of likes" },
+        "dislikes": { "type": "number", "description": "Number of dislikes" },
         "repliesCount": { "type": "number", "description": "Number of replies" },
+        "isPinned": { "type": "boolean", "description": "Whether comment is pinned by creator" },
+        "isEdited": { "type": "boolean", "description": "Whether comment has been edited" },
         "createdAt": { "type": "number", "description": "Creation timestamp" }
       },
       "required": ["id", "targetId", "userId", "text"]
@@ -131,16 +165,20 @@
       "properties": {
         "id": { "type": "string", "description": "Unique notification ID" },
         "userId": { "type": "string", "description": "Recipient user UID" },
-        "actorId": { "type": "string", "description": "Triggering user UID" },
-        "actorName": { "type": "string", "description": "Triggering user name" },
-        "actorAvatar": { "type": "string", "description": "Triggering user avatar" },
-        "type": { "type": "string", "description": "subscribe, like, comment, video_upload" },
+        "senderId": { "type": "string", "description": "Authenticated sender UID" },
+        "fromUserId": { "type": "string", "description": "Authenticated sender UID alias" },
+        "type": { "type": "string", "description": "upload, reply, milestone, subscription" },
+        "title": { "type": "string", "description": "Notification title" },
         "message": { "type": "string", "description": "Notification message summary" },
-        "targetId": { "type": "string", "description": "Target video or reel ID" },
+        "avatar": { "type": "string", "description": "Sender avatar URL" },
+        "thumbnailUrl": { "type": "string", "description": "Optional video thumbnail URL" },
+        "videoId": { "type": "string", "description": "Optional target video ID" },
+        "channelId": { "type": "string", "description": "Optional target channel ID" },
         "read": { "type": "boolean", "description": "Whether notification has been viewed" },
+        "timestamp": { "type": "string", "description": "Display timestamp label" },
         "createdAt": { "type": "number", "description": "Notification timestamp" }
       },
-      "required": ["id", "userId", "type", "message"]
+      "required": ["id", "userId", "type", "title", "message", "read", "createdAt"]
     },
     "WatchHistory": {
       "title": "WatchHistory",
@@ -238,6 +276,28 @@
         "timestamp": { "type": "number", "description": "Search timestamp" }
       },
       "required": ["id", "userId", "query"]
+    },
+    "Channel": {
+      "title": "Channel",
+      "description": "Public creator channel metadata (no PII)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Channel identifier e.g. channel-{uid}" },
+        "ownerId": { "type": "string", "description": "Creator Firebase UID" },
+        "name": { "type": "string", "description": "Public channel display name" },
+        "handle": { "type": "string", "description": "Public channel @handle" },
+        "avatar": { "type": "string", "description": "Public avatar URL" },
+        "banner": { "type": "string", "description": "Public banner URL" },
+        "verified": { "type": "boolean", "description": "Verified badge status (admin-controlled)" },
+        "subscribersCount": { "type": "number", "description": "Subscriber count" },
+        "followersCount": { "type": "number", "description": "Follower count" },
+        "bio": { "type": "string", "description": "Public channel bio" },
+        "joinedDate": { "type": "string", "description": "Joined date label" },
+        "videoCount": { "type": "number", "description": "Published video count" },
+        "createdAt": { "type": "number", "description": "Creation timestamp" },
+        "updatedAt": { "type": "number", "description": "Last update timestamp" }
+      },
+      "required": ["id", "ownerId", "name", "handle", "subscribersCount", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -296,6 +356,10 @@
     "/searchHistory/{searchId}": {
       "schema": "SearchHistory",
       "description": "User search queries for personalized recommendations"
+    },
+    "/channels/{channelId}": {
+      "schema": "Channel",
+      "description": "Public creator channel metadata with owner-restricted writes and admin-controlled verification"
     }
   }
 }

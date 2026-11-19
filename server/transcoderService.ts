@@ -1,6 +1,8 @@
+import path from 'path';
 import { TranscoderServiceClient, protos } from '@google-cloud/video-transcoder';
 import { serverConfig } from './config';
 import { adminDb } from './firebaseAdmin';
+import { fetchFirestoreDocViaRest, lookupMediaRecord } from './playbackService';
 import { verifyUploadedObject } from './storageService';
 import { VideoStreamQuality } from '../src/types/video';
 
@@ -134,24 +136,41 @@ export interface TranscoderApiHealth {
   projectId: string;
   location: string;
   accessible: boolean;
+  code?: string;
   error?: string;
+  remediation?: string;
+}
+
+function isPermissionDeniedError(err: any): boolean {
+  const msg = String(err?.message || err?.details || '');
+  return err?.code === 7 || /PERMISSION_DENIED|Missing or insufficient permissions|has not been used|disabled/i.test(msg);
 }
 
 export async function checkTranscoderApiHealth(): Promise<TranscoderApiHealth> {
-  const parent = transcoderClient.locationPath(serverConfig.gcpProjectId, serverConfig.transcoderLocation);
+  const projectId = serverConfig.firebaseProjectId || serverConfig.gcpProjectId;
+  const parent = transcoderClient.locationPath(projectId, serverConfig.transcoderLocation);
   try {
-    await transcoderClient.listJobs({ parent, pageSize: 1 });
+    await transcoderClient.listJobs({ parent, pageSize: 1 }, { autoPaginate: false });
     return {
-      projectId: serverConfig.gcpProjectId,
+      projectId,
       location: serverConfig.transcoderLocation,
       accessible: true,
     };
   } catch (err: any) {
+    const msg = err?.message || 'Cloud Transcoder API is not enabled or accessible.';
+    const isDisabled = /has not been used|disabled/i.test(msg);
+    const isPerm = isPermissionDeniedError(err);
     return {
-      projectId: serverConfig.gcpProjectId,
+      projectId,
       location: serverConfig.transcoderLocation,
       accessible: false,
-      error: err?.message || 'Cloud Transcoder API is not enabled or accessible.',
+      code: isDisabled ? 'TRANSCODER_API_DISABLED' : isPerm ? 'TRANSCODER_PERMISSION_DENIED' : 'TRANSCODER_UNAVAILABLE',
+      error: msg,
+      remediation: isDisabled
+        ? `Enable transcoder.googleapis.com in project "${projectId}" when ready for paid HLS transcoding (or keep raw source playback without billing).`
+        : isPerm
+        ? `Grant Cloud Transcoder Admin/Viewer IAM on "${projectId}" to the Cloud Run service account.`
+        : undefined,
     };
   }
 }
@@ -166,33 +185,184 @@ export async function startCloudTranscodeJob(params: {
   videoId: string;
   collectionName: 'videos' | 'reels';
   ownerId: string;
+  callerIdToken?: string | null;
   sourceObjectPath: string;
   sourceWidth?: number;
   sourceHeight?: number;
+  trimStart?: number;
+  trimEnd?: number;
+  isMutedAudio?: boolean;
 }): Promise<{
   jobName: string;
   state: string;
   hlsOutputPrefix: string;
   presets: ResolutionPreset[];
 }> {
-  const { videoId, collectionName, ownerId, sourceObjectPath, sourceWidth, sourceHeight } = params;
+  const {
+    videoId,
+    collectionName,
+    ownerId,
+    callerIdToken,
+    sourceObjectPath,
+    sourceWidth,
+    sourceHeight,
+    trimStart,
+    trimEnd,
+    isMutedAudio,
+  } = params;
 
-  const expectedPrefix = `videos/${ownerId}/`;
-  if (!sourceObjectPath.startsWith(expectedPrefix)) {
-    throw Object.assign(new Error('Forbidden: source object does not belong to authenticated user.'), {
-      statusCode: 403,
+  if (
+    sourceWidth !== undefined &&
+    (!Number.isFinite(sourceWidth) || sourceWidth <= 0 || sourceWidth > 7680)
+  ) {
+    throw Object.assign(new Error('Invalid sourceWidth parameter.'), {
+      statusCode: 400,
+      code: 'INVALID_INPUT',
+    });
+  }
+  if (
+    sourceHeight !== undefined &&
+    (!Number.isFinite(sourceHeight) || sourceHeight <= 0 || sourceHeight > 7680)
+  ) {
+    throw Object.assign(new Error('Invalid sourceHeight parameter.'), {
+      statusCode: 400,
+      code: 'INVALID_INPUT',
+    });
+  }
+  if (trimStart !== undefined && (!Number.isFinite(trimStart) || trimStart < 0 || trimStart > 86400)) {
+    throw Object.assign(new Error('Invalid trimStart parameter.'), {
+      statusCode: 400,
+      code: 'INVALID_INPUT',
+    });
+  }
+  if (
+    trimEnd !== undefined &&
+    (!Number.isFinite(trimEnd) || trimEnd <= (trimStart ?? 0) || trimEnd > 86400)
+  ) {
+    throw Object.assign(new Error('Invalid trimEnd parameter.'), {
+      statusCode: 400,
+      code: 'INVALID_INPUT',
     });
   }
 
-  const objInfo = await verifyUploadedObject(sourceObjectPath);
+  const normalizedSourcePath = path.posix.normalize(sourceObjectPath).replace(/^\/+/, '');
+  const expectedPrefix = `videos/${ownerId}/`;
+  if (normalizedSourcePath.includes('..') || !normalizedSourcePath.startsWith(expectedPrefix)) {
+    throw Object.assign(new Error('Forbidden: source object does not belong to authenticated user.'), {
+      statusCode: 403,
+      code: 'FORBIDDEN',
+    });
+  }
+
+  const siblingCollection: 'videos' | 'reels' = collectionName === 'videos' ? 'reels' : 'videos';
+
+  // Require an existing Firestore document owned by ownerId (prevents orphan doc creation & cross-collection ID hijacking)
+  try {
+    const [existingDoc, siblingDoc] = await Promise.all([
+      adminDb.collection(collectionName).doc(videoId).get(),
+      adminDb.collection(siblingCollection).doc(videoId).get(),
+    ]);
+
+    if (siblingDoc.exists) {
+      const siblingOwner = siblingDoc.data()?.ownerId || siblingDoc.data()?.userId;
+      if (siblingOwner && siblingOwner !== ownerId) {
+        throw Object.assign(new Error('Forbidden: Media ID belongs to another creator.'), {
+          statusCode: 403,
+          code: 'FORBIDDEN',
+        });
+      }
+    }
+
+    if (!existingDoc.exists) {
+      throw Object.assign(
+        new Error('Media document must exist in Firestore before starting transcoding.'),
+        {
+          statusCode: 404,
+          code: 'MEDIA_DOC_NOT_FOUND',
+        }
+      );
+    }
+
+    const existingOwner = existingDoc.data()?.ownerId || existingDoc.data()?.userId;
+    if (!existingOwner || existingOwner !== ownerId) {
+      throw Object.assign(new Error('Forbidden: You do not own this media document.'), {
+        statusCode: 403,
+        code: 'FORBIDDEN',
+      });
+    }
+  } catch (dbErr: any) {
+    if (dbErr?.statusCode === 403 || dbErr?.statusCode === 404) throw dbErr;
+    if (isPermissionDeniedError(dbErr)) {
+      // Fall back to Firestore REST with caller's ID token under firestore.rules
+      const [restDoc, restSibling] = await Promise.all([
+        fetchFirestoreDocViaRest(collectionName, videoId, callerIdToken),
+        fetchFirestoreDocViaRest(siblingCollection, videoId, callerIdToken),
+      ]);
+      if (restSibling === 'FORBIDDEN' || (restSibling && (restSibling.ownerId || restSibling.userId) !== ownerId)) {
+        throw Object.assign(new Error('Forbidden: Media ID belongs to another creator.'), {
+          statusCode: 403,
+          code: 'FORBIDDEN',
+        });
+      }
+      if (restDoc === 'FORBIDDEN') {
+        throw Object.assign(new Error('Forbidden: You do not own this media document.'), {
+          statusCode: 403,
+          code: 'FORBIDDEN',
+        });
+      }
+      if (!restDoc) {
+        throw Object.assign(
+          new Error('Media document must exist in Firestore before starting transcoding.'),
+          {
+            statusCode: 404,
+            code: 'MEDIA_DOC_NOT_FOUND',
+          }
+        );
+      }
+      const restOwner = restDoc.ownerId || restDoc.userId;
+      if (!restOwner || restOwner !== ownerId) {
+        throw Object.assign(new Error('Forbidden: You do not own this media document.'), {
+          statusCode: 403,
+          code: 'FORBIDDEN',
+        });
+      }
+    } else {
+      throw dbErr;
+    }
+  }
+
+  const existingActiveJob = activeJobsByVideoId.get(videoId);
+  if (existingActiveJob) {
+    if (existingActiveJob.ownerId !== ownerId) {
+      throw Object.assign(new Error('Forbidden: Active transcoding job belongs to another user.'), {
+        statusCode: 403,
+        code: 'FORBIDDEN',
+      });
+    }
+    if (existingActiveJob.state === 'PENDING' || existingActiveJob.state === 'RUNNING') {
+      throw Object.assign(new Error('A transcoding job is already running for this video.'), {
+        statusCode: 409,
+        code: 'TRANSCODE_ALREADY_IN_PROGRESS',
+      });
+    }
+  }
+
+  const objInfo = await verifyUploadedObject(normalizedSourcePath);
   if (!objInfo.exists) {
     throw Object.assign(new Error('Uploaded source video object was not found in Google Cloud Storage.'), {
       statusCode: 404,
+      code: 'GCS_OBJECT_NOT_FOUND',
+    });
+  }
+  if (objInfo.ownerId && objInfo.ownerId !== ownerId) {
+    throw Object.assign(new Error('Forbidden: Uploaded object owner mismatch.'), {
+      statusCode: 403,
+      code: 'FORBIDDEN',
     });
   }
 
   const presets = selectTranscodePresets(sourceWidth, sourceHeight);
-  const inputUri = `gs://${serverConfig.gcsBucketName}/${sourceObjectPath}`;
+  const inputUri = `gs://${serverConfig.gcsBucketName}/${normalizedSourcePath}`;
   const hlsOutputPrefix = `processed/${ownerId}/${videoId}/hls/`;
   const outputUri = `gs://${serverConfig.gcsBucketName}/${hlsOutputPrefix}`;
 
@@ -213,27 +383,37 @@ export async function startCloudTranscodeJob(params: {
         },
       })
     ),
-    {
-      key: 'audio-aac',
-      audioStream: {
-        codec: 'aac',
-        bitrateBps: 128_000,
-        channelCount: 2,
-        sampleRateHertz: 48_000,
-      },
-    },
+    ...(!isMutedAudio
+      ? [
+          {
+            key: 'audio-aac',
+            audioStream: {
+              codec: 'aac',
+              bitrateBps: 128_000,
+              channelCount: 2,
+              sampleRateHertz: 48_000,
+            },
+          } satisfies IElementaryStream,
+        ]
+      : []),
   ];
 
   const muxStreams: IMuxStream[] = presets.map((preset) => ({
     key: preset.muxKey,
     container: 'ts',
     fileName: preset.fileName,
-    elementaryStreams: [preset.key, 'audio-aac'],
+    elementaryStreams: isMutedAudio ? [preset.key] : [preset.key, 'audio-aac'],
     segmentSettings: {
       segmentDuration: { seconds: 4 },
       individualSegments: true,
     },
   }));
+
+  const safeStartSec = typeof trimStart === 'number' && Number.isFinite(trimStart) && trimStart > 0 ? trimStart : 0;
+  const safeEndSec =
+    typeof trimEnd === 'number' && Number.isFinite(trimEnd) && trimEnd > safeStartSec
+      ? trimEnd
+      : undefined;
 
   const jobConfig: IJob = {
     inputUri,
@@ -249,7 +429,8 @@ export async function startCloudTranscodeJob(params: {
         {
           key: 'atom0',
           inputs: ['input0'],
-          startTimeOffset: { seconds: 0 },
+          startTimeOffset: { seconds: Math.floor(safeStartSec) },
+          ...(safeEndSec !== undefined ? { endTimeOffset: { seconds: Math.ceil(safeEndSec) } } : {}),
         },
       ],
       elementaryStreams,
@@ -264,11 +445,31 @@ export async function startCloudTranscodeJob(params: {
     },
   };
 
-  const parent = transcoderClient.locationPath(serverConfig.gcpProjectId, serverConfig.transcoderLocation);
-  const [createdJob] = await transcoderClient.createJob({
-    parent,
-    job: jobConfig,
-  });
+  const targetProjectId = serverConfig.firebaseProjectId || serverConfig.gcpProjectId;
+  const parent = transcoderClient.locationPath(targetProjectId, serverConfig.transcoderLocation);
+  let createdJob: IJob;
+  try {
+    const [jobResp] = await transcoderClient.createJob({
+      parent,
+      job: jobConfig,
+    });
+    createdJob = jobResp;
+  } catch (err: any) {
+    const msg = err?.message || 'Google Cloud Transcoder API call failed.';
+    const isPermissionOrDisabled =
+      err?.code === 7 || /PERMISSION_DENIED|has not been used|disabled/i.test(msg);
+    throw Object.assign(
+      new Error(
+        isPermissionOrDisabled
+          ? 'Google Cloud Transcoder API is disabled or not permitted for this project. Raw uploaded file is preserved; enable Transcoder API when ready for HLS.'
+          : msg
+      ),
+      {
+        statusCode: isPermissionOrDisabled ? 503 : 502,
+        code: isPermissionOrDisabled ? 'TRANSCODER_API_DISABLED' : 'TRANSCODER_JOB_ERROR',
+      }
+    );
+  }
 
   const jobName = createdJob.name || '';
   const initialState = String(createdJob.state || 'PENDING');
@@ -284,23 +485,43 @@ export async function startCloudTranscodeJob(params: {
     startedAt: Date.now(),
   };
 
+  if (activeJobsByVideoId.size > 500) {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    for (const [k, v] of activeJobsByVideoId.entries()) {
+      if (v.startedAt < cutoff && !activePollTimers.has(k)) {
+        activeJobsByVideoId.delete(k);
+      }
+    }
+  }
   activeJobsByVideoId.set(videoId, tracking);
 
-  // Persist initial processing state to Firestore without overwriting existing metadata
-  await adminDb
-    .collection(collectionName)
-    .doc(videoId)
-    .set(
-      {
-        sourceObjectPath,
+  // Update existing Firestore document only (update() never creates orphan documents)
+  try {
+    await adminDb
+      .collection(collectionName)
+      .doc(videoId)
+      .update({
+        sourceObjectPath: normalizedSourcePath,
         hlsOutputPrefix,
         transcoderJobName: jobName,
         transcodingStatus: 'processing',
         transcodingError: null,
         streamQualities: buildHlsStreamQualities(videoId, presets),
-      },
-      { merge: true }
-    );
+      });
+  } catch (dbErr: any) {
+    if (isPermissionDeniedError(dbErr)) {
+      console.warn(
+        `[Vio Transcoder] Firestore Admin write denied for ${collectionName}/${videoId} (${dbErr?.message || 'PERMISSION_DENIED'}). Grant roles/datastore.user on "${serverConfig.firebaseProjectId}" to persist background job updates.`
+      );
+    } else if (dbErr?.code === 5) {
+      throw Object.assign(
+        new Error('Media document no longer exists in Firestore.'),
+        { statusCode: 404, code: 'MEDIA_DOC_NOT_FOUND' }
+      );
+    } else {
+      throw dbErr;
+    }
+  }
 
   scheduleBackgroundJobPoller(tracking);
 
@@ -324,7 +545,12 @@ function scheduleBackgroundJobPoller(tracking: ActiveJobTracking): void {
   const timer = setInterval(async () => {
     attempts++;
     try {
-      const result = await syncTranscodeJobStatus(tracking.videoId, tracking.collectionName, tracking.jobName);
+      const result = await syncTranscodeJobStatus(
+        tracking.videoId,
+        tracking.collectionName,
+        tracking.jobName,
+        { allowMutate: true }
+      );
       if (result.state === 'SUCCEEDED' || result.state === 'FAILED' || attempts >= maxAttempts) {
         clearInterval(timer);
         activePollTimers.delete(tracking.videoId);
@@ -343,11 +569,13 @@ function scheduleBackgroundJobPoller(tracking: ActiveJobTracking): void {
 
 /**
  * Fetches live status from Google Cloud Transcoder API and synchronizes Firestore.
+ * Firestore updates are strictly gated behind allowMutate (never triggered by unauthenticated GET).
  */
 export async function syncTranscodeJobStatus(
   videoId: string,
   collectionName?: 'videos' | 'reels',
-  explicitJobName?: string
+  explicitJobName?: string,
+  options?: { allowMutate?: boolean }
 ): Promise<{
   videoId: string;
   state: string;
@@ -356,37 +584,74 @@ export async function syncTranscodeJobStatus(
   streamQualities?: VideoStreamQuality[];
   errorMessage?: string;
 }> {
+  const allowMutate = Boolean(options?.allowMutate);
   let targetCollection: 'videos' | 'reels' = collectionName || 'videos';
   let jobName = explicitJobName || activeJobsByVideoId.get(videoId)?.jobName || '';
   let presets = activeJobsByVideoId.get(videoId)?.presets || STANDARD_LADDER;
 
+  let restFallbackUsed = false;
   if (!jobName) {
-    const vidDoc = await adminDb.collection('videos').doc(videoId).get();
-    if (vidDoc.exists) {
-      const data = vidDoc.data() || {};
-      jobName = data.transcoderJobName || '';
-      targetCollection = 'videos';
-    } else {
-      const reelDoc = await adminDb.collection('reels').doc(videoId).get();
-      if (reelDoc.exists) {
-        const data = reelDoc.data() || {};
+    try {
+      const vidDoc = await adminDb.collection('videos').doc(videoId).get();
+      if (vidDoc.exists) {
+        const data = vidDoc.data() || {};
         jobName = data.transcoderJobName || '';
-        targetCollection = 'reels';
+        targetCollection = 'videos';
+      } else {
+        const reelDoc = await adminDb.collection('reels').doc(videoId).get();
+        if (reelDoc.exists) {
+          const data = reelDoc.data() || {};
+          jobName = data.transcoderJobName || '';
+          targetCollection = 'reels';
+        }
+      }
+    } catch (dbErr: any) {
+      if (!isPermissionDeniedError(dbErr)) {
+        throw dbErr;
+      }
+      restFallbackUsed = true;
+      const record = await lookupMediaRecord(videoId);
+      if (record) {
+        return {
+          videoId,
+          state: record.transcodingStatus === 'ready' ? 'SUCCEEDED' : 'UNKNOWN',
+          transcodingStatus: record.transcodingStatus || 'ready',
+          hlsManifestUrl: record.hlsManifestUrl,
+        };
       }
     }
   }
 
   if (!jobName) {
+    if (restFallbackUsed) {
+      return {
+        videoId,
+        state: 'UNKNOWN',
+        transcodingStatus: 'ready',
+      };
+    }
     // Return current Firestore state if no GCP Transcoder job is attached
-    const snap = await adminDb.collection(targetCollection).doc(videoId).get();
-    const data = snap.data();
-    return {
-      videoId,
-      state: data?.transcodingStatus === 'ready' ? 'SUCCEEDED' : 'UNKNOWN',
-      transcodingStatus: (data?.transcodingStatus as 'processing' | 'ready' | 'failed') || 'ready',
-      hlsManifestUrl: data?.hlsManifestUrl,
-      streamQualities: data?.streamQualities,
-    };
+    try {
+      const snap = await adminDb.collection(targetCollection).doc(videoId).get();
+      const data = snap.data();
+      return {
+        videoId,
+        state: data?.transcodingStatus === 'ready' ? 'SUCCEEDED' : 'UNKNOWN',
+        transcodingStatus: (data?.transcodingStatus as 'processing' | 'ready' | 'failed') || 'ready',
+        hlsManifestUrl: data?.hlsManifestUrl,
+        streamQualities: data?.streamQualities,
+      };
+    } catch (dbErr: any) {
+      if (isPermissionDeniedError(dbErr)) {
+        throw Object.assign(
+          new Error(
+            `Firestore Admin SDK permission denied on project "${serverConfig.firebaseProjectId}". Grant roles/datastore.user to query live transcoder state.`
+          ),
+          { statusCode: 503, code: 'FIRESTORE_ADMIN_PERMISSION_DENIED' }
+        );
+      }
+      throw dbErr;
+    }
   }
 
   const [job] = await transcoderClient.getJob({ name: jobName });
@@ -403,16 +668,26 @@ export async function syncTranscodeJobStatus(
   if (state === 'SUCCEEDED') {
     const hlsManifestUrl = `/api/stream/hls/${videoId}/master.m3u8`;
     const streamQualities = buildHlsStreamQualities(videoId, presets);
-    await adminDb.collection(targetCollection).doc(videoId).set(
-      {
-        transcodingStatus: 'ready',
-        hlsManifestUrl,
-        streamQualities,
-        transcodingError: null,
-        transcodedAt: Date.now(),
-      },
-      { merge: true }
-    );
+    if (allowMutate) {
+      try {
+        await adminDb.collection(targetCollection).doc(videoId).update({
+          transcodingStatus: 'ready',
+          hlsManifestUrl,
+          streamQualities,
+          transcodingError: null,
+          transcodedAt: Date.now(),
+        });
+      } catch (dbErr: any) {
+        if (isPermissionDeniedError(dbErr)) {
+          console.warn(
+            `[Vio Transcoder] Firestore Admin write denied when marking ${targetCollection}/${videoId} ready (${dbErr?.message || 'PERMISSION_DENIED'}).`
+          );
+        } else if (dbErr?.code !== 5) {
+          throw dbErr;
+        }
+      }
+    }
+    activeJobsByVideoId.delete(videoId);
     return {
       videoId,
       state,
@@ -424,13 +699,23 @@ export async function syncTranscodeJobStatus(
 
   if (state === 'FAILED') {
     const errorMessage = job.error?.message || 'Google Cloud Transcoder job failed.';
-    await adminDb.collection(targetCollection).doc(videoId).set(
-      {
-        transcodingStatus: 'failed',
-        transcodingError: errorMessage,
-      },
-      { merge: true }
-    );
+    if (allowMutate) {
+      try {
+        await adminDb.collection(targetCollection).doc(videoId).update({
+          transcodingStatus: 'failed',
+          transcodingError: errorMessage,
+        });
+      } catch (dbErr: any) {
+        if (isPermissionDeniedError(dbErr)) {
+          console.warn(
+            `[Vio Transcoder] Firestore Admin write denied when marking ${targetCollection}/${videoId} failed (${dbErr?.message || 'PERMISSION_DENIED'}).`
+          );
+        } else if (dbErr?.code !== 5) {
+          throw dbErr;
+        }
+      }
+    }
+    activeJobsByVideoId.delete(videoId);
     return {
       videoId,
       state,

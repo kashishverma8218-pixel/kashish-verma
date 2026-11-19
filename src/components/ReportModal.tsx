@@ -176,6 +176,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               </label>
               <textarea
                 rows={3}
+                maxLength={2000}
                 value={details}
                 onChange={(e) => setDetails(e.target.value)}
                 placeholder={

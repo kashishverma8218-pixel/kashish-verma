@@ -1,10 +1,12 @@
 {
+  "id": "/",
   "name": "Vio streaming",
-  "short_name": "Vio streaming",
+  "short_name": "Vio",
   "description": "Vio streaming - Global Video Sharing Platform",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#111113",
+  "background_color": "#0c0c0e",
   "theme_color": "#111113",
   "orientation": "portrait-primary",
   "icons": [
@@ -12,13 +14,25 @@
       "src": "/assets/logo.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/assets/logo.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

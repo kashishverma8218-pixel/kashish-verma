@@ -34,6 +34,7 @@
     ]
   },
   "firestore": {
+    "database": "ai-studio-lumentubevideost-c37b5f45-474f-48b4-9ce1-a2efcf683527",
     "rules": "firestore.rules"
   },
   "storage": {

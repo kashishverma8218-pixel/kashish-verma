@@ -1,20 +1,35 @@
 import crypto from 'crypto';
 import { Request, Response } from 'express';
 import { serverConfig } from './config';
-import { adminDb, AuthenticatedRequest } from './firebaseAdmin';
-import { getMediaBucket, tryCreateSignedReadUrl } from './storageService';
+import { adminDb, AuthenticatedRequest, extractBearerToken } from './firebaseAdmin';
+import { getMediaBucket } from './storageService';
 
 interface PlaybackTokenPayload {
   vid: string;
   uid: string;
   exp: number;
+  col?: 'videos' | 'reels';
+  oid?: string;
+  vis?: 'public' | 'unlisted' | 'private';
+  obj?: string;
+  hls?: string;
 }
 
-export function createPlaybackToken(videoId: string, uid: string, ttlSeconds: number = 3600): string {
+export function createPlaybackToken(
+  videoId: string,
+  uid: string,
+  ttlSeconds: number = 3600,
+  record?: Partial<MediaRecord>
+): string {
   const payload: PlaybackTokenPayload = {
     vid: videoId,
     uid: uid || 'anonymous',
     exp: Date.now() + ttlSeconds * 1000,
+    ...(record?.collectionName ? { col: record.collectionName } : {}),
+    ...(record?.ownerId ? { oid: record.ownerId } : {}),
+    ...(record?.visibility ? { vis: record.visibility } : {}),
+    ...(record?.sourceObjectPath ? { obj: record.sourceObjectPath } : {}),
+    ...(record?.hlsOutputPrefix ? { hls: record.hlsOutputPrefix } : {}),
   };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');
   const sig = crypto
@@ -62,42 +77,170 @@ export interface MediaRecord {
   poster?: string;
 }
 
-export async function lookupMediaRecord(videoId: string): Promise<MediaRecord | null> {
-  const videoSnap = await adminDb.collection('videos').doc(videoId).get();
-  if (videoSnap.exists) {
-    const d = videoSnap.data() || {};
-    return {
-      id: videoId,
-      collectionName: 'videos',
-      ownerId: d.ownerId || d.userId || '',
-      visibility: d.visibility || 'public',
-      sourceObjectPath: d.sourceObjectPath,
-      hlsOutputPrefix: d.hlsOutputPrefix,
-      hlsManifestUrl: d.hlsManifestUrl,
-      transcodingStatus: d.transcodingStatus,
-      url: d.url,
-      poster: d.poster,
-    };
+function decodeFirestoreRestFields(fields: Record<string, any> | undefined): Record<string, any> {
+  if (!fields || typeof fields !== 'object') return {};
+  const decodeVal = (v: any): any => {
+    if (!v || typeof v !== 'object') return undefined;
+    if ('stringValue' in v) return v.stringValue;
+    if ('integerValue' in v) return Number(v.integerValue);
+    if ('doubleValue' in v) return Number(v.doubleValue);
+    if ('booleanValue' in v) return Boolean(v.booleanValue);
+    if ('nullValue' in v) return null;
+    if ('timestampValue' in v) return v.timestampValue;
+    if ('arrayValue' in v) {
+      return Array.isArray(v.arrayValue?.values) ? v.arrayValue.values.map(decodeVal) : [];
+    }
+    if ('mapValue' in v) {
+      return decodeFirestoreRestFields(v.mapValue?.fields);
+    }
+    return undefined;
+  };
+  const out: Record<string, any> = {};
+  for (const [k, raw] of Object.entries(fields)) {
+    out[k] = decodeVal(raw);
+  }
+  return out;
+}
+
+export async function fetchFirestoreDocViaRest(
+  collectionName: 'videos' | 'reels',
+  videoId: string,
+  idToken?: string | null
+): Promise<Record<string, any> | null | 'FORBIDDEN'> {
+  if (!serverConfig.firebaseProjectId) return null;
+  const dbId = encodeURIComponent(serverConfig.firestoreDatabaseId || '(default)');
+  const base = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(serverConfig.firebaseProjectId)}/databases/${dbId}/documents/${collectionName}/${encodeURIComponent(videoId)}`;
+  const url = serverConfig.firebaseApiKey ? `${base}?key=${encodeURIComponent(serverConfig.firebaseApiKey)}` : base;
+  const headers: Record<string, string> = {};
+  if (idToken) {
+    headers.Authorization = `Bearer ${idToken}`;
+  }
+  const res = await fetch(url, { headers });
+  if (res.status === 404) return null;
+  if (res.status === 401 || res.status === 403) return 'FORBIDDEN';
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw Object.assign(new Error(errText || `Firestore REST lookup failed (${res.status})`), {
+      statusCode: res.status,
+    });
+  }
+  const json = (await res.json()) as { fields?: Record<string, any> };
+  return decodeFirestoreRestFields(json.fields);
+}
+
+function mapDocToMediaRecord(
+  videoId: string,
+  collectionName: 'videos' | 'reels',
+  d: Record<string, any>
+): MediaRecord {
+  return {
+    id: videoId,
+    collectionName,
+    ownerId: d.ownerId || d.userId || '',
+    visibility: d.visibility || 'public',
+    sourceObjectPath: d.sourceObjectPath,
+    hlsOutputPrefix: d.hlsOutputPrefix,
+    hlsManifestUrl: d.hlsManifestUrl,
+    transcodingStatus: d.transcodingStatus,
+    url: collectionName === 'reels' ? d.videoUrl || d.url : d.url,
+    poster: d.poster,
+  };
+}
+
+export async function lookupMediaRecord(
+  videoId: string,
+  idToken?: string | null
+): Promise<MediaRecord | null> {
+  try {
+    const videoSnap = await adminDb.collection('videos').doc(videoId).get();
+    if (videoSnap.exists) {
+      return mapDocToMediaRecord(videoId, 'videos', videoSnap.data() || {});
+    }
+
+    const reelSnap = await adminDb.collection('reels').doc(videoId).get();
+    if (reelSnap.exists) {
+      return mapDocToMediaRecord(videoId, 'reels', reelSnap.data() || {});
+    }
+    return null;
+  } catch (err: any) {
+    const isPermDenied =
+      err?.code === 7 ||
+      String(err?.message || '').includes('PERMISSION_DENIED') ||
+      String(err?.details || '').includes('Missing or insufficient permissions');
+
+    if (!isPermDenied) {
+      throw err;
+    }
+
+    // Fallback to Firestore REST API (governed by firestore.rules + caller ID token)
+    let sawForbidden = false;
+    for (const col of ['videos', 'reels'] as const) {
+      const restDoc = await fetchFirestoreDocViaRest(col, videoId, idToken);
+      if (restDoc === 'FORBIDDEN') {
+        sawForbidden = true;
+        continue;
+      }
+      if (restDoc) {
+        return mapDocToMediaRecord(videoId, col, restDoc);
+      }
+    }
+
+    if (sawForbidden) {
+      const deniedErr = new Error(
+        idToken
+          ? 'Video not found or you do not have permission to access this private media.'
+          : 'Authentication required or media does not exist.'
+      );
+      (deniedErr as any).statusCode = idToken ? 403 : 404;
+      throw deniedErr;
+    }
+
+    return null;
+  }
+}
+
+export async function resolveMediaRecordForRequest(
+  req: AuthenticatedRequest,
+  videoId: string
+): Promise<MediaRecord | null> {
+  const pt = typeof req.query.pt === 'string' ? req.query.pt : '';
+  const bearerToken = extractBearerToken(req);
+
+  if (pt) {
+    const decoded = verifyPlaybackToken(pt, videoId);
+    try {
+      const liveRecord = await lookupMediaRecord(videoId, bearerToken);
+      if (!liveRecord) {
+        return null;
+      }
+      return liveRecord;
+    } catch (err: any) {
+      // If Firestore Admin SDK lacks IAM (cross-project rest-fallback) and <video>/HLS segment
+      // requests do not carry a Bearer token, unauthenticated REST returns 403 -> statusCode 404.
+      // Only allow fallback for tokens originally minted for an authenticated private owner;
+      // if decoded.vis was 'public'/'unlisted' and REST now denies access, visibility changed to private -> reject.
+      if (
+        decoded &&
+        decoded.vis === 'private' &&
+        decoded.uid &&
+        decoded.uid !== 'anonymous' &&
+        decoded.uid === decoded.oid &&
+        (decoded.obj || decoded.hls)
+      ) {
+        return {
+          id: videoId,
+          collectionName: decoded.col || 'videos',
+          ownerId: decoded.oid || '',
+          visibility: 'private',
+          sourceObjectPath: decoded.obj,
+          hlsOutputPrefix: decoded.hls,
+        };
+      }
+      throw err;
+    }
   }
 
-  const reelSnap = await adminDb.collection('reels').doc(videoId).get();
-  if (reelSnap.exists) {
-    const d = reelSnap.data() || {};
-    return {
-      id: videoId,
-      collectionName: 'reels',
-      ownerId: d.ownerId || d.userId || '',
-      visibility: d.visibility || 'public',
-      sourceObjectPath: d.sourceObjectPath,
-      hlsOutputPrefix: d.hlsOutputPrefix,
-      hlsManifestUrl: d.hlsManifestUrl,
-      transcodingStatus: d.transcodingStatus,
-      url: d.videoUrl || d.url,
-      poster: d.poster,
-    };
-  }
-
-  return null;
+  return lookupMediaRecord(videoId, bearerToken);
 }
 
 /**
@@ -123,7 +266,12 @@ export function isAuthorizedForMedia(
   const pt = typeof req.query.pt === 'string' ? req.query.pt : '';
   if (pt) {
     const decoded = verifyPlaybackToken(pt, record.id);
-    if (decoded && decoded.uid === record.ownerId) {
+    if (
+      decoded &&
+      decoded.uid &&
+      decoded.uid !== 'anonymous' &&
+      decoded.uid === record.ownerId
+    ) {
       return true;
     }
   }
@@ -178,7 +326,8 @@ export async function streamGcsObjectWithRange(
   req: Request,
   res: Response,
   objectPath: string,
-  contentTypeOverride?: string
+  contentTypeOverride?: string,
+  isPrivate: boolean = false
 ): Promise<void> {
   const bucket = getMediaBucket();
   const file = bucket.file(objectPath);
@@ -195,7 +344,7 @@ export async function streamGcsObjectWithRange(
 
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Type', contentType);
-  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.setHeader('Cache-Control', isPrivate ? 'private, no-store' : 'private, max-age=300');
 
   const rangeHeader = req.headers.range;
   if (rangeHeader && fileSize > 0) {
@@ -247,8 +396,6 @@ export async function streamGcsObjectWithRange(
 
 export async function resolveFallbackMediaUrl(record: MediaRecord, playbackToken: string): Promise<string | null> {
   if (record.sourceObjectPath) {
-    const signed = await tryCreateSignedReadUrl(record.sourceObjectPath, 3600);
-    if (signed) return signed;
     return `/api/media/object/${encodeURIComponent(record.id)}?pt=${encodeURIComponent(playbackToken)}`;
   }
   return record.url || null;

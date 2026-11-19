@@ -15,6 +15,7 @@
  * 12. reports
  * 13. categories
  * 14. searchHistory
+ * 15. channels
  */
 
 import {
@@ -32,6 +33,7 @@ import {
   limit,
   startAfter,
   increment,
+  writeBatch,
   Unsubscribe,
   DocumentSnapshot,
   QueryDocumentSnapshot
@@ -39,12 +41,17 @@ import {
 import {
   ref,
   uploadBytesResumable,
-  getDownloadURL
+  getDownloadURL,
+  UploadTask
 } from 'firebase/storage';
 import { db, auth, storage } from '../firebase';
 import { VideoItem, Channel, Comment, ReelItem, ReelComment, NotificationItem, PlaylistItem } from '../types/video';
 import { INITIAL_VIDEOS, CHANNELS, INITIAL_REELS, CATEGORIES } from '../data/mockData';
-import { sanitizePlayableVideoUrl } from './streamingService';
+import {
+  sanitizePlayableVideoUrl,
+  recordVideoViewOnServer,
+  createNotificationOnServer,
+} from './streamingService';
 
 // ----------------------------------------------------
 // Error Handling conforming to Firebase Skill Guidelines
@@ -114,6 +121,7 @@ export const COLLECTIONS = {
   REPORTS: 'reports',
   CATEGORIES: 'categories',
   SEARCH_HISTORY: 'searchHistory',
+  CHANNELS: 'channels',
 } as const;
 
 // ----------------------------------------------------
@@ -151,6 +159,119 @@ export async function saveUserProfile(profile: UserProfileDoc): Promise<void> {
     await setDoc(doc(db, COLLECTIONS.USERS, profile.uid), profile, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// ----------------------------------------------------
+// 1B. CHANNELS COLLECTION (Public Creator Metadata, No PII)
+// ----------------------------------------------------
+export interface FirestoreChannelRecord {
+  id: string;
+  ownerId: string;
+  name: string;
+  handle: string;
+  avatar: string;
+  banner: string;
+  verified: boolean;
+  subscribersCount: number;
+  followersCount: number;
+  bio: string;
+  joinedDate: string;
+  videoCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export function subscribeChannels(
+  callback: (channels: Record<string, Partial<Channel> & { id: string; ownerId?: string }>) => void
+): Unsubscribe {
+  const colRef = collection(db, COLLECTIONS.CHANNELS);
+  const q = query(colRef, limit(100));
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const result: Record<string, Partial<Channel> & { id: string; ownerId?: string }> = {};
+      snapshot.forEach((d) => {
+        const data = d.data();
+        if (!data || !data.name) return;
+        result[d.id] = {
+          id: d.id,
+          ownerId: typeof data.ownerId === 'string' ? data.ownerId : undefined,
+          name: String(data.name),
+          handle: typeof data.handle === 'string' ? data.handle : `@${String(data.name).toLowerCase().replace(/\s+/g, '')}`,
+          avatar: typeof data.avatar === 'string' ? data.avatar : '',
+          banner: typeof data.banner === 'string' ? data.banner : '',
+          verified: Boolean(data.verified),
+          subscribersCount: typeof data.subscribersCount === 'number' ? data.subscribersCount : 0,
+          followersCount: typeof data.followersCount === 'number' ? data.followersCount : 0,
+          bio: typeof data.bio === 'string' ? data.bio : '',
+          joinedDate: typeof data.joinedDate === 'string' ? data.joinedDate : 'Joined recently',
+          videoCount: typeof data.videoCount === 'number' ? data.videoCount : 0,
+        };
+      });
+      callback(result);
+    },
+    (error) => {
+      console.warn(`Firestore listener warning (${COLLECTIONS.CHANNELS}):`, error?.message || error);
+    }
+  );
+}
+
+function sanitizeChannelMediaUrl(url: string | undefined): string {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (trimmed.length > 2048 || trimmed.startsWith('blob:') || trimmed.startsWith('data:')) {
+    return '';
+  }
+  return trimmed;
+}
+
+export async function upsertChannelDoc(channel: Channel, ownerUid?: string): Promise<void> {
+  const currentUser = auth.currentUser;
+  if (!currentUser?.uid) return;
+  const resolvedOwner = ownerUid || currentUser.uid;
+  if (resolvedOwner !== currentUser.uid && !isCustomClaimAdminCached) return;
+  if (!channel.id || !/^[a-zA-Z0-9_-]{1,256}$/.test(channel.id)) return;
+
+  const docRef = doc(db, COLLECTIONS.CHANNELS, channel.id);
+  const now = Date.now();
+  try {
+    const existingSnap = await getDoc(docRef);
+    const existingData = existingSnap.exists() ? existingSnap.data() : null;
+
+    if (existingData && existingData.ownerId && existingData.ownerId !== currentUser.uid && !isCustomClaimAdminCached) {
+      return;
+    }
+
+    const cleanName = (channel.name || 'Creator').trim().slice(0, 100) || 'Creator';
+    const rawHandle = (channel.handle || `@${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '')}`).trim();
+    const cleanHandle = (rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`).slice(0, 60);
+
+    const payload: FirestoreChannelRecord = {
+      id: channel.id,
+      ownerId: existingData?.ownerId || resolvedOwner,
+      name: cleanName,
+      handle: cleanHandle,
+      avatar: sanitizeChannelMediaUrl(channel.avatar) || (typeof existingData?.avatar === 'string' ? existingData.avatar : ''),
+      banner: sanitizeChannelMediaUrl(channel.banner) || (typeof existingData?.banner === 'string' ? existingData.banner : ''),
+      verified: existingData
+        ? Boolean(existingData.verified)
+        : isCustomClaimAdminCached
+        ? Boolean(channel.verified)
+        : false,
+      subscribersCount: Math.max(0, Math.floor(channel.subscribersCount ?? existingData?.subscribersCount ?? 0)),
+      followersCount: Math.max(0, Math.floor(channel.followersCount ?? existingData?.followersCount ?? 0)),
+      bio: (channel.bio || '').slice(0, 1000),
+      joinedDate: (channel.joinedDate || existingData?.joinedDate || 'Joined recently').slice(0, 64),
+      videoCount: Math.max(0, Math.floor(channel.videoCount ?? existingData?.videoCount ?? 0)),
+      createdAt: typeof existingData?.createdAt === 'number' ? existingData.createdAt : now,
+      updatedAt: now,
+    };
+
+    await setDoc(docRef, payload);
+  } catch (error) {
+    console.warn(`Could not sync channel ${channel.id} to Firestore:`, error);
   }
 }
 
@@ -197,101 +318,153 @@ export async function isCurrentUserAdmin(): Promise<boolean> {
   }
 }
 
+function mapVideoDocSnapshot(d: QueryDocumentSnapshot | DocumentSnapshot): VideoItem | null {
+  const data = d.data();
+  if (!data) return null;
+  const rawUrl = typeof data.url === 'string' ? data.url.trim() : '';
+  if (!rawUrl) return null;
+  const videoUrl = sanitizePlayableVideoUrl(rawUrl, d.id, 'video', true);
+
+  return {
+    id: d.id,
+    ownerId: data.ownerId,
+    uploaderId: data.uploaderId || data.ownerId || data.userId,
+    userId: data.userId,
+    title: data.title || 'Untitled',
+    description: data.description || '',
+    url: videoUrl,
+    poster: data.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80',
+    channelId: data.channelId || 'channel-blender',
+    views: data.views || 0,
+    likes: data.likes || 0,
+    dislikes: data.dislikes || 0,
+    publishedAt: data.publishedAt || 'Recently',
+    duration: data.duration || 120,
+    category: data.category || 'Animation',
+    tags: Array.isArray(data.tags) ? data.tags : [],
+    hashtags: Array.isArray(data.hashtags) ? data.hashtags : undefined,
+    isTrending: data.isTrending ?? false,
+    visibility: data.visibility || 'public',
+    hideLikes: data.hideLikes ?? false,
+    commentsControl: data.commentsControl || 'allow_all',
+    ageRestricted: data.ageRestricted ?? false,
+    createdAt: getCreatedAtMillis(data.createdAt),
+    streamQualities: data.streamQualities,
+    hlsManifestUrl: data.hlsManifestUrl,
+    backupStreams: data.backupStreams,
+    transcodingStatus: data.transcodingStatus || 'ready',
+    sourceObjectPath: data.sourceObjectPath,
+    hlsOutputPrefix: data.hlsOutputPrefix,
+    transcoderJobName: data.transcoderJobName,
+    transcodingError: data.transcodingError,
+    sourceWidth: data.sourceWidth,
+    sourceHeight: data.sourceHeight,
+    language: data.language,
+    monetizationEnabled: data.monetizationEnabled ?? true,
+    filterStyle: data.filterStyle,
+    filterPreset: data.filterPreset,
+    trimStart: typeof data.trimStart === 'number' ? data.trimStart : undefined,
+    trimEnd: typeof data.trimEnd === 'number' ? data.trimEnd : undefined,
+    cropAspect: data.cropAspect,
+    cropFit: data.cropFit,
+    isMutedAudio: Boolean(data.isMutedAudio),
+    storagePath: data.storagePath,
+    thumbnailStoragePath: data.thumbnailStoragePath,
+  };
+}
+
 export function subscribeVideos(
   callback: (videos: VideoItem[], lastDoc?: DocumentSnapshot | null) => void,
   categoryFilter?: string,
   limitCount: number = 50
 ): Unsubscribe {
   const colRef = collection(db, COLLECTIONS.VIDEOS);
-  
-  // 1. Firebase Query में orderBy('createdAt', 'desc') लागू किया गया
-  let q;
-  if (categoryFilter && categoryFilter !== 'All') {
-    q = query(
-      colRef,
-      where('category', '==', categoryFilter),
-      orderBy('createdAt', 'desc'),
-      limit(limitCount)
-    );
-  } else {
-    q = query(
-      colRef,
-      orderBy('createdAt', 'desc'),
-      limit(limitCount)
-    );
-  }
+  const publicDocsMap = new Map<string, VideoItem>();
+  const ownerDocsMap = new Map<string, VideoItem>();
+  let lastPublicDoc: DocumentSnapshot | null = null;
 
-  return onSnapshot(
-    q,
+  const emitMerged = () => {
+    const merged = new Map<string, VideoItem>();
+    const currentUid = auth.currentUser?.uid;
+    const isAdminUser = isCustomClaimAdminCached;
+
+    publicDocsMap.forEach((v, id) => {
+      const isPrivate = v.visibility === 'private';
+      const isOwner = Boolean(currentUid && (v.ownerId === currentUid || v.userId === currentUid));
+      if (!isPrivate || isOwner || isAdminUser) {
+        merged.set(id, v);
+      }
+    });
+
+    ownerDocsMap.forEach((v, id) => {
+      if (!categoryFilter || categoryFilter === 'All' || v.category === categoryFilter) {
+        merged.set(id, v);
+      }
+    });
+
+    const list = Array.from(merged.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    callback(list, lastPublicDoc);
+  };
+
+  const publicQuery =
+    categoryFilter && categoryFilter !== 'All'
+      ? query(colRef, where('visibility', '==', 'public'), where('category', '==', categoryFilter), limit(limitCount))
+      : query(colRef, where('visibility', '==', 'public'), limit(limitCount));
+
+  const unsubPublic = onSnapshot(
+    publicQuery,
     (snapshot) => {
-      const vids: VideoItem[] = [];
-      const seenIds = new Set<string>();
-
-      const currentUid = auth.currentUser?.uid;
-      const isAdminUser = isCustomClaimAdminCached;
-
+      publicDocsMap.clear();
       snapshot.forEach((d) => {
-        if (seenIds.has(d.id)) return;
-        const data = d.data();
-
-        // 2. बिना URL वाले अधूरे/ड्राफ्ट वीडियो छोड़ें
-        const rawUrl = typeof data.url === 'string' ? data.url.trim() : '';
-        if (!rawUrl) return;
-        const videoUrl = sanitizePlayableVideoUrl(rawUrl, d.id, 'video', true);
-
-        // 3. Private वीडियो केवल उसके मालिक और अधिकृत Custom Claim Admin को दिखें
-        const isPrivate = data.visibility === 'private';
-        const isOwner = Boolean(currentUid && (data.ownerId === currentUid || data.userId === currentUid));
-        if (isPrivate && !isOwner && !isAdminUser) {
-          return;
-        }
-
-        seenIds.add(d.id);
-
-        vids.push({
-          id: d.id,
-          ownerId: data.ownerId,
-          userId: data.userId,
-          title: data.title || 'Untitled',
-          description: data.description || '',
-          url: videoUrl,
-          poster: data.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80',
-          channelId: data.channelId || 'channel-blender',
-          views: data.views || 0,
-          likes: data.likes || 0,
-          dislikes: data.dislikes || 0,
-          publishedAt: data.publishedAt || 'Recently',
-          duration: data.duration || 120,
-          category: data.category || 'Animation',
-          tags: Array.isArray(data.tags) ? data.tags : [],
-          isTrending: data.isTrending ?? false,
-          visibility: data.visibility || 'public',
-          hideLikes: data.hideLikes ?? false,
-          commentsControl: data.commentsControl || 'allow_all',
-          ageRestricted: data.ageRestricted ?? false,
-          createdAt: getCreatedAtMillis(data.createdAt),
-          streamQualities: data.streamQualities,
-          hlsManifestUrl: data.hlsManifestUrl,
-          backupStreams: data.backupStreams,
-          transcodingStatus: data.transcodingStatus || 'ready',
-          sourceObjectPath: data.sourceObjectPath,
-          hlsOutputPrefix: data.hlsOutputPrefix,
-          transcoderJobName: data.transcoderJobName,
-          transcodingError: data.transcodingError,
-          sourceWidth: data.sourceWidth,
-          sourceHeight: data.sourceHeight,
-        });
+        const mapped = mapVideoDocSnapshot(d);
+        if (mapped) publicDocsMap.set(d.id, mapped);
       });
-
-      // Timestamp अनुसार नए वीडियो सबसे ऊपर
-      vids.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      const lastDoc = snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1] : null;
-      callback(vids, lastDoc);
+      lastPublicDoc = snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1] : null;
+      emitMerged();
     },
     (error) => {
-      console.warn(`Firestore listener warning (${COLLECTIONS.VIDEOS}):`, error?.message || error);
+      console.warn(`Firestore listener warning (${COLLECTIONS.VIDEOS} public):`, error?.message || error);
     }
   );
+
+  let unsubOwner: Unsubscribe | null = null;
+  const attachOwnerListener = (uid: string | undefined) => {
+    if (unsubOwner) {
+      unsubOwner();
+      unsubOwner = null;
+    }
+    ownerDocsMap.clear();
+    if (!uid) {
+      emitMerged();
+      return;
+    }
+    const ownerQuery = query(colRef, where('ownerId', '==', uid), limit(limitCount));
+    unsubOwner = onSnapshot(
+      ownerQuery,
+      (snapshot) => {
+        ownerDocsMap.clear();
+        snapshot.forEach((d) => {
+          const mapped = mapVideoDocSnapshot(d);
+          if (mapped) ownerDocsMap.set(d.id, mapped);
+        });
+        emitMerged();
+      },
+      (error) => {
+        console.warn(`Firestore listener warning (${COLLECTIONS.VIDEOS} owner):`, error?.message || error);
+      }
+    );
+  };
+
+  attachOwnerListener(auth.currentUser?.uid);
+  const unsubAuth = auth.onAuthStateChanged((user) => {
+    attachOwnerListener(user?.uid);
+  });
+
+  return () => {
+    unsubPublic();
+    if (unsubOwner) unsubOwner();
+    unsubAuth();
+  };
 }
 
 // 2 & 3. startAfter() और DocumentSnapshot Cursor आधारित पेजिनेशन (Category Filter के साथ)
@@ -313,16 +486,16 @@ export async function fetchMoreVideos(
     if (lastVisibleDoc) {
       q = query(
         colRef,
+        where('visibility', '==', 'public'),
         where('category', '==', categoryFilter),
-        orderBy('createdAt', 'desc'),
         startAfter(lastVisibleDoc),
         limit(pageSize)
       );
     } else {
       q = query(
         colRef,
+        where('visibility', '==', 'public'),
         where('category', '==', categoryFilter),
-        orderBy('createdAt', 'desc'),
         limit(pageSize)
       );
     }
@@ -330,14 +503,14 @@ export async function fetchMoreVideos(
     if (lastVisibleDoc) {
       q = query(
         colRef,
-        orderBy('createdAt', 'desc'),
+        where('visibility', '==', 'public'),
         startAfter(lastVisibleDoc),
         limit(pageSize)
       );
     } else {
       q = query(
         colRef,
-        orderBy('createdAt', 'desc'),
+        where('visibility', '==', 'public'),
         limit(pageSize)
       );
     }
@@ -345,52 +518,10 @@ export async function fetchMoreVideos(
 
   const snap = await getDocs(q);
   const vids: VideoItem[] = [];
-  const currentUid = auth.currentUser?.uid;
-  const isAdminUser = isCustomClaimAdminCached;
 
   snap.forEach((d) => {
-    const data = d.data();
-    const rawUrl = typeof data.url === 'string' ? data.url.trim() : '';
-    if (!rawUrl) return;
-    const videoUrl = sanitizePlayableVideoUrl(rawUrl, d.id, 'video', true);
-
-    const isPrivate = data.visibility === 'private';
-    const isOwner = Boolean(currentUid && (data.ownerId === currentUid || data.userId === currentUid));
-    if (isPrivate && !isOwner && !isAdminUser) return;
-
-    vids.push({
-      id: d.id,
-      ownerId: data.ownerId,
-      userId: data.userId,
-      title: data.title || 'Untitled',
-      description: data.description || '',
-      url: videoUrl,
-      poster: data.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80',
-      channelId: data.channelId || 'channel-blender',
-      views: data.views || 0,
-      likes: data.likes || 0,
-      dislikes: data.dislikes || 0,
-      publishedAt: data.publishedAt || 'Recently',
-      duration: data.duration || 120,
-      category: data.category || 'Animation',
-      tags: Array.isArray(data.tags) ? data.tags : [],
-      isTrending: data.isTrending ?? false,
-      visibility: data.visibility || 'public',
-      hideLikes: data.hideLikes ?? false,
-      commentsControl: data.commentsControl || 'allow_all',
-      ageRestricted: data.ageRestricted ?? false,
-      createdAt: getCreatedAtMillis(data.createdAt),
-      streamQualities: data.streamQualities,
-      hlsManifestUrl: data.hlsManifestUrl,
-      backupStreams: data.backupStreams,
-      transcodingStatus: data.transcodingStatus || 'ready',
-      sourceObjectPath: data.sourceObjectPath,
-      hlsOutputPrefix: data.hlsOutputPrefix,
-      transcoderJobName: data.transcoderJobName,
-      transcodingError: data.transcodingError,
-      sourceWidth: data.sourceWidth,
-      sourceHeight: data.sourceHeight,
-    });
+    const mapped = mapVideoDocSnapshot(d);
+    if (mapped) vids.push(mapped);
   });
 
   vids.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -412,10 +543,12 @@ export async function addVideoDoc(video: VideoItem): Promise<void> {
   const videoId = video.id || `video-${Date.now()}`;
   const path = `${COLLECTIONS.VIDEOS}/${videoId}`;
   const ownerId = currentUser.uid;
+  const now = Date.now();
 
   const docData = {
     id: videoId,
     ownerId,
+    uploaderId: video.uploaderId || ownerId,
     userId: ownerId,
     title: video.title,
     description: video.description || '',
@@ -429,22 +562,36 @@ export async function addVideoDoc(video: VideoItem): Promise<void> {
     duration: video.duration || 120,
     category: video.category || 'Animation',
     tags: video.tags || [],
+    ...(video.hashtags ? { hashtags: video.hashtags } : {}),
     isTrending: video.isTrending ?? false,
     visibility: video.visibility || 'public',
     hideLikes: video.hideLikes ?? false,
     commentsControl: video.commentsControl || 'allow_all',
     ageRestricted: video.ageRestricted ?? false,
     status: 'published',
-    createdAt: Date.now(),
+    createdAt: video.createdAt || now,
+    updatedAt: now,
     streamQualities: video.streamQualities || [],
     hlsManifestUrl: video.hlsManifestUrl || '',
     backupStreams: video.backupStreams || [],
-    transcodingStatus: video.transcodingStatus || 'ready',
+    transcodingStatus: video.transcodingStatus || (video.sourceObjectPath ? 'pending' : 'ready'),
     ...(video.sourceObjectPath ? { sourceObjectPath: video.sourceObjectPath } : {}),
+    ...(video.storagePath ? { storagePath: video.storagePath } : {}),
+    ...(video.thumbnailStoragePath ? { thumbnailStoragePath: video.thumbnailStoragePath } : {}),
     ...(video.hlsOutputPrefix ? { hlsOutputPrefix: video.hlsOutputPrefix } : {}),
     ...(video.transcoderJobName ? { transcoderJobName: video.transcoderJobName } : {}),
+    ...(video.transcodingError ? { transcodingError: video.transcodingError } : {}),
     ...(video.sourceWidth ? { sourceWidth: video.sourceWidth } : {}),
     ...(video.sourceHeight ? { sourceHeight: video.sourceHeight } : {}),
+    ...(video.language ? { language: video.language } : {}),
+    monetizationEnabled: video.monetizationEnabled ?? true,
+    ...(video.filterStyle ? { filterStyle: video.filterStyle } : {}),
+    ...(video.filterPreset ? { filterPreset: video.filterPreset } : {}),
+    ...(typeof video.trimStart === 'number' ? { trimStart: video.trimStart } : {}),
+    ...(typeof video.trimEnd === 'number' ? { trimEnd: video.trimEnd } : {}),
+    ...(video.cropAspect ? { cropAspect: video.cropAspect } : {}),
+    ...(video.cropFit ? { cropFit: video.cropFit } : {}),
+    isMutedAudio: Boolean(video.isMutedAudio),
   };
 
   try {
@@ -462,14 +609,10 @@ export async function incrementVideoViews(videoId: string): Promise<void> {
   }
   viewedVideosInSession.add(videoId);
 
-  const path = `${COLLECTIONS.VIDEOS}/${videoId}`;
   try {
-    await updateDoc(doc(db, COLLECTIONS.VIDEOS, videoId), {
-      views: increment(1),
-    });
-  } catch (error) {
-    // Non-fatal if view increment fails
-    console.warn(`Could not increment views for ${videoId}:`, error);
+    await recordVideoViewOnServer(videoId);
+  } catch {
+    // Non-fatal if server view endpoint is unavailable or Admin SDK IAM is not configured
   }
 }
 
@@ -508,6 +651,10 @@ export async function updateVideoDoc(
     if (updates.visibility !== undefined) cleanUpdates.visibility = updates.visibility;
     if (updates.poster !== undefined) cleanUpdates.poster = updates.poster;
     if (updates.tags !== undefined) cleanUpdates.tags = updates.tags;
+    if (updates.language !== undefined) cleanUpdates.language = updates.language;
+    if (updates.monetizationEnabled !== undefined) cleanUpdates.monetizationEnabled = updates.monetizationEnabled;
+    if (updates.filterStyle !== undefined) cleanUpdates.filterStyle = updates.filterStyle;
+    if (updates.filterPreset !== undefined) cleanUpdates.filterPreset = updates.filterPreset;
 
     await updateDoc(doc(db, COLLECTIONS.VIDEOS, videoId), cleanUpdates);
   } catch (error) {
@@ -528,61 +675,133 @@ export async function deleteVideoDoc(videoId: string): Promise<void> {
 // ----------------------------------------------------
 // 3. REELS COLLECTION
 // ----------------------------------------------------
+function mapReelDocSnapshot(d: QueryDocumentSnapshot | DocumentSnapshot): (ReelItem & { _createdAtMs: number }) | null {
+  const data = d.data();
+  if (!data) return null;
+  const rawUrl = typeof data.videoUrl === 'string' ? data.videoUrl.trim() : '';
+  if (!rawUrl) return null;
+  const createdMs = getCreatedAtMillis(data.createdAt);
+
+  return {
+    id: d.id,
+    ownerId: data.ownerId,
+    uploaderId: data.uploaderId || data.ownerId || data.userId,
+    title: data.title || '',
+    description: data.description || '',
+    videoUrl: sanitizePlayableVideoUrl(rawUrl, d.id, 'reel', true),
+    poster: data.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80',
+    channelId: data.channelId || 'channel-blender',
+    views: data.views || 0,
+    likes: data.likes || 0,
+    commentsCount: data.commentsCount || 0,
+    audioTrack: data.audioTrack || 'Original Audio',
+    audioArtist: data.audioArtist || 'Vio Sounds',
+    tags: Array.isArray(data.tags) ? data.tags : [],
+    hashtags: Array.isArray(data.hashtags) ? data.hashtags : undefined,
+    visibility: data.visibility || 'public',
+    createdAt: createdMs ? new Date(createdMs).toISOString() : undefined,
+    duration: typeof data.duration === 'number' ? data.duration : undefined,
+    sourceObjectPath: data.sourceObjectPath,
+    storagePath: data.storagePath,
+    thumbnailStoragePath: data.thumbnailStoragePath,
+    hlsOutputPrefix: data.hlsOutputPrefix,
+    hlsManifestUrl: data.hlsManifestUrl,
+    transcodingStatus: data.transcodingStatus || 'ready',
+    streamQualities: data.streamQualities,
+    category: data.category,
+    language: data.language,
+    monetizationEnabled: data.monetizationEnabled ?? true,
+    filterStyle: data.filterStyle,
+    filterPreset: data.filterPreset,
+    trimStart: typeof data.trimStart === 'number' ? data.trimStart : undefined,
+    trimEnd: typeof data.trimEnd === 'number' ? data.trimEnd : undefined,
+    cropAspect: data.cropAspect,
+    cropFit: data.cropFit,
+    isMutedAudio: Boolean(data.isMutedAudio),
+    _createdAtMs: createdMs,
+  };
+}
+
 export function subscribeReels(callback: (reels: ReelItem[]) => void): Unsubscribe {
   const colRef = collection(db, COLLECTIONS.REELS);
-  const q = query(colRef, limit(40));
+  const publicMap = new Map<string, ReelItem & { _createdAtMs: number }>();
+  const ownerMap = new Map<string, ReelItem & { _createdAtMs: number }>();
 
-  return onSnapshot(
-    q,
+  const emitMerged = () => {
+    const merged = new Map<string, ReelItem & { _createdAtMs: number }>();
+    const currentUid = auth.currentUser?.uid;
+    const isAdminUser = isCustomClaimAdminCached;
+
+    publicMap.forEach((r, id) => {
+      const isPrivate = r.visibility === 'private';
+      const isOwner = Boolean(currentUid && r.ownerId === currentUid);
+      if (!isPrivate || isOwner || isAdminUser) {
+        merged.set(id, r);
+      }
+    });
+
+    ownerMap.forEach((r, id) => {
+      merged.set(id, r);
+    });
+
+    const reelList = Array.from(merged.values()).sort((a, b) => b._createdAtMs - a._createdAtMs);
+    callback(reelList.map(({ _createdAtMs, ...rest }) => rest));
+  };
+
+  const publicQuery = query(colRef, where('visibility', '==', 'public'), limit(40));
+  const unsubPublic = onSnapshot(
+    publicQuery,
     (snapshot) => {
-      const reelList: (ReelItem & { _createdAtMs: number })[] = [];
-      const currentUid = auth.currentUser?.uid;
-      const isAdminUser = isCustomClaimAdminCached;
-
+      publicMap.clear();
       snapshot.forEach((d) => {
-        const data = d.data();
-        const rawUrl = typeof data.videoUrl === 'string' ? data.videoUrl.trim() : '';
-        if (!rawUrl) return;
-
-        const isPrivate = data.visibility === 'private';
-        const isOwner = Boolean(currentUid && (data.ownerId === currentUid || data.userId === currentUid));
-        if (isPrivate && !isOwner && !isAdminUser) {
-          return;
-        }
-
-        const createdMs = getCreatedAtMillis(data.createdAt);
-
-        reelList.push({
-          id: d.id,
-          title: data.title || '',
-          description: data.description || '',
-          videoUrl: sanitizePlayableVideoUrl(rawUrl, d.id, 'reel', true),
-          poster: data.poster || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80',
-          channelId: data.channelId || 'channel-blender',
-          views: data.views || 0,
-          likes: data.likes || 0,
-          commentsCount: data.commentsCount || 0,
-          audioTrack: data.audioTrack || 'Original Audio',
-          audioArtist: data.audioArtist || 'Vio Sounds',
-          tags: Array.isArray(data.tags) ? data.tags : [],
-          visibility: data.visibility || 'public',
-          createdAt: createdMs ? new Date(createdMs).toISOString() : undefined,
-          sourceObjectPath: data.sourceObjectPath,
-          hlsOutputPrefix: data.hlsOutputPrefix,
-          hlsManifestUrl: data.hlsManifestUrl,
-          transcodingStatus: data.transcodingStatus || 'ready',
-          streamQualities: data.streamQualities,
-          _createdAtMs: createdMs,
-        });
+        const mapped = mapReelDocSnapshot(d);
+        if (mapped) publicMap.set(d.id, mapped);
       });
-
-      reelList.sort((a, b) => b._createdAtMs - a._createdAtMs);
-      callback(reelList.map(({ _createdAtMs, ...rest }) => rest));
+      emitMerged();
     },
     (error) => {
-      console.warn(`Firestore listener warning (${COLLECTIONS.REELS}):`, error?.message || error);
+      console.warn(`Firestore listener warning (${COLLECTIONS.REELS} public):`, error?.message || error);
     }
   );
+
+  let unsubOwner: Unsubscribe | null = null;
+  const attachOwnerListener = (uid: string | undefined) => {
+    if (unsubOwner) {
+      unsubOwner();
+      unsubOwner = null;
+    }
+    ownerMap.clear();
+    if (!uid) {
+      emitMerged();
+      return;
+    }
+    const ownerQuery = query(colRef, where('ownerId', '==', uid), limit(40));
+    unsubOwner = onSnapshot(
+      ownerQuery,
+      (snapshot) => {
+        ownerMap.clear();
+        snapshot.forEach((d) => {
+          const mapped = mapReelDocSnapshot(d);
+          if (mapped) ownerMap.set(d.id, mapped);
+        });
+        emitMerged();
+      },
+      (error) => {
+        console.warn(`Firestore listener warning (${COLLECTIONS.REELS} owner):`, error?.message || error);
+      }
+    );
+  };
+
+  attachOwnerListener(auth.currentUser?.uid);
+  const unsubAuth = auth.onAuthStateChanged((user) => {
+    attachOwnerListener(user?.uid);
+  });
+
+  return () => {
+    unsubPublic();
+    if (unsubOwner) unsubOwner();
+    unsubAuth();
+  };
 }
 
 const viewedReelsInSession = new Set<string>();
@@ -591,13 +810,10 @@ export async function incrementReelViews(reelId: string): Promise<void> {
   if (viewedReelsInSession.has(reelId)) return;
   viewedReelsInSession.add(reelId);
 
-  if (!auth.currentUser?.uid) return;
   try {
-    await updateDoc(doc(db, COLLECTIONS.REELS, reelId), {
-      views: increment(1),
-    });
-  } catch (error) {
-    console.warn(`Could not increment reel views for ${reelId}:`, error);
+    await recordVideoViewOnServer(reelId);
+  } catch {
+    // Non-fatal if server view endpoint is unavailable or Admin SDK IAM is not configured
   }
 }
 
@@ -613,6 +829,10 @@ export async function updateReelDoc(
     if (updates.visibility !== undefined) cleanUpdates.visibility = updates.visibility;
     if (updates.audioTrack !== undefined) cleanUpdates.audioTrack = updates.audioTrack;
     if (updates.tags !== undefined) cleanUpdates.tags = updates.tags;
+    if (updates.language !== undefined) cleanUpdates.language = updates.language;
+    if (updates.monetizationEnabled !== undefined) cleanUpdates.monetizationEnabled = updates.monetizationEnabled;
+    if (updates.filterStyle !== undefined) cleanUpdates.filterStyle = updates.filterStyle;
+    if (updates.filterPreset !== undefined) cleanUpdates.filterPreset = updates.filterPreset;
 
     await updateDoc(doc(db, COLLECTIONS.REELS, reelId), cleanUpdates);
   } catch (error) {
@@ -638,10 +858,12 @@ export async function addReelDoc(reel: ReelItem): Promise<void> {
   const reelId = reel.id || `reel-${Date.now()}`;
   const path = `${COLLECTIONS.REELS}/${reelId}`;
   const ownerId = currentUser.uid;
+  const now = Date.now();
 
   const docData = {
     id: reelId,
     ownerId,
+    uploaderId: reel.uploaderId || ownerId,
     userId: ownerId,
     title: reel.title,
     description: reel.description || '',
@@ -654,14 +876,29 @@ export async function addReelDoc(reel: ReelItem): Promise<void> {
     audioTrack: reel.audioTrack || 'Original Sound',
     audioArtist: reel.audioArtist || 'Vio Creator',
     tags: reel.tags || [],
+    ...(reel.hashtags ? { hashtags: reel.hashtags } : {}),
     visibility: reel.visibility || 'public',
     status: 'published',
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
+    ...(typeof reel.duration === 'number' ? { duration: reel.duration } : {}),
     ...(reel.sourceObjectPath ? { sourceObjectPath: reel.sourceObjectPath } : {}),
+    ...(reel.storagePath ? { storagePath: reel.storagePath } : {}),
+    ...(reel.thumbnailStoragePath ? { thumbnailStoragePath: reel.thumbnailStoragePath } : {}),
     ...(reel.hlsOutputPrefix ? { hlsOutputPrefix: reel.hlsOutputPrefix } : {}),
     ...(reel.hlsManifestUrl ? { hlsManifestUrl: reel.hlsManifestUrl } : {}),
-    ...(reel.transcodingStatus ? { transcodingStatus: reel.transcodingStatus } : {}),
+    transcodingStatus: reel.transcodingStatus || (reel.sourceObjectPath ? 'pending' : 'ready'),
     ...(reel.streamQualities ? { streamQualities: reel.streamQualities } : {}),
+    ...(reel.category ? { category: reel.category } : {}),
+    ...(reel.language ? { language: reel.language } : {}),
+    monetizationEnabled: reel.monetizationEnabled ?? true,
+    ...(reel.filterStyle ? { filterStyle: reel.filterStyle } : {}),
+    ...(reel.filterPreset ? { filterPreset: reel.filterPreset } : {}),
+    ...(typeof reel.trimStart === 'number' ? { trimStart: reel.trimStart } : {}),
+    ...(typeof reel.trimEnd === 'number' ? { trimEnd: reel.trimEnd } : {}),
+    ...(reel.cropAspect ? { cropAspect: reel.cropAspect } : {}),
+    ...(reel.cropFit ? { cropFit: reel.cropFit } : {}),
+    isMutedAudio: Boolean(reel.isMutedAudio),
   };
 
   try {
@@ -721,6 +958,8 @@ export async function addCommentDoc(
   authorHandle?: string
 ): Promise<void> {
   if (!auth.currentUser?.uid) return;
+  const safeContent = content.trim().slice(0, 2000);
+  if (!safeContent) return;
   const commentId = customId || `comment-${Date.now()}`;
   const path = `${COLLECTIONS.COMMENTS}/${commentId}`;
   const userId = auth.currentUser.uid;
@@ -732,11 +971,11 @@ export async function addCommentDoc(
     id: commentId,
     targetId,
     userId,
-    authorName,
-    authorHandle: normalizedHandle,
-    authorAvatar,
-    content,
-    text: content,
+    authorName: authorName.slice(0, 120),
+    authorHandle: normalizedHandle.slice(0, 64),
+    authorAvatar: authorAvatar.slice(0, 4096),
+    content: safeContent,
+    text: safeContent,
     likes: 0,
     timestamp: 'Just now',
     createdAt: Date.now(),
@@ -762,10 +1001,12 @@ export async function toggleCommentLikeDoc(commentId: string, nextLiked: boolean
 
 export async function updateCommentContentDoc(commentId: string, content: string): Promise<void> {
   if (!auth.currentUser?.uid) return;
+  const safeContent = content.trim().slice(0, 2000);
+  if (!safeContent) return;
   try {
     await updateDoc(doc(db, COLLECTIONS.COMMENTS, commentId), {
-      content,
-      text: content,
+      content: safeContent,
+      text: safeContent,
       isEdited: true,
     });
   } catch (error) {
@@ -824,57 +1065,98 @@ export async function toggleLike(
   try {
     const likeRef = doc(db, COLLECTIONS.LIKES, likeId);
     const existingSnap = await getDoc(likeRef);
+    const targetRef =
+      targetType === 'video'
+        ? doc(db, COLLECTIONS.VIDEOS, targetId)
+        : targetType === 'reel'
+        ? doc(db, COLLECTIONS.REELS, targetId)
+        : null;
+    const targetSnap = targetRef ? await getDoc(targetRef) : null;
+    const hasTargetDoc = Boolean(targetRef && targetSnap?.exists());
+
     if (existingSnap.exists()) {
       const prevType = existingSnap.data()?.type === 'dislike' ? 'dislike' : 'like';
       if (prevType === type) {
-        // Toggle off existing reaction
-        await deleteDoc(likeRef);
-        if (targetType === 'video') {
-          await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
-            [type === 'like' ? 'likes' : 'dislikes']: increment(-1),
-          }).catch(() => {});
-        } else if (targetType === 'reel' && type === 'like') {
-          await updateDoc(doc(db, COLLECTIONS.REELS, targetId), {
-            likes: increment(-1),
-          }).catch(() => {});
+        // Toggle off existing reaction atomically with target counter
+        if (hasTargetDoc && targetRef && targetSnap) {
+          const batch = writeBatch(db);
+          batch.delete(likeRef);
+          if (targetType === 'video') {
+            const field = type === 'like' ? 'likes' : 'dislikes';
+            const currentCount = Number(targetSnap.data()?.[field] || 0);
+            if (currentCount > 0) {
+              batch.update(targetRef, { [field]: increment(-1) });
+            }
+          } else if (targetType === 'reel' && type === 'like') {
+            const currentLikes = Number(targetSnap.data()?.likes || 0);
+            if (currentLikes > 0) {
+              batch.update(targetRef, { likes: increment(-1) });
+            }
+          }
+          await batch.commit();
+        } else {
+          await deleteDoc(likeRef);
         }
         return false;
       }
 
-      // Switch reaction between 'like' <-> 'dislike'
-      await setDoc(likeRef, {
+      // Switch reaction between 'like' <-> 'dislike' atomically
+      const switchedDoc = {
         id: likeId,
         userId: authUid,
         targetId,
         targetType,
         type,
         createdAt: Date.now(),
-      });
-      if (targetType === 'video') {
-        await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
-          likes: increment(type === 'like' ? 1 : -1),
-          dislikes: increment(type === 'dislike' ? 1 : -1),
-        }).catch(() => {});
+      };
+      if (hasTargetDoc && targetRef && targetSnap && targetType === 'video') {
+        const batch = writeBatch(db);
+        batch.set(likeRef, switchedDoc);
+        const currentLikes = Number(targetSnap.data()?.likes || 0);
+        const currentDislikes = Number(targetSnap.data()?.dislikes || 0);
+        const targetUpdates: Record<string, any> = {};
+        if (type === 'like') {
+          targetUpdates.likes = increment(1);
+          if (currentDislikes > 0) {
+            targetUpdates.dislikes = increment(-1);
+          }
+        } else {
+          targetUpdates.dislikes = increment(1);
+          if (currentLikes > 0) {
+            targetUpdates.likes = increment(-1);
+          }
+        }
+        batch.update(targetRef, targetUpdates);
+        await batch.commit();
+      } else {
+        await setDoc(likeRef, switchedDoc);
       }
       return true;
     } else {
-      // Create new reaction
-      await setDoc(likeRef, {
+      // Create new reaction atomically with target counter
+      const newLikeDoc = {
         id: likeId,
         userId: authUid,
         targetId,
         targetType,
         type,
         createdAt: Date.now(),
-      });
-      if (targetType === 'video') {
-        await updateDoc(doc(db, COLLECTIONS.VIDEOS, targetId), {
-          [type === 'like' ? 'likes' : 'dislikes']: increment(1),
-        }).catch(() => {});
-      } else if (targetType === 'reel' && type === 'like') {
-        await updateDoc(doc(db, COLLECTIONS.REELS, targetId), {
-          likes: increment(1),
-        }).catch(() => {});
+      };
+      if (hasTargetDoc && targetRef && (targetType === 'video' || (targetType === 'reel' && type === 'like'))) {
+        const batch = writeBatch(db);
+        batch.set(likeRef, newLikeDoc);
+        if (targetType === 'video') {
+          batch.update(targetRef, {
+            [type === 'like' ? 'likes' : 'dislikes']: increment(1),
+          });
+        } else if (targetType === 'reel' && type === 'like') {
+          batch.update(targetRef, {
+            likes: increment(1),
+          });
+        }
+        await batch.commit();
+      } else {
+        await setDoc(likeRef, newLikeDoc);
       }
       return true;
     }
@@ -1031,14 +1313,14 @@ export function subscribeNotifications(
   );
 }
 
-export async function markNotificationAsRead(notificationId: string): Promise<void> {
+export async function markNotificationAsRead(notificationId: string, read: boolean = true): Promise<void> {
   if (!auth.currentUser?.uid) return;
   try {
     await updateDoc(doc(db, COLLECTIONS.NOTIFICATIONS, notificationId), {
-      read: true,
+      read,
     });
   } catch (error) {
-    console.warn(`Could not mark notification ${notificationId} as read:`, error);
+    console.warn(`Could not update notification ${notificationId} read status:`, error);
   }
 }
 
@@ -1068,6 +1350,11 @@ export async function createNotification(notification: {
   const currentUid = auth.currentUser?.uid;
   if (!currentUid) {
     console.warn('Cannot create notification: User is not authenticated.');
+    return;
+  }
+
+  const serverRes = await createNotificationOnServer(notification);
+  if (serverRes.success || !serverRes.fallbackToClient) {
     return;
   }
 
@@ -1378,69 +1665,141 @@ export async function recordSearchQuery(userId: string, queryText: string): Prom
 // ----------------------------------------------------
 // FIREBASE STORAGE UPLOAD HANDLER
 // ----------------------------------------------------
+function inferMediaContentType(file: File, folder: 'videos' | 'profileImages' | 'thumbnails'): string {
+  if (file.type && (file.type.startsWith('video/') || file.type.startsWith('image/'))) {
+    return file.type;
+  }
+  const lower = file.name.toLowerCase();
+  if (folder === 'videos') {
+    if (lower.endsWith('.mov')) return 'video/quicktime';
+    if (lower.endsWith('.webm')) return 'video/webm';
+    return 'video/mp4';
+  }
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
+function formatStorageError(err: any): Error {
+  const code = String(err?.code || '');
+  const message = String(err?.message || err || '');
+  if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+    return new Error(
+      'Firebase Storage permission denied. Ensure you are signed in and Storage rules allow authenticated owner uploads.'
+    );
+  }
+  if (code === 'storage/canceled') {
+    return new Error('Upload was canceled. Click Retry Upload to start again.');
+  }
+  if (code === 'storage/bucket-not-found' || message.includes('does not exist') || message.includes('404')) {
+    return new Error(
+      'Firebase Storage bucket not provisioned yet. Open Firebase Console -> Storage -> Get Started to activate your Storage bucket, then click Retry Upload.'
+    );
+  }
+  if (code === 'storage/quota-exceeded') {
+    return new Error('Firebase Storage quota exceeded for this project.');
+  }
+  if (code === 'storage/retry-limit-exceeded') {
+    return new Error('Network interrupted while uploading to Firebase Storage. Check your connection and click Retry Upload.');
+  }
+  return err instanceof Error ? err : new Error(message || 'Firebase Storage upload failed.');
+}
+
+export async function uploadMediaFileToFirebaseStorage(params: {
+  file: File;
+  folder?: 'videos' | 'profileImages' | 'thumbnails';
+  videoId?: string;
+  visibility?: 'public' | 'unlisted' | 'private';
+  onProgress?: (progressPct: number, bytesTransferred: number, totalBytes: number) => void;
+  onTaskCreated?: (task: UploadTask) => void;
+}): Promise<{ downloadUrl: string; storagePath: string }> {
+  const {
+    file,
+    folder = 'videos',
+    videoId,
+    visibility = 'public',
+    onProgress,
+    onTaskCreated,
+  } = params;
+
+  const currentUser = auth.currentUser;
+  if (!currentUser?.uid) {
+    throw new Error('Please sign in to your Vio account before uploading files.');
+  }
+
+  if (folder === 'videos' && file.size > 500 * 1024 * 1024) {
+    throw new Error(
+      `Video file size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 500 MB Firebase Storage rule limit.`
+    );
+  }
+  if ((folder === 'thumbnails' || folder === 'profileImages') && file.size > 5 * 1024 * 1024) {
+    throw new Error(
+      `Image file size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 5 MB limit.`
+    );
+  }
+
+  const userId = currentUser.uid;
+  const prefix = videoId ? `${videoId}_` : '';
+  const cleanFileName = `${Date.now()}_${prefix}${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`.slice(0, 140);
+  const storagePath = `${folder}/${userId}/${cleanFileName}`;
+  const storageRef = ref(storage, storagePath);
+  const contentType = inferMediaContentType(file, folder);
+
+  const uploadMetadata = {
+    contentType,
+    customMetadata: {
+      userId,
+      uploaderId: userId,
+      uploadedAt: new Date().toISOString(),
+      visibility,
+      fileName: file.name,
+      ...(videoId ? { videoId } : {}),
+    },
+  };
+
+  return new Promise((resolve, reject) => {
+    const uploadTask = uploadBytesResumable(storageRef, file, uploadMetadata);
+    onTaskCreated?.(uploadTask);
+
+    uploadTask.on(
+      'state_changed',
+      (snapshot) => {
+        const pct =
+          snapshot.totalBytes > 0
+            ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
+            : 0;
+        onProgress?.(pct, snapshot.bytesTransferred, snapshot.totalBytes);
+      },
+      (error) => {
+        console.error('Firebase Storage upload error:', error);
+        reject(formatStorageError(error));
+      },
+      async () => {
+        try {
+          const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+          resolve({ downloadUrl, storagePath });
+        } catch (err) {
+          console.error('Firebase Storage getDownloadURL error:', err);
+          reject(formatStorageError(err));
+        }
+      }
+    );
+  });
+}
+
 export async function uploadFileToStorage(
   file: File,
   folder: 'videos' | 'profileImages' | 'thumbnails' = 'videos',
   onProgress?: (progressPct: number, bytesTransferred: number, totalBytes: number) => void,
   metadata?: { visibility?: 'public' | 'unlisted' | 'private'; [key: string]: any }
 ): Promise<string> {
-  const currentUser = auth.currentUser;
-  if (!currentUser?.uid) {
-    throw new Error('Please sign in to your Vio account before uploading files.');
-  }
-
-  // Enforce size limits matching Firebase Storage Security Rules
-  if (folder === 'videos' && file.size > 500 * 1024 * 1024) {
-    throw new Error(`Video file size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed 500 MB limit.`);
-  }
-  if ((folder === 'thumbnails' || folder === 'profileImages') && file.size > 5 * 1024 * 1024) {
-    throw new Error(`Image file size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the maximum allowed 5 MB limit.`);
-  }
-
-  const userId = currentUser.uid;
-  const cleanFileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-  const storagePath = `${folder}/${userId}/${cleanFileName}`;
-  const storageRef = ref(storage, storagePath);
-
-  const uploadMetadata = {
-    contentType: file.type || (folder === 'videos' ? 'video/mp4' : 'image/jpeg'),
-    customMetadata: {
-      userId,
-      uploadedAt: new Date().toISOString(),
-      visibility: metadata?.visibility || 'public',
-      fileName: file.name,
-      ...(metadata || {})
-    }
-  };
-
-  return new Promise((resolve, reject) => {
-    const uploadTask = uploadBytesResumable(storageRef, file, uploadMetadata);
-
-    uploadTask.on(
-      'state_changed',
-      (snapshot) => {
-        const pct = snapshot.totalBytes > 0
-          ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
-          : 0;
-        if (onProgress) {
-          onProgress(pct, snapshot.bytesTransferred, snapshot.totalBytes);
-        }
-      },
-      (error) => {
-        console.error('Firebase Storage upload error:', error);
-        reject(error);
-      },
-      async () => {
-        try {
-          const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-          resolve(downloadUrl);
-        } catch (err) {
-          console.error('Firebase Storage getDownloadURL error:', err);
-          reject(err);
-        }
-      }
-    );
+  const result = await uploadMediaFileToFirebaseStorage({
+    file,
+    folder,
+    visibility: metadata?.visibility || 'public',
+    onProgress,
   });
+  return result.downloadUrl;
 }
 
 /**

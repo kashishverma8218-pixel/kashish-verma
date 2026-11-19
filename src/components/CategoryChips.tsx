@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { CATEGORIES } from '../data/mockData';
+import { useLanguage } from '../context/LanguageContext';
 
 interface CategoryChipsProps {
   selectedCategory: string;
@@ -11,6 +12,7 @@ export const CategoryChips: React.FC<CategoryChipsProps> = ({
   selectedCategory,
   onSelectCategory,
 }) => {
+  const { t } = useLanguage();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -33,7 +35,7 @@ export const CategoryChips: React.FC<CategoryChipsProps> = ({
   };
 
   return (
-    <div className="sticky top-14 z-20 w-full bg-[var(--bg)]/95 backdrop-blur-md py-3 transition-colors">
+    <div className="sticky top-14 z-20 w-full bg-[var(--bg)]/95 backdrop-blur-md py-2 sm:py-2.5 transition-colors">
       <div className="relative flex items-center">
         {canScrollLeft && (
           <div className="hidden sm:flex items-center absolute left-0 top-0 bottom-0 z-10 pl-2 pr-6 bg-gradient-to-r from-[var(--bg)] via-[var(--bg)]/90 to-transparent">
@@ -51,7 +53,7 @@ export const CategoryChips: React.FC<CategoryChipsProps> = ({
         <div
           ref={scrollRef}
           onScroll={checkScroll}
-          className="flex items-center gap-2.5 overflow-x-auto px-4 sm:px-6 scrollbar-none no-scrollbar w-full"
+          className="flex items-center gap-2 overflow-x-auto px-3.5 sm:px-6 scrollbar-none no-scrollbar w-full"
         >
           {CATEGORIES.map((category) => {
             const isSelected = selectedCategory === category;
@@ -66,7 +68,7 @@ export const CategoryChips: React.FC<CategoryChipsProps> = ({
                     : 'bg-[var(--card-hover)] text-[var(--ink)] hover:bg-[var(--ink-faint)]'
                 }`}
               >
-                {category}
+                {t(`cat.${category}`, category)}
               </button>
             );
           })}

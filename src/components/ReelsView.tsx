@@ -28,7 +28,12 @@ import {
   Gauge,
   Flag,
   MessageSquarePlus,
-  Check
+  Check,
+  Subtitles,
+  Globe,
+  Loader2,
+  RotateCcw,
+  AlertCircle
 } from 'lucide-react';
 import Hls from 'hls.js';
 import { auth } from '../firebase';
@@ -38,8 +43,9 @@ import {
   fetchPlaybackSession,
   sanitizePlayableVideoUrl,
 } from '../services/streamingService';
-import { formatViews } from '../data/mockData';
+import { formatViews, INITIAL_REELS } from '../data/mockData';
 import { ReportModal } from './ReportModal';
+import { useLanguage } from '../context/LanguageContext';
 
 export interface ShortsSeries {
   id: string;
@@ -113,6 +119,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   onOpenUpload,
   initialReelId,
 }) => {
+  const { t } = useLanguage();
   const [activeIndex, setActiveIndex] = useState(() => {
     if (initialReelId) {
       const idx = reels.findIndex((r) => r.id === initialReelId);
@@ -129,6 +136,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [reportModalMode, setReportModalMode] = useState<'report' | 'feedback' | null>(null);
   const [clearScreen, setClearScreen] = useState(false);
+  const [showCaptions, setShowCaptions] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [newCommentText, setNewCommentText] = useState('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -136,6 +144,9 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   const [videoRatios, setVideoRatios] = useState<Record<string, number>>({});
   const [progress, setProgress] = useState(0);
   const [viewMode, setViewMode] = useState<'feed' | 'series'>('feed');
+  const [isBufferingReel, setIsBufferingReel] = useState(false);
+  const [reelError, setReelError] = useState<string | null>(null);
+  const [playbackRetryKey, setPlaybackRetryKey] = useState(0);
 
   const scrollFeedRef = useRef<HTMLDivElement>(null);
   const slideRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -255,6 +266,33 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
     return () => observer.disconnect();
   }, [reels.length]);
 
+  const tryAutoplayActiveReel = useCallback((videoEl: HTMLVideoElement, forceMutedAudio: boolean = false) => {
+    if (forceMutedAudio) {
+      videoEl.muted = true;
+    }
+    videoEl
+      .play()
+      .then(() => {
+        setIsPlaying(true);
+        setIsBufferingReel(false);
+      })
+      .catch(() => {
+        if (!videoEl.muted) {
+          videoEl.muted = true;
+          setIsMuted(true);
+          videoEl
+            .play()
+            .then(() => {
+              setIsPlaying(true);
+              setIsBufferingReel(false);
+            })
+            .catch(() => setIsPlaying(false));
+        } else {
+          setIsPlaying(false);
+        }
+      });
+  }, []);
+
   // Attach playback session & HLS stream to the active reel's <video>
   useEffect(() => {
     let cancelled = false;
@@ -263,12 +301,15 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
       hlsRef.current = null;
     }
     setIsReelHlsActive(false);
+    setReelError(null);
 
     const videoEl = activeVideoElRef.current;
     if (!videoEl || !activeReel) return;
 
+    const initialSeek = activeReel.trimStart && activeReel.trimStart > 0 ? activeReel.trimStart : 0;
+    const forceMuted = Boolean(activeReel.isMutedAudio);
     videoEl.dataset.fallbackApplied = 'false';
-    videoEl.currentTime = 0;
+    videoEl.currentTime = initialSeek;
     videoEl.playbackRate = playbackSpeed;
     setProgress(0);
 
@@ -287,7 +328,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         setIsReelHlsActive(true);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (cancelled) return;
-          videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+          tryAutoplayActiveReel(videoEl, forceMuted);
         });
         hls.on(Hls.Events.ERROR, (_e, data) => {
           if (!data.fatal) return;
@@ -307,7 +348,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
 
       if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
         setResolvedReelSrc(hlsManifestUrl);
-        videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        tryAutoplayActiveReel(videoEl, forceMuted);
         return;
       }
 
@@ -331,18 +372,25 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
           }
           if (session.fallbackUrl) {
             setResolvedReelSrc(session.fallbackUrl);
-            videoEl.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+            if (videoEl.getAttribute('src') !== session.fallbackUrl) {
+              videoEl.src = session.fallbackUrl;
+              videoEl.load();
+            }
+            tryAutoplayActiveReel(videoEl, forceMuted);
           }
         })
-        .catch(() => {
-          if (!cancelled) setResolvedReelSrc(activeVideoSrc);
+        .catch((err) => {
+          if (cancelled) return;
+          setIsBufferingReel(false);
+          setReelError(
+            err instanceof Error
+              ? err.message
+              : 'Unable to authorize playback for this Short / Reel right now.'
+          );
         });
     } else {
       setResolvedReelSrc(activeVideoSrc);
-      videoEl
-        .play()
-        .then(() => setIsPlaying(true))
-        .catch(() => setIsPlaying(false));
+      tryAutoplayActiveReel(videoEl, forceMuted);
     }
 
     return () => {
@@ -352,7 +400,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         hlsRef.current = null;
       }
     };
-  }, [activeIndex, activeReel?.id, activeVideoSrc]);
+  }, [activeIndex, activeReel?.id, activeVideoSrc, playbackRetryKey, tryAutoplayActiveReel]);
 
   // Keep playbackRate synchronized when user adjusts speed
   useEffect(() => {
@@ -361,10 +409,22 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
     }
   }, [playbackSpeed]);
 
-  const handleTimeUpdate = (reelId: string, e: React.SyntheticEvent<HTMLVideoElement>) => {
-    if (reelId !== activeReel?.id) return;
+  const handleTimeUpdate = (reel: ReelItem, e: React.SyntheticEvent<HTMLVideoElement>) => {
+    if (reel.id !== activeReel?.id) return;
     const vid = e.currentTarget;
-    if (vid.duration) {
+    const startBound = reel.trimStart && reel.trimStart > 0 ? reel.trimStart : 0;
+    const endBound = reel.trimEnd && reel.trimEnd > 0 ? reel.trimEnd : vid.duration;
+
+    if (reel.trimEnd && reel.trimEnd > 0 && vid.currentTime >= reel.trimEnd) {
+      vid.currentTime = startBound;
+      setProgress(0);
+      return;
+    }
+
+    if (endBound > startBound) {
+      const pct = ((vid.currentTime - startBound) / (endBound - startBound)) * 100;
+      setProgress(Math.max(0, Math.min(100, pct)));
+    } else if (vid.duration) {
       setProgress((vid.currentTime / vid.duration) * 100);
     }
   };
@@ -550,8 +610,9 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
 
   const handlePostComment = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCommentText.trim() || !activeReel) return;
-    onAddComment(activeReel.id, newCommentText.trim());
+    const trimmed = newCommentText.trim().slice(0, 2000);
+    if (!trimmed || !activeReel) return;
+    onAddComment(activeReel.id, trimmed);
     setNewCommentText('');
   };
 
@@ -561,10 +622,12 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
     return `${num}`;
   };
 
-  const resolveObjectFitClass = (reelId: string) => {
+  const resolveObjectFitClass = (reel: ReelItem) => {
     if (fitMode === 'cover') return 'object-cover';
     if (fitMode === 'contain') return 'object-contain';
-    const ratio = videoRatios[reelId];
+    if (reel.cropFit === 'contain') return 'object-contain';
+    if (reel.cropFit === 'cover') return 'object-cover';
+    const ratio = videoRatios[reel.id];
     // Portrait / vertical reels fill cleanly edge-to-edge; horizontal clips avoid side clipping
     if (ratio && ratio <= 1.05) return 'object-cover';
     return 'object-contain';
@@ -613,9 +676,9 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                   <ArrowLeft className="h-5 w-5" />
                 </button>
 
-                <div className="flex items-center gap-1.5 font-extrabold text-sm sm:text-base tracking-tight text-white shrink-0">
+                <div className="flex items-center gap-1.5 font-extrabold text-sm sm:text-base tracking-tight text-white shrink-0 drop-shadow">
                   <Sparkles className="h-4 w-4 text-[#FF0000] fill-[#FF0000]" />
-                  <span>Reels</span>
+                  <span>{t('nav.reelsShort', 'Reels')}</span>
                 </div>
 
                 <div className="flex items-center gap-0.5 bg-white/15 backdrop-blur-md rounded-full p-0.5 ml-1 shrink-0">
@@ -725,33 +788,63 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                       src={slideVideoSrc}
                       poster={reel.poster || FALLBACK_POSTER}
                       loop
-                      muted={isActive ? isMuted : true}
+                      muted={isActive ? (isMuted || Boolean(reel.isMutedAudio)) : true}
                       playsInline
                       preload={isActive ? 'auto' : 'metadata'}
+                      onLoadStart={() => {
+                        if (isActive) setIsBufferingReel(true);
+                      }}
+                      onWaiting={() => {
+                        if (isActive) setIsBufferingReel(true);
+                      }}
+                      onCanPlay={() => {
+                        if (isActive) setIsBufferingReel(false);
+                      }}
+                      onPlaying={() => {
+                        if (isActive) {
+                          setIsBufferingReel(false);
+                          setReelError(null);
+                        }
+                      }}
                       onLoadedMetadata={(e) => {
-                        const vw = e.currentTarget.videoWidth;
-                        const vh = e.currentTarget.videoHeight;
+                        const vid = e.currentTarget;
+                        const vw = vid.videoWidth;
+                        const vh = vid.videoHeight;
                         if (vw > 0 && vh > 0) {
                           setVideoRatios((prev) => ({
                             ...prev,
                             [reel.id]: vw / vh,
                           }));
                         }
+                        if (reel.trimStart && reel.trimStart > 0 && vid.duration > reel.trimStart) {
+                          vid.currentTime = reel.trimStart;
+                        }
                       }}
-                      onTimeUpdate={(e) => handleTimeUpdate(reel.id, e)}
+                      onTimeUpdate={(e) => handleTimeUpdate(reel, e)}
                       onClick={() => handleVideoClick(reel)}
                       onError={(e) => {
+                        if (isActive) setIsBufferingReel(false);
+                        const isSampleReel = INITIAL_REELS.some((sample) => sample.id === reel.id);
                         const target = e.currentTarget;
-                        if (target.dataset.fallbackApplied === 'true') return;
-                        if (target.src !== FALLBACK_REEL_SRC) {
+                        if (isSampleReel && target.dataset.fallbackApplied !== 'true' && target.src !== FALLBACK_REEL_SRC) {
                           target.dataset.fallbackApplied = 'true';
                           target.src = FALLBACK_REEL_SRC;
                           target.load();
-                          if (isActive) target.play().catch(() => {});
+                          if (isActive) tryAutoplayActiveReel(target, Boolean(reel.isMutedAudio));
+                          return;
+                        }
+                        if (isActive) {
+                          setReelError('Unable to load this Short / Reel right now. Check your connection or tap Retry.');
                         }
                       }}
+                      style={{
+                        filter:
+                          reel.filterStyle && reel.filterStyle !== 'none'
+                            ? reel.filterStyle
+                            : undefined,
+                      }}
                       className={`relative z-10 w-full h-full cursor-pointer transition-all duration-200 ${resolveObjectFitClass(
-                        reel.id
+                        reel
                       )}`}
                     />
                   ) : (
@@ -759,8 +852,42 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                       src={reel.poster || FALLBACK_POSTER}
                       alt={reel.title}
                       referrerPolicy="no-referrer"
+                      style={{
+                        filter:
+                          reel.filterStyle && reel.filterStyle !== 'none'
+                            ? reel.filterStyle
+                            : undefined,
+                      }}
                       className="relative z-10 w-full h-full object-cover"
                     />
+                  )}
+
+                  {/* Reel Buffering / Loading Spinner */}
+                  {isActive && isBufferingReel && !reelError && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-25 bg-black/25">
+                      <Loader2 className="h-10 w-10 animate-spin text-[#FF0000]" />
+                    </div>
+                  )}
+
+                  {/* Reel Error Recovery UI */}
+                  {isActive && reelError && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 p-6 text-center z-30">
+                      <AlertCircle className="h-9 w-9 text-amber-400 mb-2" />
+                      <p className="text-xs text-white/85 max-w-[240px] leading-relaxed">{reelError}</p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReelError(null);
+                          setIsBufferingReel(true);
+                          setPlaybackRetryKey((k) => k + 1);
+                        }}
+                        className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#FF0000] px-4 py-2 text-xs font-bold text-white hover:bg-[#CC0000] cursor-pointer"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>Retry</span>
+                      </button>
+                    </div>
                   )}
 
                   {/* Center Play/Pause Flash */}
@@ -798,9 +925,20 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                     </button>
                   )}
 
+                  {/* Captions Bar when CC Enabled */}
+                  {isActive && showCaptions && !clearScreen && (
+                    <div className="absolute bottom-36 inset-x-4 pr-12 md:pr-4 flex justify-center pointer-events-none z-25">
+                      <div className="rounded-xl bg-black/80 backdrop-blur-md border border-white/15 px-3.5 py-2 text-center shadow-lg max-w-[92%]">
+                        <p className="text-xs font-bold text-amber-300 leading-snug line-clamp-2">
+                          {reel.description || reel.title}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Bottom-Left Creator & Title Overlay (clean YouTube Shorts spacing, zero collision with right rail) */}
                   {!clearScreen && (
-                    <div className="absolute bottom-0 inset-x-0 px-3.5 sm:px-4 pt-16 pb-4 pr-[4.5rem] md:pr-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none z-20 space-y-2">
+                    <div className="absolute bottom-0 inset-x-0 px-3.5 sm:px-4 pt-20 pb-4 pr-[4.75rem] md:pr-4 bg-gradient-to-t from-black/95 via-black/55 to-transparent pointer-events-none z-20 space-y-2">
                       <div className="flex items-center gap-2 pointer-events-auto min-w-0">
                         <button
                           type="button"
@@ -808,7 +946,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                             e.stopPropagation();
                             if (slideChannel) onSelectChannel(slideChannel.id);
                           }}
-                          className="flex items-center gap-2 min-w-0 group text-left"
+                          className="flex items-center gap-2 min-w-0 group text-left cursor-pointer"
                         >
                           <img
                             src={slideChannel?.avatar || reel.poster || FALLBACK_AVATAR}
@@ -819,7 +957,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                                 e.currentTarget.src = FALLBACK_AVATAR;
                               }
                             }}
-                            className="h-9 w-9 rounded-full object-cover ring-1 ring-white/50 shrink-0"
+                            className="h-9 w-9 rounded-full object-cover ring-2 ring-white/40 shrink-0"
                           />
                           <div className="min-w-0">
                             <div className="flex items-center gap-1">
@@ -840,35 +978,51 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                               e.stopPropagation();
                               onToggleFollow(slideChannel.id);
                             }}
-                            className={`min-h-[32px] rounded-full px-3.5 py-1 text-xs font-bold transition-all shrink-0 active:scale-95 ${
+                            className={`min-h-[32px] rounded-full px-3.5 py-1 text-xs font-bold transition-all shrink-0 active:scale-95 cursor-pointer ${
                               slideFollowing
                                 ? 'bg-white/20 text-white border border-white/25 hover:bg-white/30 backdrop-blur-md'
                                 : 'bg-white text-black hover:bg-white/90 shadow-sm'
                             }`}
                           >
-                            {slideFollowing ? 'Following' : 'Follow'}
+                            {slideFollowing ? t('reels.following', 'Following') : t('reels.follow', 'Follow')}
                           </button>
                         )}
                       </div>
 
-                      {/* Tappable Title -> Opens Description Sheet */}
+                      {/* Tappable Title & Hashtags -> Opens Description Sheet */}
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           setDescriptionOpen(true);
                         }}
-                        className="pointer-events-auto block w-full text-left text-white drop-shadow-sm"
+                        className="pointer-events-auto block w-full text-left text-white drop-shadow-sm cursor-pointer space-y-0.5"
                       >
                         <p className="font-semibold text-[13px] sm:text-sm text-white/95 line-clamp-2 leading-snug">
                           {reel.title}
                         </p>
+                        {((reel.hashtags && reel.hashtags.length > 0) || (reel.tags && reel.tags.length > 0)) && (
+                          <p className="text-[11px] font-semibold text-sky-300/95 truncate">
+                            {(reel.hashtags && reel.hashtags.length > 0
+                              ? reel.hashtags
+                              : reel.tags.slice(0, 3).map((tag) => `#${tag.replace(/\s+/g, '')}`)
+                            ).join(' ')}
+                          </p>
+                        )}
                       </button>
 
-                      {/* Audio Track Line */}
-                      <div className="flex items-center gap-1.5 text-white/85 text-[11px] font-medium min-w-0">
-                        <Music className="h-3 w-3 text-white/90 shrink-0" />
-                        <span className="truncate">{reel.audioTrack}</span>
+                      {/* Audio Track & Language Line */}
+                      <div className="flex items-center gap-2 text-white/85 text-[11px] font-medium min-w-0">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Music className="h-3 w-3 text-white/90 shrink-0" />
+                          <span className="truncate">{reel.audioTrack}</span>
+                        </div>
+                        {reel.language && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-white/15 backdrop-blur-xs px-2 py-0.5 text-[10px] font-semibold text-white shrink-0">
+                            <Globe className="h-2.5 w-2.5" />
+                            <span>{reel.language}</span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   )}
@@ -931,7 +1085,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                           <Bookmark className={`h-5 w-5 ${reel.userSaved ? 'fill-[#0c0c0e]' : ''}`} />
                         </button>
                         <span className="text-[11px] font-semibold text-white drop-shadow">
-                          {reel.userSaved ? 'Saved' : 'Save'}
+                          {reel.userSaved ? t('reels.saved', 'Saved') : t('reels.save', 'Save')}
                         </span>
                       </div>
 
@@ -948,7 +1102,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                           <Share2 className="h-5 w-5" />
                         </button>
                         <span className="text-[11px] font-semibold text-white drop-shadow">
-                          Share
+                          {t('reels.share', 'Share')}
                         </span>
                       </div>
 
@@ -1105,7 +1259,26 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                 className="flex w-full items-center gap-4 px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors"
               >
                 <AlignLeft className="h-5 w-5 text-[var(--ink)]" />
-                <span>Description</span>
+                <span>{t('reels.description', 'Description')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCaptions((prev) => {
+                    const next = !prev;
+                    showToast(next ? 'Captions (CC) enabled' : 'Captions off');
+                    return next;
+                  });
+                  setMoreMenuOpen(false);
+                }}
+                className="flex w-full items-center justify-between px-4 py-3.5 rounded-xl hover:bg-[var(--card-hover)] text-sm font-medium transition-colors"
+              >
+                <div className="flex items-center gap-4">
+                  <Subtitles className="h-5 w-5 text-[var(--ink)]" />
+                  <span>{t('reels.captions', 'Captions')} (CC)</span>
+                </div>
+                {showCaptions && <Check className="h-4 w-4 text-[#FF0000]" />}
               </button>
 
               <button
@@ -1407,6 +1580,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
             >
               <input
                 type="text"
+                maxLength={2000}
                 placeholder="Add a comment on this reel..."
                 value={newCommentText}
                 onChange={(e) => setNewCommentText(e.target.value)}

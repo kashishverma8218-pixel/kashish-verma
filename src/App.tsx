@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Sparkles, CheckCircle2 } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavigationPage } from './components/Sidebar';
 import { CategoryChips } from './components/CategoryChips';
@@ -25,13 +26,16 @@ import { MiniplayerDock } from './components/MiniplayerDock';
 import { auth, testFirestoreConnection } from './firebase';
 import {
   seedInitialFirestoreData,
+  subscribeChannels,
+  upsertChannelDoc,
   subscribeVideos,
   subscribeReels,
   subscribeComments,
   subscribeNotifications,
-  markNotificationAsRead,
-  deleteNotificationDoc,
-  createNotification,
+  subscribeUserPlaylists,
+  createPlaylist,
+  updatePlaylistVideosDoc,
+  deletePlaylistDoc,
   toggleLike,
   toggleSubscription,
   addCommentDoc,
@@ -41,9 +45,7 @@ import {
   incrementCommentRepliesDoc,
   deleteCommentDoc,
   incrementVideoViews,
-  incrementReelViews,
   recordWatchHistory,
-  fetchWatchHistory,
   removeWatchHistoryDoc,
   clearWatchHistoryDocs,
   recordSearchQuery,
@@ -52,12 +54,11 @@ import {
   deleteVideoDoc,
   updateReelDoc,
   deleteReelDoc,
-  createPlaylist,
-  subscribeUserPlaylists,
-  updatePlaylistVideosDoc,
-  deletePlaylistDoc,
+  incrementReelViews,
   fetchUserSubscriptions,
   fetchUserReactions,
+  markNotificationAsRead,
+  deleteNotificationDoc,
 } from './services/firebaseDatabaseService';
 import { sanitizePlayableVideoUrl } from './services/streamingService';
 
@@ -75,13 +76,13 @@ import {
   Channel,
   Comment,
   HistoryItem,
+  PlaylistItem,
   VideoFilters,
   AspectRatioMode,
   Bookmark,
   NotificationItem,
   ReelItem,
-  ReelComment,
-  PlaylistItem
+  ReelComment
 } from './types/video';
 
 const DEFAULT_FILTERS: VideoFilters = {
@@ -96,10 +97,11 @@ const DEFAULT_FILTERS: VideoFilters = {
 
 function MainApp() {
   const { currentUser, userProfile, updateUserProfileData } = useAuth();
+  const { t } = useLanguage();
 
-  // Theme State (Variation 2 defaults to #0c0c0e dark architectural canvas; honors explicit user toggle)
+  // Theme State (Defaults to clean Light Mode canvas; honors explicit user toggle)
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
-    return localStorage.getItem('vio_streaming_theme_v3') !== 'light';
+    return localStorage.getItem('vio_streaming_theme_v4') === 'dark';
   });
 
   // Navigation & Page State
@@ -109,27 +111,9 @@ function MainApp() {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSearchTerm, setActiveSearchTerm] = useState<string>('');
-  const [searchSortBy, setSearchSortBy] = useState<'relevance' | 'views' | 'likes'>('relevance');
-  const [searchDurationFilter, setSearchDurationFilter] = useState<'all' | 'short' | 'medium' | 'long'>('all');
-  const [isTheaterMode, setIsTheaterMode] = useState<boolean>(() => {
-    return localStorage.getItem('vio_pref_theater') === 'true';
-  });
-  const [miniplayerState, setMiniplayerState] = useState<{ videoId: string; startTime: number } | null>(null);
-  const [activeQueue, setActiveQueue] = useState<{
-    title: string;
-    videoIds: string[];
-    shuffle: boolean;
-    loop: boolean;
-  } | null>(null);
 
-  // App Splash Screen State (shown once per browser session)
-  const [showSplash, setShowSplash] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem('vio_splash_seen') !== '1';
-    } catch {
-      return true;
-    }
-  });
+  // App Splash Screen State (shown on opening)
+  const [showSplash, setShowSplash] = useState<boolean>(true);
 
   // Reels State (with localStorage persistence for likes, saves, and comments)
   const [reels, setReels] = useState<ReelItem[]>(() => {
@@ -213,23 +197,32 @@ function MainApp() {
   useEffect(() => {
     if (userProfile) {
       const userChannelId = `channel-${userProfile.uid}`;
+      const syncedChannel: Channel = {
+        id: userChannelId,
+        name: userProfile.displayName,
+        handle: userProfile.handle,
+        avatar: userProfile.photoURL,
+        banner: userProfile.bannerURL,
+        verified: true,
+        subscribersCount: userProfile.subscribersCount || 150,
+        isSubscribed: false,
+        notificationBell: 'all',
+        bio: userProfile.bio,
+        joinedDate: 'Joined recently',
+        videoCount: videos.filter((v) => v.channelId === userChannelId).length,
+      };
       setChannels((prev) => ({
         ...prev,
         [userChannelId]: {
-          id: userChannelId,
-          name: userProfile.displayName,
-          handle: userProfile.handle,
-          avatar: userProfile.photoURL,
-          banner: userProfile.bannerURL,
-          verified: true,
-          subscribersCount: userProfile.subscribersCount || 150,
-          isSubscribed: false,
-          notificationBell: 'all',
-          bio: userProfile.bio,
-          joinedDate: 'Joined recently',
-          videoCount: videos.filter((v) => v.channelId === userChannelId).length,
+          ...syncedChannel,
+          isSubscribed: prev[userChannelId]?.isSubscribed ?? false,
+          isFollowing: prev[userChannelId]?.isFollowing ?? false,
+          notificationBell: prev[userChannelId]?.notificationBell ?? 'all',
         },
       }));
+      if (auth.currentUser?.uid && auth.currentUser.uid === userProfile.uid) {
+        upsertChannelDoc(syncedChannel, userProfile.uid).catch(() => {});
+      }
     }
   }, [userProfile]);
 
@@ -271,6 +264,50 @@ function MainApp() {
     return ['video-bbb'];
   });
 
+  const [dislikedVideoIds, setDislikedVideoIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('vio_streaming_disliked_videos');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+
+  const [playlists, setPlaylists] = useState<PlaylistItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('vio_streaming_playlists');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+
+  const [activePlaylistState, setActivePlaylistState] = useState<{
+    id?: string;
+    title: string;
+    videoIds: string[];
+    shuffle: boolean;
+    loop: boolean;
+  } | null>(null);
+
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('vio_streaming_search_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => {
     try {
       const saved = localStorage.getItem('vio_streaming_bookmarks') || localStorage.getItem('vio_bookmarks');
@@ -284,35 +321,6 @@ function MainApp() {
     ];
   });
 
-  const [playlists, setPlaylists] = useState<PlaylistItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('vio_streaming_playlists');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return [
-      {
-        id: 'pl-favorites',
-        title: 'Cinematography & Open Films',
-        description: 'Curated showcase of 4K open animations and VFX breakdowns',
-        videoIds: ['video-bbb', 'video-sintel'],
-        isPublic: true,
-        createdAt: Date.now() - 86400000,
-      },
-    ];
-  });
-
-  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('vio_streaming_search_history');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return [];
-  });
-
   // Notifications State with LocalStorage persistence
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
     try {
@@ -324,9 +332,12 @@ function MainApp() {
     return INITIAL_NOTIFICATIONS;
   });
 
-  // Player Adjustments
+  // Player Adjustments & Modes
   const [filters, setFilters] = useState<VideoFilters>(DEFAULT_FILTERS);
   const [aspectRatio, setAspectRatio] = useState<AspectRatioMode>('auto');
+  const [isTheaterMode, setIsTheaterMode] = useState<boolean>(false);
+  const [miniplayerVideo, setMiniplayerVideo] = useState<VideoItem | null>(null);
+  const [miniplayerTime, setMiniplayerTime] = useState<number>(0);
 
   // Modals & Preferences
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -357,18 +368,16 @@ function MainApp() {
   }, []);
 
   const deepLinkResolvedRef = useRef(false);
-  const lastWatchSyncRef = useRef<Record<string, number>>({});
 
-  // Resolve shared deep links (?v=id&t=sec, ?reel=id, or ?channel=id)
+  // Resolve shared deep links (?v=id&t=sec or ?reel=id)
   useEffect(() => {
     if (deepLinkResolvedRef.current) return;
     const params = new URLSearchParams(window.location.search);
     const vParam = params.get('v');
     const tParam = params.get('t');
     const reelParam = params.get('reel');
-    const channelParam = params.get('channel');
 
-    if (!vParam && !reelParam && !channelParam) {
+    if (!vParam && !reelParam) {
       deepLinkResolvedRef.current = true;
       return;
     }
@@ -378,16 +387,6 @@ function MainApp() {
       if (matchedReel) {
         setInitialReelId(matchedReel.id);
         setCurrentPage('reels');
-        deepLinkResolvedRef.current = true;
-      }
-      return;
-    }
-
-    if (channelParam) {
-      const matchedChannel = channels[channelParam];
-      if (matchedChannel) {
-        setActiveChannelId(matchedChannel.id);
-        setCurrentPage('channel');
         deepLinkResolvedRef.current = true;
       }
       return;
@@ -403,17 +402,20 @@ function MainApp() {
         deepLinkResolvedRef.current = true;
       }
     }
-  }, [videos, reels, channels]);
+  }, [videos, reels]);
 
-  // Sync Dark Mode
+  // Sync Dark / Light Mode
   useEffect(() => {
     const root = document.documentElement;
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     if (isDarkMode) {
       root.classList.add('dark');
-      localStorage.setItem('vio_streaming_theme_v3', 'dark');
+      localStorage.setItem('vio_streaming_theme_v4', 'dark');
+      if (themeColorMeta) themeColorMeta.setAttribute('content', '#0F0F0F');
     } else {
       root.classList.remove('dark');
-      localStorage.setItem('vio_streaming_theme_v3', 'light');
+      localStorage.setItem('vio_streaming_theme_v4', 'light');
+      if (themeColorMeta) themeColorMeta.setAttribute('content', '#FFFFFF');
     }
   }, [isDarkMode]);
 
@@ -451,78 +453,107 @@ function MainApp() {
       }
     });
 
+    // Live real-time sync for channels collection (preserving per-viewer subscription/follow/bell state)
+    const unsubChannels = subscribeChannels((firestoreChannels) => {
+      if (!firestoreChannels || Object.keys(firestoreChannels).length === 0) return;
+      setChannels((prev) => {
+        const next = { ...prev };
+        for (const [chId, fsCh] of Object.entries(firestoreChannels)) {
+          const existing = next[chId];
+          next[chId] = {
+            id: chId,
+            name: fsCh.name || existing?.name || 'Creator',
+            handle: fsCh.handle || existing?.handle || `@${chId}`,
+            avatar:
+              fsCh.avatar ||
+              existing?.avatar ||
+              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
+            banner:
+              fsCh.banner ||
+              existing?.banner ||
+              'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+            verified: typeof fsCh.verified === 'boolean' ? fsCh.verified : Boolean(existing?.verified),
+            subscribersCount:
+              typeof fsCh.subscribersCount === 'number'
+                ? fsCh.subscribersCount
+                : (existing?.subscribersCount ?? 0),
+            followersCount:
+              typeof fsCh.followersCount === 'number' ? fsCh.followersCount : existing?.followersCount,
+            bio: fsCh.bio !== undefined ? fsCh.bio : (existing?.bio || ''),
+            joinedDate: fsCh.joinedDate || existing?.joinedDate || 'Joined recently',
+            videoCount: typeof fsCh.videoCount === 'number' ? fsCh.videoCount : existing?.videoCount,
+            isSubscribed: existing?.isSubscribed ?? false,
+            isFollowing: existing?.isFollowing ?? false,
+            notificationBell: existing?.notificationBell ?? 'none',
+          };
+        }
+        return next;
+      });
+    });
+
     return () => {
       unsubVideos();
       unsubReels();
+      unsubChannels();
     };
   }, []);
 
-  // Firestore User Subscriptions, Reactions, History, Playlists, and Notifications (when signed in)
+  // Firestore User Subscriptions, Likes/Dislikes, Playlists, and Notifications
   useEffect(() => {
     if (currentUser?.uid && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
-      // Live notifications
       const unsubNotifs = subscribeNotifications(currentUser.uid, (userNotifs) => {
-        if (userNotifs) {
+        if (userNotifs && userNotifs.length > 0) {
           setNotifications(userNotifs);
         }
       });
 
-      // Live user playlists
-      const unsubPlaylists = subscribeUserPlaylists(currentUser.uid, (fsPlaylists) => {
-        if (fsPlaylists) {
-          setPlaylists(fsPlaylists);
+      const unsubPlaylists = subscribeUserPlaylists(currentUser.uid, (userPlaylists) => {
+        if (userPlaylists) {
+          setPlaylists((prev) => {
+            const fsIds = new Set(userPlaylists.map((p) => p.id));
+            const localOnly = prev.filter((p) => !fsIds.has(p.id) && !p.userId);
+            return [...userPlaylists, ...localOnly];
+          });
         }
       });
 
-      // User subscriptions from Firestore
       fetchUserSubscriptions(currentUser.uid)
         .then((subChannels) => {
-          setChannels((prev) => {
-            const next = { ...prev };
-            for (const chId in next) {
-              next[chId] = { ...next[chId], isSubscribed: subChannels.has(chId) };
-            }
-            return next;
-          });
+          if (subChannels && subChannels.size > 0) {
+            setChannels((prev) => {
+              const next = { ...prev };
+              for (const chId in next) {
+                if (subChannels.has(chId)) {
+                  next[chId] = { ...next[chId], isSubscribed: true };
+                }
+              }
+              return next;
+            });
+          }
         })
         .catch(() => {});
 
-      // User likes & dislikes from Firestore
       fetchUserReactions(currentUser.uid)
         .then(({ likes, dislikes }) => {
-          setLikedVideoIds(Array.from(likes));
+          if (likes.size > 0) {
+            setLikedVideoIds(Array.from(likes));
+          }
+          if (dislikes.size > 0) {
+            setDislikedVideoIds(Array.from(dislikes));
+          }
           setVideos((prev) =>
             prev.map((v) => ({
               ...v,
-              userLiked: likes.has(v.id),
-              userDisliked: dislikes.has(v.id),
+              userLiked: likes.has(v.id) || v.userLiked,
+              userDisliked: dislikes.has(v.id) || v.userDisliked,
             }))
           );
           setReels((prev) =>
             prev.map((r) => ({
               ...r,
-              userLiked: likes.has(r.id),
+              userLiked: likes.has(r.id) || r.userLiked,
             }))
           );
-        })
-        .catch(() => {});
-
-      // User watch history from Firestore
-      fetchWatchHistory(currentUser.uid)
-        .then((rows) => {
-          if (Array.isArray(rows) && rows.length > 0) {
-            const mapped: HistoryItem[] = rows
-              .filter((r) => r.videoId)
-              .map((r) => ({
-                videoId: r.videoId,
-                watchedAt: typeof r.watchedAt === 'number' ? r.watchedAt : Date.now(),
-                progressSeconds: typeof r.progressSeconds === 'number' ? r.progressSeconds : 0,
-              }))
-              .sort((a, b) => b.watchedAt - a.watchedAt);
-            if (mapped.length > 0) {
-              setHistory(mapped);
-            }
-          }
         })
         .catch(() => {});
 
@@ -530,29 +561,6 @@ function MainApp() {
         unsubNotifs();
         unsubPlaylists();
       };
-    } else if (currentUser === null) {
-      // Clear signed-in user flags cleanly when signed out
-      setChannels((prev) => {
-        const next = { ...prev };
-        for (const chId in next) {
-          next[chId] = { ...next[chId], isSubscribed: false };
-        }
-        return next;
-      });
-      setVideos((prev) =>
-        prev.map((v) => ({
-          ...v,
-          userLiked: false,
-          userDisliked: false,
-        }))
-      );
-      setReels((prev) =>
-        prev.map((r) => ({
-          ...r,
-          userLiked: false,
-        }))
-      );
-      setLikedVideoIds([]);
     }
   }, [currentUser]);
 
@@ -582,8 +590,8 @@ function MainApp() {
   }, [likedVideoIds]);
 
   useEffect(() => {
-    localStorage.setItem('vio_streaming_bookmarks', JSON.stringify(bookmarks));
-  }, [bookmarks]);
+    localStorage.setItem('vio_streaming_disliked_videos', JSON.stringify(dislikedVideoIds));
+  }, [dislikedVideoIds]);
 
   useEffect(() => {
     localStorage.setItem('vio_streaming_playlists', JSON.stringify(playlists));
@@ -592,6 +600,10 @@ function MainApp() {
   useEffect(() => {
     localStorage.setItem('vio_streaming_search_history', JSON.stringify(searchHistory));
   }, [searchHistory]);
+
+  useEffect(() => {
+    localStorage.setItem('vio_streaming_bookmarks', JSON.stringify(bookmarks));
+  }, [bookmarks]);
 
   useEffect(() => {
     localStorage.setItem('vio_streaming_notifications', JSON.stringify(notifications));
@@ -646,28 +658,24 @@ function MainApp() {
     return () => unsubComments();
   }, [currentPage, activeVideoId]);
 
-  // Handlers
-  const handleToggleTheaterMode = useCallback(() => {
-    setIsTheaterMode((prev) => {
-      const next = !prev;
-      localStorage.setItem('vio_pref_theater', String(next));
-      return next;
-    });
-  }, []);
+  const lastProgressSyncRef = useRef<{ videoId: string; seconds: number }>({ videoId: '', seconds: 0 });
 
-  const handlePlayVideo = (video: VideoItem, seekSeconds: number | null = null) => {
-    setMiniplayerState(null);
-    setInitialSeekTime(seekSeconds);
+  // Handlers
+  const handlePlayVideo = (video: VideoItem, seekSeconds?: number) => {
+    setMiniplayerVideo(null);
+    setInitialSeekTime(typeof seekSeconds === 'number' && seekSeconds > 0 ? seekSeconds : null);
     setActiveVideoId(video.id);
     setCurrentPage('watch');
 
     if (saveHistoryPref) {
+      const existingProgress = history.find((h) => h.videoId === video.id)?.progressSeconds ?? 15;
+      const startProgress = typeof seekSeconds === 'number' && seekSeconds > 0 ? Math.floor(seekSeconds) : existingProgress;
       setHistory((prev) => {
         const filtered = prev.filter((h) => h.videoId !== video.id);
-        return [{ videoId: video.id, watchedAt: Date.now(), progressSeconds: seekSeconds ?? 15 }, ...filtered];
+        return [{ videoId: video.id, watchedAt: Date.now(), progressSeconds: startProgress }, ...filtered];
       });
       if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-        recordWatchHistory(currentUser.uid, video, seekSeconds ?? 15);
+        recordWatchHistory(currentUser.uid, video, startProgress);
       }
     }
 
@@ -682,17 +690,102 @@ function MainApp() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleWatchProgress = useCallback(
+    (video: VideoItem, seconds: number) => {
+      if (!saveHistoryPref || seconds < 2) return;
+      setHistory((prev) => {
+        const existing = prev.find((h) => h.videoId === video.id);
+        const others = prev.filter((h) => h.videoId !== video.id);
+        return [
+          {
+            videoId: video.id,
+            watchedAt: existing?.watchedAt || Date.now(),
+            progressSeconds: seconds,
+          },
+          ...others,
+        ];
+      });
+
+      const prevSync = lastProgressSyncRef.current;
+      if (
+        currentUser?.uid &&
+        auth.currentUser?.uid === currentUser.uid &&
+        (prevSync.videoId !== video.id || Math.abs(seconds - prevSync.seconds) >= 15)
+      ) {
+        lastProgressSyncRef.current = { videoId: video.id, seconds };
+        recordWatchHistory(currentUser.uid, video, seconds);
+      }
+    },
+    [saveHistoryPref, currentUser]
+  );
+
   const handlePlayQueue = (title: string, videoIds: string[]) => {
-    const validIds = videoIds.filter((id) => videos.some((v) => v.id === id));
-    if (validIds.length === 0) return;
-    setActiveQueue({
+    const validVideos = videoIds
+      .map((id) => videos.find((v) => v.id === id))
+      .filter(Boolean) as VideoItem[];
+    if (validVideos.length === 0) return;
+    setActivePlaylistState({
       title,
-      videoIds: validIds,
+      videoIds: validVideos.map((v) => v.id),
       shuffle: false,
       loop: false,
     });
-    const first = videos.find((v) => v.id === validIds[0]);
-    if (first) handlePlayVideo(first);
+    handlePlayVideo(validVideos[0]);
+  };
+
+  const handleCreatePlaylist = (title: string, initialVideoId?: string) => {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return;
+    const playlistId = `playlist-${Date.now()}`;
+    const initialIds = initialVideoId ? [initialVideoId] : [];
+    const newPlaylist: PlaylistItem = {
+      id: playlistId,
+      userId: currentUser?.uid,
+      title: cleanTitle,
+      description: '',
+      videoIds: initialIds,
+      isPublic: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setPlaylists((prev) => [newPlaylist, ...prev]);
+
+    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+      createPlaylist(currentUser.uid, cleanTitle, '', true, playlistId, initialIds).catch(() => {});
+    }
+  };
+
+  const handleDeletePlaylist = (playlistId: string) => {
+    setPlaylists((prev) => prev.filter((p) => p.id !== playlistId));
+    if (activePlaylistState?.id === playlistId) {
+      setActivePlaylistState(null);
+    }
+    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+      deletePlaylistDoc(playlistId).catch(() => {});
+    }
+  };
+
+  const handleToggleVideoInPlaylist = (playlistId: string, videoId: string) => {
+    let nextIdsForCloud: string[] | null = null;
+    setPlaylists((prev) =>
+      prev.map((pl) => {
+        if (pl.id !== playlistId) return pl;
+        const exists = pl.videoIds.includes(videoId);
+        const nextIds = exists
+          ? pl.videoIds.filter((id) => id !== videoId)
+          : [...pl.videoIds, videoId];
+        nextIdsForCloud = nextIds;
+        return {
+          ...pl,
+          videoIds: nextIds,
+          updatedAt: Date.now(),
+        };
+      })
+    );
+
+    if (nextIdsForCloud && currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+      updatePlaylistVideosDoc(playlistId, nextIdsForCloud).catch(() => {});
+    }
   };
 
   const handleSelectChannel = (channelId: string) => {
@@ -762,6 +855,7 @@ function MainApp() {
     setLikedVideoIds((prev) =>
       prev.includes(videoId) ? prev.filter((id) => id !== videoId) : [videoId, ...prev]
     );
+    setDislikedVideoIds((prev) => prev.filter((id) => id !== videoId));
   };
 
   const handleToggleDislike = (videoId: string) => {
@@ -790,6 +884,9 @@ function MainApp() {
     if (wasLiked) {
       setLikedVideoIds((prev) => prev.filter((id) => id !== videoId));
     }
+    setDislikedVideoIds((prev) =>
+      prev.includes(videoId) ? prev.filter((id) => id !== videoId) : [videoId, ...prev]
+    );
   };
 
   const handleToggleWatchLater = (videoId: string) => {
@@ -823,7 +920,7 @@ function MainApp() {
       replies: [],
     };
 
-    // Persist comment to Firestore with matching document ID
+    // Persist comment to Firestore with matching document ID and handle
     addCommentDoc(videoId, content, authorName, authorAvatar, commentId, authorHandle).catch((err) => {
       console.warn('Could not persist comment to Firestore:', err);
     });
@@ -835,14 +932,25 @@ function MainApp() {
   };
 
   const handleLikeComment = (commentId: string) => {
-    let toggledNextLiked: boolean | null = null;
+    let nextLikedForCloud: boolean | null = null;
+    for (const vid in commentsMap) {
+      const match = (commentsMap[vid] || []).find((c) => c.id === commentId);
+      if (match) {
+        nextLikedForCloud = !match.userLiked;
+        break;
+      }
+    }
+
+    if (nextLikedForCloud !== null && currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+      toggleCommentLikeDoc(commentId, nextLikedForCloud).catch(() => {});
+    }
+
     setCommentsMap((prev) => {
       const updated = { ...prev };
       for (const vid in updated) {
         updated[vid] = updated[vid].map((c) => {
           if (c.id === commentId) {
             const nextLiked = !c.userLiked;
-            toggledNextLiked = nextLiked;
             return {
               ...c,
               userLiked: nextLiked,
@@ -855,9 +963,6 @@ function MainApp() {
       }
       return updated;
     });
-    if (toggledNextLiked !== null && currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-      toggleCommentLikeDoc(commentId, toggledNextLiked).catch(() => {});
-    }
   };
 
   const handleDislikeComment = (commentId: string) => {
@@ -876,6 +981,51 @@ function MainApp() {
           }
           return c;
         });
+      }
+      return updated;
+    });
+  };
+
+  const handleEditComment = (commentId: string, content: string) => {
+    const clean = content.trim();
+    if (!clean) return;
+    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+      updateCommentContentDoc(commentId, clean).catch(() => {});
+    }
+    setCommentsMap((prev) => {
+      const updated = { ...prev };
+      for (const vid in updated) {
+        updated[vid] = updated[vid].map((c) =>
+          c.id === commentId ? { ...c, content: clean, isEdited: true } : c
+        );
+      }
+      return updated;
+    });
+  };
+
+  const handlePinComment = (commentId: string) => {
+    let targetPinState = true;
+    for (const vid in commentsMap) {
+      const match = (commentsMap[vid] || []).find((c) => c.id === commentId);
+      if (match) {
+        targetPinState = !match.isPinned;
+        break;
+      }
+    }
+
+    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+      pinCommentDoc(commentId, targetPinState).catch(() => {});
+    }
+
+    setCommentsMap((prev) => {
+      const updated = { ...prev };
+      for (const vid in updated) {
+        const hasTarget = updated[vid].some((c) => c.id === commentId);
+        if (hasTarget) {
+          updated[vid] = updated[vid].map((c) =>
+            c.id === commentId ? { ...c, isPinned: targetPinState } : { ...c, isPinned: false }
+          );
+        }
       }
       return updated;
     });
@@ -921,48 +1071,6 @@ function MainApp() {
     });
   };
 
-  const handleEditComment = (commentId: string, content: string) => {
-    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-      updateCommentContentDoc(commentId, content).catch(() => {});
-    }
-    setCommentsMap((prev) => {
-      const updated = { ...prev };
-      for (const vid in updated) {
-        updated[vid] = updated[vid].map((c) =>
-          c.id === commentId ? { ...c, content, isEdited: true } : c
-        );
-      }
-      return updated;
-    });
-  };
-
-  const handlePinComment = (commentId: string) => {
-    const videoComments = commentsMap[activeVideo.id] || [];
-    const target = videoComments.find((c) => c.id === commentId);
-    if (!target) return;
-    const nextPinned = !target.isPinned;
-
-    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-      pinCommentDoc(commentId, nextPinned).catch(() => {});
-      videoComments.forEach((c) => {
-        if (c.id !== commentId && c.isPinned) {
-          pinCommentDoc(c.id, false).catch(() => {});
-        }
-      });
-    }
-
-    setCommentsMap((prev) => ({
-      ...prev,
-      [activeVideo.id]: (prev[activeVideo.id] || []).map((c) =>
-        c.id === commentId
-          ? { ...c, isPinned: nextPinned }
-          : nextPinned
-          ? { ...c, isPinned: false }
-          : c
-      ),
-    }));
-  };
-
   const handlePublishVideo = (newVideo: VideoItem) => {
     if (!newVideo || !newVideo.id || !newVideo.url) {
       console.warn('handlePublishVideo: Skipped invalid video payload', newVideo);
@@ -980,19 +1088,6 @@ function MainApp() {
       }
       return updated;
     });
-
-    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-      createNotification({
-        userId: currentUser.uid,
-        type: 'upload',
-        title: 'Video Published',
-        message: `Your video "${newVideo.title}" is now live on Vio streaming.`,
-        avatar: userProfile?.photoURL || currentUser.photoURL || '',
-        thumbnailUrl: newVideo.poster,
-        videoId: newVideo.id,
-        channelId: newVideo.channelId,
-      }).catch(() => {});
-    }
 
     setActiveVideoId(newVideo.id);
     handlePlayVideo(newVideo);
@@ -1033,43 +1128,36 @@ function MainApp() {
         photoURL: updatedChannel.avatar,
         bannerURL: updatedChannel.banner,
       }).catch(() => {});
+      if (auth.currentUser?.uid && auth.currentUser.uid === userProfile.uid) {
+        upsertChannelDoc(updatedChannel, userProfile.uid).catch(() => {});
+      }
     }
   };
 
   const handlePublishReel = (newReel: ReelItem) => {
     if (!newReel || !newReel.id || !newReel.videoUrl) return;
     setReels((prev) => [newReel, ...prev.filter((r) => r.id !== newReel.id)]);
-    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-      createNotification({
-        userId: currentUser.uid,
-        type: 'upload',
-        title: 'Reel Published',
-        message: `Your Reel "${newReel.title}" is live on Vio Reels.`,
-        avatar: userProfile?.photoURL || currentUser.photoURL || '',
-        thumbnailUrl: newReel.poster,
-        channelId: newReel.channelId,
-      }).catch(() => {});
-    }
     setInitialReelId(newReel.id);
     setCurrentPage('reels');
   };
 
-  const handleUpdateReel = (updatedReel: ReelItem) => {
-    setReels((prev) => prev.map((r) => (r.id === updatedReel.id ? updatedReel : r)));
-    updateReelDoc(updatedReel.id, updatedReel).catch(() => {});
+  const viewedReelsRef = useRef<Set<string>>(new Set());
+
+  const handleReelView = useCallback((reelId: string) => {
+    if (viewedReelsRef.current.has(reelId)) return;
+    viewedReelsRef.current.add(reelId);
+    incrementReelViews(reelId).catch(() => {});
+  }, []);
+
+  const handleUpdateReel = (updated: ReelItem) => {
+    setReels((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    updateReelDoc(updated.id, updated).catch(() => {});
   };
 
   const handleDeleteReel = (reelId: string) => {
-    setReels((prev) => prev.filter((r) => r.id !== reelId));
     deleteReelDoc(reelId).catch(() => {});
+    setReels((prev) => prev.filter((r) => r.id !== reelId));
   };
-
-  const handleReelView = useCallback((reelId: string) => {
-    setReels((prev) =>
-      prev.map((r) => (r.id === reelId ? { ...r, views: (r.views || 0) + 1 } : r))
-    );
-    incrementReelViews(reelId);
-  }, []);
 
   const handleDeleteComment = (videoId: string, commentId: string) => {
     deleteCommentDoc(commentId).catch(() => {});
@@ -1092,90 +1180,6 @@ function MainApp() {
       removeWatchHistoryDoc(currentUser.uid, videoId).catch(() => {});
     }
   };
-
-  const handleUpdateWatchProgress = useCallback(
-    (video: VideoItem, seconds: number) => {
-      if (!saveHistoryPref) return;
-      const rounded = Math.max(0, Math.round(seconds));
-      setHistory((prev) => {
-        const existing = prev.find((h) => h.videoId === video.id);
-        const others = prev.filter((h) => h.videoId !== video.id);
-        return [
-          {
-            videoId: video.id,
-            watchedAt: existing?.watchedAt || Date.now(),
-            progressSeconds: rounded,
-          },
-          ...others,
-        ];
-      });
-      if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-        const now = Date.now();
-        const lastSync = lastWatchSyncRef.current[video.id] || 0;
-        if (now - lastSync >= 15000) {
-          lastWatchSyncRef.current[video.id] = now;
-          recordWatchHistory(currentUser.uid, video, rounded);
-        }
-      }
-    },
-    [saveHistoryPref, currentUser]
-  );
-
-  const handleCreatePlaylist = useCallback(
-    (title: string, initialVideoId?: string) => {
-      const cleanTitle = title.trim();
-      if (!cleanTitle) return;
-      const newId = `pl-${Date.now()}`;
-      const videoIds = initialVideoId ? [initialVideoId] : [];
-      const newPlaylist: PlaylistItem = {
-        id: newId,
-        userId: currentUser?.uid,
-        title: cleanTitle,
-        description: '',
-        videoIds,
-        isPublic: true,
-        createdAt: Date.now(),
-      };
-      setPlaylists((prev) => [newPlaylist, ...prev]);
-      if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-        createPlaylist(currentUser.uid, cleanTitle, '', true, newId, videoIds).catch(() => {});
-      }
-    },
-    [currentUser]
-  );
-
-  const handleToggleVideoInPlaylist = useCallback(
-    (playlistId: string, videoId: string) => {
-      setPlaylists((prev) =>
-        prev.map((pl) => {
-          if (pl.id !== playlistId) return pl;
-          const exists = pl.videoIds.includes(videoId);
-          const nextIds = exists
-            ? pl.videoIds.filter((id) => id !== videoId)
-            : [...pl.videoIds, videoId];
-          if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-            updatePlaylistVideosDoc(playlistId, nextIds).catch(() => {});
-          }
-          return { ...pl, videoIds: nextIds, updatedAt: Date.now() };
-        })
-      );
-    },
-    [currentUser]
-  );
-
-  const handleDeletePlaylist = useCallback(
-    (playlistId: string) => {
-      setPlaylists((prev) => prev.filter((pl) => pl.id !== playlistId));
-      if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-        deletePlaylistDoc(playlistId).catch(() => {});
-      }
-    },
-    [currentUser]
-  );
-
-  const handleRemoveSearchHistoryItem = useCallback((term: string) => {
-    setSearchHistory((prev) => prev.filter((t) => t !== term));
-  }, []);
 
   const handleAddBookmark = (time: number, thumbnailUrl?: string) => {
     const newBookmark: Bookmark = {
@@ -1205,29 +1209,29 @@ function MainApp() {
 
   // Notification Handlers
   const handleMarkAllNotificationsRead = () => {
-    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-      notifications.forEach((n) => {
-        if (!n.read) markNotificationAsRead(n.id).catch(() => {});
-      });
-    }
+    const unreadIds = notifications.filter((n) => !n.read && !n.id.startsWith('n-')).map((n) => n.id);
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+      unreadIds.forEach((id) => markNotificationAsRead(id, true).catch(() => {}));
+    }
   };
 
   const handleToggleNotificationRead = (id: string) => {
-    const target = notifications.find((n) => n.id === id);
-    if (target && !target.read && currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
-      markNotificationAsRead(id).catch(() => {});
-    }
+    const existing = notifications.find((n) => n.id === id);
+    const nextRead = existing ? !existing.read : true;
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: !n.read } : n))
     );
+    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid && !id.startsWith('n-')) {
+      markNotificationAsRead(id, nextRead).catch(() => {});
+    }
   };
 
   const handleDeleteNotification = (id: string) => {
-    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid && !id.startsWith('n-')) {
       deleteNotificationDoc(id).catch(() => {});
     }
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
   const handleSimulateNotification = () => {
@@ -1317,7 +1321,16 @@ function MainApp() {
       videoCount: 1,
     };
   const viewingChannel = channels[activeChannelId] || channels['channel-blender'] || Object.values(channels)[0];
-  const channelVideos = videos.filter((v) => v.channelId === viewingChannel.id);
+  const channelVideos = videos.filter(
+    (v) =>
+      v.channelId === viewingChannel.id &&
+      ((v.visibility || 'public') === 'public' ||
+        (v.visibility !== 'unlisted' &&
+          Boolean(
+            currentUser?.uid &&
+              (v.ownerId === currentUser.uid || v.uploaderId === currentUser.uid || v.userId === currentUser.uid)
+          )))
+  );
 
   // Reel Actions
   const handleToggleLikeReel = (reelId: string) => {
@@ -1392,68 +1405,46 @@ function MainApp() {
     }));
   };
 
-  // Filtered Videos for Homepage / Trending (includes title, description, category names, tags, and channel names + Search Filters)
-  const searchTermLower = activeSearchTerm.toLowerCase().trim();
-  const baseFilteredVideos = videos.filter((v) => {
+  // Filtered Videos for Homepage / Trending (includes title, description, category names, tags, and channel names)
+  const filteredVideos = videos.filter((v) => {
+    const term = activeSearchTerm.toLowerCase().trim();
     const matchesSearch =
-      !searchTermLower ||
-      v.title.toLowerCase().includes(searchTermLower) ||
-      v.description.toLowerCase().includes(searchTermLower) ||
-      v.category.toLowerCase().includes(searchTermLower) ||
-      v.tags.some((t) => t.toLowerCase().includes(searchTermLower)) ||
-      (channels[v.channelId]?.name?.toLowerCase().includes(searchTermLower) ?? false);
+      !term ||
+      v.title.toLowerCase().includes(term) ||
+      v.description.toLowerCase().includes(term) ||
+      v.category.toLowerCase().includes(term) ||
+      v.tags.some((t) => t.toLowerCase().includes(term)) ||
+      (channels[v.channelId]?.name?.toLowerCase().includes(term) ?? false);
 
     const matchesCategory =
       selectedCategory === 'All'
         ? true
         : selectedCategory === 'Trending'
         ? v.isTrending
+        : selectedCategory === 'Gaming'
+        ? v.category === 'Gaming' || v.category === 'Gaming & CGI'
         : selectedCategory === 'Recently Uploaded'
         ? v.isLocal || v.publishedAt.includes('day') || v.publishedAt.includes('week')
         : v.category === selectedCategory;
 
-    const matchesDuration =
-      !searchTermLower || searchDurationFilter === 'all'
-        ? true
-        : searchDurationFilter === 'short'
-        ? v.duration > 0 && v.duration < 240
-        : searchDurationFilter === 'medium'
-        ? v.duration >= 240 && v.duration <= 1200
-        : v.duration > 1200;
-
-    const matchesVisibility = (v.visibility || 'public') !== 'private';
+    const matchesVisibility =
+      (v.visibility || 'public') === 'public' ||
+      (v.visibility !== 'unlisted' &&
+        Boolean(currentUser?.uid && (v.ownerId === currentUser.uid || v.uploaderId === currentUser.uid || v.userId === currentUser.uid)));
     const matchesSafeSearch = !restrictedModePref || !v.ageRestricted;
 
-    return matchesSearch && matchesCategory && matchesDuration && matchesVisibility && matchesSafeSearch;
+    return matchesSearch && matchesCategory && matchesVisibility && matchesSafeSearch;
   });
 
-  const filteredVideos =
-    searchTermLower && searchSortBy === 'views'
-      ? [...baseFilteredVideos].sort((a, b) => b.views - a.views)
-      : searchTermLower && searchSortBy === 'likes'
-      ? [...baseFilteredVideos].sort((a, b) => b.likes - a.likes)
-      : baseFilteredVideos;
-
-  const matchingChannels = searchTermLower
-    ? Object.values(channels).filter(
-        (ch) =>
-          ch.name.toLowerCase().includes(searchTermLower) ||
-          ch.handle.toLowerCase().includes(searchTermLower)
-      )
-    : [];
-
-  const matchingReels = searchTermLower
-    ? reels.filter(
-        (r) =>
-          (r.visibility || 'public') !== 'private' &&
-          (r.title.toLowerCase().includes(searchTermLower) ||
-            r.description.toLowerCase().includes(searchTermLower) ||
-            r.tags.some((t) => t.toLowerCase().includes(searchTermLower)))
-      )
-    : [];
+  const visibleReels = reels.filter(
+    (r) =>
+      (r.visibility || 'public') === 'public' ||
+      (r.visibility !== 'unlisted' &&
+        Boolean(currentUser?.uid && (r.ownerId === currentUser.uid || r.uploaderId === currentUser.uid)))
+  );
 
   const trendingVideos = videos.filter(
-    (v) => v.isTrending && (v.visibility || 'public') !== 'private' && (!restrictedModePref || !v.ageRestricted)
+    (v) => v.isTrending && (v.visibility || 'public') === 'public' && (!restrictedModePref || !v.ageRestricted)
   );
 
   // Creator studio channel (either current user channel or first channel)
@@ -1462,19 +1453,8 @@ function MainApp() {
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--ink)] flex flex-col antialiased selection:bg-[#FF0000] selection:text-white transition-colors">
-      {/* Vio App Splash Screen (once per session) */}
-      {showSplash && (
-        <SplashScreen
-          onFinish={() => {
-            try {
-              sessionStorage.setItem('vio_splash_seen', '1');
-            } catch {
-              // ignore
-            }
-            setShowSplash(false);
-          }}
-        />
-      )}
+      {/* Vio App Splash Screen on Opening */}
+      {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
 
       {/* Streamlined Navbar */}
       <Navbar
@@ -1482,13 +1462,13 @@ function MainApp() {
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         onSearchSubmit={(overrideQuery) => {
-          const q = (overrideQuery !== undefined ? overrideQuery : searchQuery).trim();
+          const q = (overrideQuery ?? searchQuery).trim();
           setActiveSearchTerm(q);
           if (q) {
-            setSearchHistory((prev) => [q, ...prev.filter((t) => t.toLowerCase() !== q.toLowerCase())].slice(0, 12));
-          }
-          if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid && q) {
-            recordSearchQuery(currentUser.uid, q);
+            setSearchHistory((prev) => [q, ...prev.filter((term) => term !== q)].slice(0, 10));
+            if (currentUser?.uid && auth.currentUser?.uid === currentUser.uid) {
+              recordSearchQuery(currentUser.uid, q);
+            }
           }
           if (currentPage !== 'home') setCurrentPage('home');
         }}
@@ -1506,8 +1486,8 @@ function MainApp() {
           setMobileMenuOpen(false);
         }}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenCreate={() => {
-          setCreateTarget('video');
+        onOpenCreate={(target = 'video') => {
+          setCreateTarget(target);
           setIsCreateOpen(true);
         }}
         notifications={notifications}
@@ -1525,7 +1505,9 @@ function MainApp() {
         onSimulateNotification={handleSimulateNotification}
         hideOnMobile={currentPage === 'reels'}
         searchHistory={searchHistory}
-        onRemoveSearchHistoryItem={handleRemoveSearchHistoryItem}
+        onRemoveSearchHistoryItem={(term) => {
+          setSearchHistory((prev) => prev.filter((t) => t !== term));
+        }}
         videos={videos}
         channels={Object.values(channels)}
       />
@@ -1592,12 +1574,13 @@ function MainApp() {
               onEditComment={handleEditComment}
               onPinComment={handlePinComment}
               canPinComments={Boolean(
-                currentUser?.uid &&
-                  (activeVideo.ownerId === currentUser.uid ||
-                    activeVideo.channelId === `channel-${currentUser.uid}`)
+                currentUser?.uid
+                  ? (activeVideo.ownerId === currentUser.uid || activeVideo.uploaderId === currentUser.uid || activeVideo.channelId === `channel-${currentUser.uid}`)
+                  : true
               )}
               onAddReply={handleAddReply}
               userAvatar={userProfile?.photoURL || currentUser?.photoURL || undefined}
+              currentUserId={currentUser?.uid}
               currentUserHandle={userProfile?.handle || '@creative_viewer'}
               bookmarks={bookmarks}
               onAddBookmark={handleAddBookmark}
@@ -1610,39 +1593,40 @@ function MainApp() {
               aspectRatio={aspectRatio}
               setAspectRatio={setAspectRatio}
               initialSeekTime={initialSeekTime}
-              currentUserId={currentUser?.uid}
-              savedProgressSeconds={history.find((h) => h.videoId === activeVideo.id)?.progressSeconds || 0}
-              onWatchProgress={handleUpdateWatchProgress}
+              savedProgressSeconds={history.find((h) => h.videoId === activeVideo.id)?.progressSeconds ?? 0}
+              onWatchProgress={handleWatchProgress}
               playlists={playlists}
               onToggleVideoInPlaylist={handleToggleVideoInPlaylist}
               onCreatePlaylist={handleCreatePlaylist}
               ambientMode={ambientModePref}
               isTheaterMode={isTheaterMode}
-              onToggleTheaterMode={handleToggleTheaterMode}
-              onEnterMiniplayer={(currTime) => {
-                setMiniplayerState({ videoId: activeVideo.id, startTime: Math.floor(currTime) });
+              onToggleTheaterMode={() => setIsTheaterMode((prev) => !prev)}
+              onEnterMiniplayer={(timeSec) => {
+                setMiniplayerVideo(activeVideo);
+                setMiniplayerTime(Math.max(0, Math.floor(timeSec)));
+                setIsTheaterMode(false);
                 setCurrentPage('home');
               }}
               onOpenShortcuts={() => setIsShortcutsOpen(true)}
               activePlaylist={
-                activeQueue
+                activePlaylistState
                   ? {
-                      title: activeQueue.title,
-                      videos: activeQueue.videoIds
+                      title: activePlaylistState.title,
+                      videos: activePlaylistState.videoIds
                         .map((id) => videos.find((v) => v.id === id))
                         .filter(Boolean) as VideoItem[],
-                      shuffle: activeQueue.shuffle,
-                      loop: activeQueue.loop,
+                      shuffle: activePlaylistState.shuffle,
+                      loop: activePlaylistState.loop,
                     }
                   : null
               }
               onToggleQueueShuffle={() =>
-                setActiveQueue((prev) => (prev ? { ...prev, shuffle: !prev.shuffle } : null))
+                setActivePlaylistState((prev) => (prev ? { ...prev, shuffle: !prev.shuffle } : prev))
               }
               onToggleQueueLoop={() =>
-                setActiveQueue((prev) => (prev ? { ...prev, loop: !prev.loop } : null))
+                setActivePlaylistState((prev) => (prev ? { ...prev, loop: !prev.loop } : prev))
               }
-              onCloseQueue={() => setActiveQueue(null)}
+              onCloseQueue={() => setActivePlaylistState(null)}
             />
           )}
 
@@ -1656,11 +1640,12 @@ function MainApp() {
 
             const showReelsShelf =
               !activeSearchTerm &&
-              reels.length > 0 &&
+              visibleReels.length > 0 &&
               (selectedCategory === 'All' || selectedCategory === 'Recently Uploaded');
 
             const topVideos = showReelsShelf ? filteredVideos.slice(0, 4) : filteredVideos;
             const remainingVideos = showReelsShelf ? filteredVideos.slice(4) : [];
+            const mobileDeferredTopVideos = showReelsShelf ? filteredVideos.slice(1, 4) : [];
 
             return (
               <div className="min-h-full bg-[var(--bg)]">
@@ -1677,185 +1662,64 @@ function MainApp() {
                   }}
                 />
 
-                <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-8">
+                <div className="px-3.5 sm:px-6 pt-1 pb-4 sm:py-6 space-y-5 sm:space-y-8">
                   {activeSearchTerm && (
-                    <div className="space-y-5">
-                      {/* Search Header + Filters */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--ink-faint)]">
-                        <div>
-                          <p className="text-sm font-semibold text-[var(--ink)]">
-                            Results for <span className="text-[var(--accent-ink)]">"{activeSearchTerm}"</span>
-                          </p>
-                          <p className="text-xs text-[var(--ink-medium)] tabular-nums mt-0.5">
-                            {filteredVideos.length} videos · {matchingReels.length} reels · {matchingChannels.length} channels
-                          </p>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          <select
-                            aria-label="Sort search results"
-                            value={searchSortBy}
-                            onChange={(e) => setSearchSortBy(e.target.value as 'relevance' | 'views' | 'likes')}
-                            className="min-h-[34px] rounded-full border border-[var(--ink-faint)] bg-[var(--surface)] px-3 py-1 text-xs font-semibold text-[var(--ink)] focus:outline-none cursor-pointer"
-                          >
-                            <option value="relevance">Relevance</option>
-                            <option value="views">Most Viewed</option>
-                            <option value="likes">Most Liked</option>
-                          </select>
-
-                          <select
-                            aria-label="Filter by video duration"
-                            value={searchDurationFilter}
-                            onChange={(e) => setSearchDurationFilter(e.target.value as 'all' | 'short' | 'medium' | 'long')}
-                            className="min-h-[34px] rounded-full border border-[var(--ink-faint)] bg-[var(--surface)] px-3 py-1 text-xs font-semibold text-[var(--ink)] focus:outline-none cursor-pointer"
-                          >
-                            <option value="all">Any duration</option>
-                            <option value="short">Under 4 min</option>
-                            <option value="medium">4–20 min</option>
-                            <option value="long">Over 20 min</option>
-                          </select>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveSearchTerm('');
-                              setSearchQuery('');
-                              setSearchSortBy('relevance');
-                              setSearchDurationFilter('all');
-                            }}
-                            className="min-h-[34px] text-xs font-medium text-[var(--ink-medium)] hover:text-[var(--ink)] px-3 py-1.5 rounded-full bg-[var(--card-hover)] transition-colors cursor-pointer"
-                          >
-                            Clear search
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Matching Channels */}
-                      {matchingChannels.length > 0 && (
-                        <div className="space-y-2.5">
-                          <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
-                            Channels
-                          </h2>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {matchingChannels.map((ch) => (
-                              <div
-                                key={ch.id}
-                                className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-3"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => handleSelectChannel(ch.id)}
-                                  className="flex items-center gap-3 min-w-0 text-left cursor-pointer"
-                                >
-                                  <img
-                                    src={ch.avatar}
-                                    alt={ch.name}
-                                    referrerPolicy="no-referrer"
-                                    className="h-12 w-12 rounded-full object-cover shrink-0 bg-[var(--thumb-bg)]"
-                                  />
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-sm font-bold text-[var(--ink)] truncate">
-                                        {ch.name}
-                                      </span>
-                                      {ch.verified && (
-                                        <CheckCircle2 className="h-3.5 w-3.5 text-[var(--accent-ink)] shrink-0" />
-                                      )}
-                                    </div>
-                                    <p className="text-xs text-[var(--ink-medium)] truncate">
-                                      {ch.handle}
-                                    </p>
-                                  </div>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleSubscribe(ch.id)}
-                                  className={`min-h-[36px] rounded-full px-4 py-1.5 text-xs font-bold shrink-0 transition-colors cursor-pointer ${
-                                    ch.isSubscribed
-                                      ? 'bg-[var(--card-hover)] text-[var(--ink)] border border-[var(--ink-faint)]'
-                                      : 'bg-[#FF0000] text-white hover:bg-[#CC0000]'
-                                  }`}
-                                >
-                                  {ch.isSubscribed ? 'Following' : 'Follow'}
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Matching Reels */}
-                      {matchingReels.length > 0 && (
-                        <div className="space-y-2.5">
-                          <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
-                            Matching Shorts & Reels
-                          </h2>
-                          <div className="flex overflow-x-auto gap-3 pb-1 no-scrollbar">
-                            {matchingReels.slice(0, 8).map((reel) => (
-                              <button
-                                key={`sr-${reel.id}`}
-                                type="button"
-                                onClick={() => {
-                                  setInitialReelId(reel.id);
-                                  setCurrentPage('reels');
-                                }}
-                                className="group text-left w-36 shrink-0 cursor-pointer"
-                              >
-                                <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-[var(--thumb-bg)] border border-[var(--ink-faint)]">
-                                  <img
-                                    src={reel.poster}
-                                    alt={reel.title}
-                                    referrerPolicy="no-referrer"
-                                    className="h-full w-full object-cover group-hover:scale-105 transition-transform"
-                                  />
-                                  <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/80 to-transparent" />
-                                  <div className="absolute bottom-2 inset-x-2 text-white">
-                                    <p className="text-[11px] font-bold line-clamp-2 leading-tight">{reel.title}</p>
-                                  </div>
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                    <div className="flex items-center justify-between pb-3 border-b border-[var(--ink-faint)]">
+                      <p className="text-sm font-semibold text-[var(--ink)]">
+                        Results for <span className="text-[var(--accent-ink)]">"{activeSearchTerm}"</span>
+                      </p>
+                      <button
+                        onClick={() => {
+                          setActiveSearchTerm('');
+                          setSearchQuery('');
+                        }}
+                        className="text-xs font-medium text-[var(--ink-medium)] hover:text-[var(--ink)] px-3 py-1.5 rounded-full bg-[var(--card-hover)] transition-colors"
+                      >
+                        Clear search
+                      </button>
                     </div>
                   )}
 
-                  {filteredVideos.length === 0 && matchingChannels.length === 0 && matchingReels.length === 0 ? (
+                  {filteredVideos.length === 0 ? (
                     <div className="py-20 text-center text-[var(--ink-medium)]">
-                      <p className="text-base font-semibold text-[var(--ink)]">No matching videos found</p>
-                      <p className="text-xs mt-1">Try another search query, duration filter, or category.</p>
+                      <p className="text-base font-semibold text-[var(--ink)]">{t('home.noMatchingVideos', 'No matching videos found')}</p>
+                      <p className="text-xs mt-1">{t('home.tryAnother', 'Try another search query or category.')}</p>
                     </div>
                   ) : (
                     <>
-                      {/* Primary Video Row / Grid */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-8">
-                        {topVideos.map((video) => (
-                          <VideoCard
+                      {/* Primary Video Row / Grid (Mobile: 1 featured video before Shorts & Reels; Tablet/Desktop: full top row) */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-7 sm:gap-y-8">
+                        {topVideos.map((video, index) => (
+                          <div
                             key={video.id}
-                            video={video}
-                            channel={channels[video.channelId]}
-                            onPlay={handlePlayVideo}
-                            onSelectChannel={handleSelectChannel}
-                            onToggleWatchLater={handleToggleWatchLater}
-                            isWatchLater={watchLaterIds.includes(video.id)}
-                            watchProgress={getWatchProgress(video)}
-                            playlists={playlists}
-                            onAddToPlaylist={handleToggleVideoInPlaylist}
-                          />
+                            className={showReelsShelf && index > 0 ? 'hidden sm:block' : ''}
+                          >
+                            <VideoCard
+                              video={video}
+                              channel={channels[video.channelId]}
+                              onPlay={handlePlayVideo}
+                              onSelectChannel={handleSelectChannel}
+                              onToggleWatchLater={handleToggleWatchLater}
+                              isWatchLater={watchLaterIds.includes(video.id)}
+                              watchProgress={getWatchProgress(video)}
+                              playlists={playlists}
+                              onAddToPlaylist={handleToggleVideoInPlaylist}
+                              onCreatePlaylist={handleCreatePlaylist}
+                            />
+                          </div>
                         ))}
                       </div>
 
                       {/* YouTube-style Shorts & Reels Horizontal Shelf */}
                       {showReelsShelf && (
-                        <section className="pt-2 pb-4 border-y border-[var(--ink-faint)]">
-                          <div className="flex items-center justify-between mb-4">
+                        <section className="pt-4 pb-2 border-t border-[var(--ink-faint)]">
+                          <div className="flex items-center justify-between mb-3.5">
                             <div className="flex items-center gap-2.5">
                               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FF0000] text-white">
                                 <Sparkles className="h-4 w-4" />
                               </div>
-                              <h2 className="text-lg font-bold tracking-tight text-[var(--ink)]">
-                                Shorts & Reels
+                              <h2 className="text-[18px] font-bold tracking-tight text-[var(--ink)]">
+                                {t('home.shortsAndReels', 'Reels')}
                               </h2>
                             </div>
                             <button
@@ -1863,21 +1727,21 @@ function MainApp() {
                                 setInitialReelId(undefined);
                                 setCurrentPage('reels');
                               }}
-                              className="rounded-full px-3.5 py-1.5 text-xs font-semibold text-[#3EA6FF] hover:bg-[#3EA6FF]/10 transition-colors"
+                              className="rounded-full px-2.5 py-1 text-[13px] font-semibold text-[var(--link)] hover:bg-[var(--link)]/10 transition-colors cursor-pointer"
                             >
-                              View all
+                              {t('home.viewAll', 'View all')}
                             </button>
                           </div>
 
-                          <div className="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 no-scrollbar sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 sm:gap-3.5">
-                            {reels.slice(0, 6).map((reel) => (
+                          <div className="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 -mx-3.5 px-3.5 sm:mx-0 sm:px-0 no-scrollbar sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 sm:gap-3.5">
+                            {visibleReels.slice(0, 6).map((reel) => (
                               <button
                                 key={reel.id}
                                 onClick={() => {
                                   setInitialReelId(reel.id);
                                   setCurrentPage('reels');
                                 }}
-                                className="group text-left flex flex-col focus:outline-none w-[42vw] max-w-[170px] shrink-0 snap-start sm:w-auto sm:max-w-none"
+                                className="group text-left flex flex-col focus:outline-none w-[42.5vw] max-w-[178px] shrink-0 snap-start sm:w-auto sm:max-w-none"
                               >
                                 <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-[var(--thumb-bg)]">
                                   <img
@@ -1905,9 +1769,25 @@ function MainApp() {
                         </section>
                       )}
 
-                      {/* Remaining Videos Grid */}
-                      {remainingVideos.length > 0 && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-8">
+                      {/* Remaining Videos Grid (includes mobile deferred cards 2-4 right below Shorts & Reels) */}
+                      {(mobileDeferredTopVideos.length > 0 || remainingVideos.length > 0) && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-7 sm:gap-y-8 pt-2 sm:pt-4 border-t border-[var(--ink-faint)]">
+                          {mobileDeferredTopVideos.map((video) => (
+                            <div key={`m-${video.id}`} className="sm:hidden">
+                              <VideoCard
+                                video={video}
+                                channel={channels[video.channelId]}
+                                onPlay={handlePlayVideo}
+                                onSelectChannel={handleSelectChannel}
+                                onToggleWatchLater={handleToggleWatchLater}
+                                isWatchLater={watchLaterIds.includes(video.id)}
+                                watchProgress={getWatchProgress(video)}
+                                playlists={playlists}
+                                onAddToPlaylist={handleToggleVideoInPlaylist}
+                                onCreatePlaylist={handleCreatePlaylist}
+                              />
+                            </div>
+                          ))}
                           {remainingVideos.map((video) => (
                             <VideoCard
                               key={video.id}
@@ -1920,6 +1800,7 @@ function MainApp() {
                               watchProgress={getWatchProgress(video)}
                               playlists={playlists}
                               onAddToPlaylist={handleToggleVideoInPlaylist}
+                              onCreatePlaylist={handleCreatePlaylist}
                             />
                           ))}
                         </div>
@@ -1931,7 +1812,7 @@ function MainApp() {
             );
           })()}
 
-          {/* CUSTOM FEED VIEW */}
+          {/* CUSTOM FEED VIEW (Algorithm driven, 24dp icons, lazy loading enabled) */}
           {currentPage === 'customFeed' && (
             <CustomFeedView
               videos={videos}
@@ -1948,7 +1829,7 @@ function MainApp() {
           {/* REELS VIEW */}
           {currentPage === 'reels' && (
             <ReelsView
-              reels={reels}
+              reels={visibleReels}
               channels={channels}
               commentsMap={reelComments}
               onToggleFollow={handleToggleSubscribe}
@@ -1979,8 +1860,8 @@ function MainApp() {
                 setInitialReelId(reelId);
                 setCurrentPage('reels');
               }}
-              onOpenUpload={() => {
-                setCreateTarget('video');
+              onOpenUpload={(target = 'video') => {
+                setCreateTarget(target);
                 setIsCreateOpen(true);
               }}
               onUpdateVideo={handleUpdateVideo}
@@ -1997,39 +1878,29 @@ function MainApp() {
             <div className="mx-auto max-w-7xl px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
               <div className="pb-3 border-b border-[var(--ink-faint)]">
                 <h1 className="font-display text-xl sm:text-2xl font-extrabold text-[var(--ink)] tracking-tight">
-                  Trending on Vio streaming
+                  {t('home.trendingTitle', 'Trending on Vio streaming')}
                 </h1>
                 <p className="text-xs text-[var(--ink-medium)] mt-0.5">
-                  The most watched animations, short films, and high-definition reels right now
+                  {t('home.trendingSubtitle', 'The most watched animations, gaming clips, and high-definition reels right now')}
                 </p>
               </div>
 
-              {trendingVideos.length === 0 ? (
-                <div className="py-20 text-center text-[var(--ink-medium)]">
-                  <p className="text-base font-semibold text-[var(--ink)]">
-                    No trending videos right now
-                  </p>
-                  <p className="text-xs mt-1">
-                    Check back soon or adjust Restricted Mode in Settings.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
-                  {trendingVideos.map((video) => (
-                    <VideoCard
-                      key={video.id}
-                      video={video}
-                      channel={channels[video.channelId]}
-                      onPlay={handlePlayVideo}
-                      onSelectChannel={handleSelectChannel}
-                      onToggleWatchLater={handleToggleWatchLater}
-                      isWatchLater={watchLaterIds.includes(video.id)}
-                      playlists={playlists}
-                      onAddToPlaylist={handleToggleVideoInPlaylist}
-                    />
-                  ))}
-                </div>
-              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                {trendingVideos.map((video) => (
+                  <VideoCard
+                    key={video.id}
+                    video={video}
+                    channel={channels[video.channelId]}
+                    onPlay={handlePlayVideo}
+                    onSelectChannel={handleSelectChannel}
+                    onToggleWatchLater={handleToggleWatchLater}
+                    isWatchLater={watchLaterIds.includes(video.id)}
+                    playlists={playlists}
+                    onAddToPlaylist={handleToggleVideoInPlaylist}
+                    onCreatePlaylist={handleCreatePlaylist}
+                  />
+                ))}
+              </div>
             </div>
           )}
 
@@ -2055,7 +1926,7 @@ function MainApp() {
             <ChannelView
               channel={viewingChannel}
               channelVideos={channelVideos}
-              channelReels={reels.filter((r) => r.channelId === viewingChannel.id)}
+              channelReels={visibleReels.filter((r) => r.channelId === viewingChannel.id)}
               playlists={playlists}
               onPlayVideo={handlePlayVideo}
               onToggleSubscribe={handleToggleSubscribe}
@@ -2072,11 +1943,14 @@ function MainApp() {
           )}
 
           {/* LIBRARY / PLAYLIST VIEWS */}
-          {(currentPage === 'history' || currentPage === 'liked' || currentPage === 'watchLater' || currentPage === 'playlists') && (
+          {(currentPage === 'history' ||
+            currentPage === 'liked' ||
+            currentPage === 'watchLater' ||
+            currentPage === 'playlists') && (
             <LibraryView
               initialTab={currentPage as 'history' | 'liked' | 'watchLater' | 'playlists'}
               videos={videos}
-              reels={reels}
+              reels={visibleReels}
               channelsMap={channels}
               history={history}
               likedVideoIds={likedVideoIds}
@@ -2101,6 +1975,30 @@ function MainApp() {
         </div>
       </div>
 
+      {/* Floating Persistent Miniplayer Dock */}
+      {miniplayerVideo && currentPage !== 'watch' && (
+        <MiniplayerDock
+          video={miniplayerVideo}
+          channelName={channels[miniplayerVideo.channelId]?.name || miniplayerVideo.author || 'Vio Creator'}
+          initialTime={miniplayerTime}
+          hasNext={videos.length > 1}
+          onNext={() => {
+            const idx = videos.findIndex((v) => v.id === miniplayerVideo.id);
+            const nextVid = videos[(idx + 1) % videos.length];
+            if (nextVid) {
+              setMiniplayerVideo(nextVid);
+              setMiniplayerTime(0);
+            }
+          }}
+          onExpand={(currentSec) => {
+            const target = miniplayerVideo;
+            setMiniplayerVideo(null);
+            handlePlayVideo(target, currentSec);
+          }}
+          onClose={() => setMiniplayerVideo(null)}
+        />
+      )}
+
       {/* Mobile Bottom Navigation Bar (Hidden on desktop) */}
       <MobileBottomNav
         currentPage={currentPage}
@@ -2114,8 +2012,8 @@ function MainApp() {
           setMobileMenuOpen(false);
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
-        onOpenCreate={() => {
-          setCreateTarget('video');
+        onOpenCreate={(target = 'video') => {
+          setCreateTarget(target);
           setIsCreateOpen(true);
         }}
       />
@@ -2174,32 +2072,6 @@ function MainApp() {
         onOpenAuth={() => setIsAuthOpen(true)}
         onPreferencesChange={refreshPreferences}
       />
-
-      {/* Persistent Floating Miniplayer Dock */}
-      {miniplayerState && currentPage !== 'watch' && (() => {
-        const miniVid = videos.find((v) => v.id === miniplayerState.videoId);
-        if (!miniVid) return null;
-        const nextCandidates = videos.filter((v) => v.id !== miniVid.id && (v.visibility || 'public') !== 'private');
-        const nextMiniVid = nextCandidates[0];
-        return (
-          <MiniplayerDock
-            video={miniVid}
-            channelName={channels[miniVid.channelId]?.name || miniVid.author || 'Creator'}
-            initialTime={miniplayerState.startTime}
-            hasNext={Boolean(nextMiniVid)}
-            onNext={
-              nextMiniVid
-                ? () => setMiniplayerState({ videoId: nextMiniVid.id, startTime: 0 })
-                : undefined
-            }
-            onExpand={(currTime) => {
-              handlePlayVideo(miniVid, Math.floor(currTime));
-            }}
-            onClose={() => setMiniplayerState(null)}
-          />
-        );
-      })()}
-
     </div>
   );
 }
@@ -2207,7 +2079,9 @@ function MainApp() {
 export default function App() {
   return (
     <AuthProvider>
-      <MainApp />
+      <LanguageProvider>
+        <MainApp />
+      </LanguageProvider>
     </AuthProvider>
   );
 }

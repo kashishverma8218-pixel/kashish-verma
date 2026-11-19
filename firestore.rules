@@ -18,7 +18,7 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 256 && id.matches('^[a-zA-Z0-9_-]+$');
     }
 
-    // 4. Admin lookup via admins collection or verified bootstrapped owner email
+    // Admin lookup via admins collection or verified bootstrapped owner email
     function isAdmin() {
       return signedIn() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
@@ -27,7 +27,7 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // COUNTER VALIDATION HELPERS (3. फर्जी Views, Likes और Dislikes रोकने के नियम)
+    // COUNTER & ATOMIC INTERACTION HELPERS
     // -------------------------------------------------------------------------
     function isValidCounterDelta(field, allowDecrement) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field]) || (
@@ -42,26 +42,114 @@ service cloud.firestore {
       );
     }
 
-    function isValidVideoInteraction() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes', 'dislikes'])
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['ownerId', 'userId'])
-        && isValidCounterDelta('views', false)
-        && isValidCounterDelta('likes', true)
-        && isValidCounterDelta('dislikes', true);
+    function isValidVideoLikeUpdate(videoId, likePath) {
+      return (
+        // 1. Add new like/dislike atomically with /likes/{uid}_{videoId}
+        (!exists(likePath)
+          && existsAfter(likePath)
+          && getAfter(likePath).data.userId == request.auth.uid
+          && getAfter(likePath).data.targetId == videoId
+          && (
+            (getAfter(likePath).data.type == 'like'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+              && request.resource.data.likes is int
+              && request.resource.data.likes == resource.data.get('likes', 0) + 1)
+            ||
+            (getAfter(likePath).data.type == 'dislike'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dislikes'])
+              && request.resource.data.dislikes is int
+              && request.resource.data.dislikes == resource.data.get('dislikes', 0) + 1)
+          ))
+        ||
+        // 2. Remove existing like/dislike atomically with /likes/{uid}_{videoId}
+        (exists(likePath)
+          && !existsAfter(likePath)
+          && (
+            (get(likePath).data.type == 'like'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+              && request.resource.data.likes is int
+              && request.resource.data.likes >= 0
+              && request.resource.data.likes == resource.data.get('likes', 0) - 1)
+            ||
+            (get(likePath).data.type == 'dislike'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dislikes'])
+              && request.resource.data.dislikes is int
+              && request.resource.data.dislikes >= 0
+              && request.resource.data.dislikes == resource.data.get('dislikes', 0) - 1)
+          ))
+        ||
+        // 3. Switch reaction between like <-> dislike atomically
+        (exists(likePath)
+          && existsAfter(likePath)
+          && getAfter(likePath).data.userId == request.auth.uid
+          && getAfter(likePath).data.targetId == videoId
+          && get(likePath).data.type != getAfter(likePath).data.type
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'dislikes'])
+          && (
+            (getAfter(likePath).data.type == 'like'
+              && request.resource.data.likes is int
+              && request.resource.data.likes == resource.data.get('likes', 0) + 1
+              && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['dislikes']) || (
+                request.resource.data.dislikes is int
+                && request.resource.data.dislikes >= 0
+                && request.resource.data.dislikes == resource.data.get('dislikes', 0) - 1
+              )))
+            ||
+            (getAfter(likePath).data.type == 'dislike'
+              && request.resource.data.dislikes is int
+              && request.resource.data.dislikes == resource.data.get('dislikes', 0) + 1
+              && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['likes']) || (
+                request.resource.data.likes is int
+                && request.resource.data.likes >= 0
+                && request.resource.data.likes == resource.data.get('likes', 0) - 1
+              )))
+          ))
+      );
     }
 
-    function isValidReelInteraction() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes', 'commentsCount', 'sharesCount'])
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['ownerId', 'userId'])
-        && isValidCounterDelta('views', false)
-        && isValidCounterDelta('likes', true)
-        && isValidCounterDelta('commentsCount', true)
-        && isValidCounterDelta('sharesCount', false);
+    function isValidVideoInteraction(videoId) {
+      return isValidVideoLikeUpdate(
+        videoId,
+        /databases/$(database)/documents/likes/$(request.auth.uid + '_' + videoId)
+      );
+    }
+
+    function isValidReelLikeUpdate(reelId, likePath) {
+      return (
+        (!exists(likePath)
+          && existsAfter(likePath)
+          && getAfter(likePath).data.userId == request.auth.uid
+          && getAfter(likePath).data.targetId == reelId
+          && getAfter(likePath).data.type == 'like'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+          && request.resource.data.likes is int
+          && request.resource.data.likes == resource.data.get('likes', 0) + 1)
+        ||
+        (exists(likePath)
+          && !existsAfter(likePath)
+          && get(likePath).data.type == 'like'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+          && request.resource.data.likes is int
+          && request.resource.data.likes >= 0
+          && request.resource.data.likes == resource.data.get('likes', 0) - 1)
+      );
+    }
+
+    function isValidReelInteraction(reelId) {
+      return (
+        isValidReelLikeUpdate(
+          reelId,
+          /databases/$(database)/documents/likes/$(request.auth.uid + '_' + reelId)
+        )
+        ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentsCount', 'sharesCount'])
+          && isValidCounterDelta('commentsCount', true)
+          && isValidCounterDelta('sharesCount', false))
+      );
     }
 
     function isValidCommentInteraction() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'dislikes', 'repliesCount'])
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['userId', 'authorName', 'content', 'text'])
         && isValidCounterDelta('likes', true)
         && isValidCounterDelta('dislikes', true)
         && isValidCounterDelta('repliesCount', true);
@@ -82,111 +170,375 @@ service cloud.firestore {
     }
 
     // =========================================================================
-    // 2. VIDEOS (5. Public Query सुरक्षा + 6. पुराने बिना visibility वाले वीडियो संगत)
+    // 1B. CHANNELS (Public creator metadata only - no PII)
     // =========================================================================
-    match /videos/{videoId} {
-      // Single Document (Playback):
-      // - पुराने वीडियो जिनमें visibility नहीं है, वे भी चलेंगे
-      // - public और unlisted वीडियो कोई भी देख सकता है
-      // - private वीडियो केवल असली मालिक या Custom Claim Admin देख सकते हैं
-      allow get: if (!('visibility' in resource.data) || resource.data.visibility != 'private')
-                 || (signedIn() && resource.data.ownerId == request.auth.uid)
-                 || isAdmin();
+    function isValidChannelDoc(data, channelId) {
+      return data.keys().hasAll(['id', 'ownerId', 'name', 'handle', 'subscribersCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'name', 'handle', 'avatar', 'banner', 'verified',
+          'subscribersCount', 'followersCount', 'bio', 'joinedDate', 'videoCount',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == channelId && isValidId(channelId)
+        && data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.handle is string && data.handle.size() > 0 && data.handle.size() <= 60
+        && (!('avatar' in data) || (data.avatar is string && data.avatar.size() <= 2048))
+        && (!('banner' in data) || (data.banner is string && data.banner.size() <= 2048))
+        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 1000))
+        && (!('joinedDate' in data) || (data.joinedDate is string && data.joinedDate.size() <= 64))
+        && (!('verified' in data) || data.verified is bool)
+        && data.subscribersCount is int && data.subscribersCount >= 0
+        && (!('followersCount' in data) || (data.followersCount is int && data.followersCount >= 0))
+        && (!('videoCount' in data) || (data.videoCount is int && data.videoCount >= 0))
+        && data.createdAt is int
+        && data.updatedAt is int;
+    }
 
-      // Collection Queries (Home Feed / Search):
-      // - केवल वही वीडियो सूची में आएंगे जो public हैं या पुराने हैं (जिनमें visibility फ़ील्ड नहीं है)
-      // - मालिक अपने private वीडियो भी query कर सकता है
-      // - Admin सभी वीडियो query कर सकता है
+    function isValidChannelInteraction() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['subscribersCount', 'followersCount', 'updatedAt'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['ownerId', 'verified', 'name', 'handle'])
+        && isValidCounterDelta('subscribersCount', true)
+        && isValidCounterDelta('followersCount', true);
+    }
+
+    match /channels/{channelId} {
+      allow get: if isValidId(channelId);
+      allow list: if true;
+
+      allow create: if (signedIn()
+                    && isValidId(channelId)
+                    && isValidChannelDoc(request.resource.data, channelId)
+                    && request.resource.data.ownerId == request.auth.uid
+                    && (!('verified' in request.resource.data) || request.resource.data.verified == false))
+                    || isAdmin();
+
+      allow update: if isValidId(channelId) && ((signedIn() && (
+                      (resource.data.ownerId == request.auth.uid
+                        && isValidChannelDoc(request.resource.data, channelId)
+                        && request.resource.data.ownerId == resource.data.ownerId
+                        && request.resource.data.createdAt == resource.data.createdAt
+                        && (!('verified' in request.resource.data) || request.resource.data.get('verified', false) == resource.data.get('verified', false)))
+                      || isValidChannelInteraction()
+                    )) || isAdmin());
+
+      allow delete: if isValidId(channelId) && ((signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin());
+    }
+
+    // =========================================================================
+    // 2. VIDEOS (Protected counters, isTrending admin-only, visibility enforced)
+    // =========================================================================
+    function isValidVideoCreatorUpdate() {
+      return resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.get('isTrending', false) == resource.data.get('isTrending', false)
+        && request.resource.data.get('views', 0) == resource.data.get('views', 0)
+        && request.resource.data.get('likes', 0) == resource.data.get('likes', 0)
+        && request.resource.data.get('dislikes', 0) == resource.data.get('dislikes', 0)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'description', 'category', 'visibility', 'poster', 'tags',
+          'hashtags', 'language', 'monetizationEnabled', 'filterStyle', 'filterPreset',
+          'hideLikes', 'commentsControl', 'ageRestricted', 'cropAspect', 'cropFit',
+          'trimStart', 'trimEnd', 'isMutedAudio', 'updatedAt'
+        ])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['title'])
+            || (request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['description'])
+            || (request.resource.data.description is string && request.resource.data.description.size() <= 5000))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['visibility'])
+            || request.resource.data.visibility in ['public', 'unlisted', 'private'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['poster'])
+            || (request.resource.data.poster is string && request.resource.data.poster.size() <= 4096))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['category'])
+            || (request.resource.data.category is string && request.resource.data.category.size() <= 100))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['language'])
+            || (request.resource.data.language is string && request.resource.data.language.size() <= 64))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['tags'])
+            || (request.resource.data.tags is list && request.resource.data.tags.size() <= 30))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hashtags'])
+            || (request.resource.data.hashtags is list && request.resource.data.hashtags.size() <= 30))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['monetizationEnabled'])
+            || request.resource.data.monetizationEnabled is bool);
+    }
+
+    match /videos/{videoId} {
+      allow get: if isValidId(videoId) && (
+                   (!('visibility' in resource.data) || resource.data.visibility != 'private')
+                   || (signedIn() && resource.data.ownerId == request.auth.uid)
+                   || isAdmin()
+                 );
+
       allow list: if (!('visibility' in resource.data) || resource.data.visibility == 'public')
                   || (signedIn() && resource.data.ownerId == request.auth.uid)
                   || isAdmin();
 
-      // Create: केवल लॉगिन यूज़र अपनी UID से वीडियो बना सकता है; प्रारंभिक Views/Likes 0 अनिवार्य
-      allow create: if signedIn()
+      allow create: if (signedIn()
+                    && isValidId(videoId)
                     && request.resource.data.ownerId == request.auth.uid
+                    && (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid)
+                    && (!('uploaderId' in request.resource.data) || request.resource.data.uploaderId == request.auth.uid)
+                    && (!('visibility' in request.resource.data) || request.resource.data.visibility in ['public', 'unlisted', 'private'])
                     && (!('views' in request.resource.data) || request.resource.data.views == 0)
                     && (!('likes' in request.resource.data) || request.resource.data.likes == 0)
-                    && (!('dislikes' in request.resource.data) || request.resource.data.dislikes == 0);
+                    && (!('dislikes' in request.resource.data) || request.resource.data.dislikes == 0)
+                    && (!('isTrending' in request.resource.data) || request.resource.data.isTrending == false)
+                    && (!('title' in request.resource.data) || (request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200))
+                    && (!('description' in request.resource.data) || (request.resource.data.description is string && request.resource.data.description.size() <= 5000)))
+                    || (isAdmin() && isValidId(videoId));
 
-      // Update:
-      // - मालिक metadata बदल सकता है (पर ownerId कभी नहीं बदल सकता)
-      // - अन्य यूज़र केवल कड़े सत्यापन (isValidVideoInteraction) से views/likes बदल सकते हैं
-      // - Custom Claim Admin पूर्ण नियंत्रण रखता है
-      allow update: if (signedIn() && (
-                      (resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == resource.data.ownerId) ||
-                      isValidVideoInteraction()
-                    )) || isAdmin();
+      allow update: if isValidId(videoId) && ((signedIn() && (
+                      isValidVideoCreatorUpdate() ||
+                      isValidVideoInteraction(videoId)
+                    )) || isAdmin());
 
-      // Delete: केवल सत्यापित मालिक या Custom Claim Admin ही वीडियो डिलीट कर सकता है
-      allow delete: if (signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+      allow delete: if isValidId(videoId) && ((signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin());
     }
 
     // =========================================================================
-    // 3. REELS
+    // 3. REELS (Protected counters, isTrending admin-only, visibility enforced)
     // =========================================================================
+    function isValidReelCreatorUpdate() {
+      return resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.get('isTrending', false) == resource.data.get('isTrending', false)
+        && request.resource.data.get('views', 0) == resource.data.get('views', 0)
+        && request.resource.data.get('likes', 0) == resource.data.get('likes', 0)
+        && request.resource.data.get('dislikes', 0) == resource.data.get('dislikes', 0)
+        && request.resource.data.get('commentsCount', 0) == resource.data.get('commentsCount', 0)
+        && request.resource.data.get('sharesCount', 0) == resource.data.get('sharesCount', 0)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'description', 'visibility', 'audioTrack', 'audioArtist',
+          'tags', 'hashtags', 'category', 'language', 'monetizationEnabled',
+          'filterStyle', 'filterPreset', 'poster', 'cropAspect', 'cropFit',
+          'trimStart', 'trimEnd', 'isMutedAudio', 'updatedAt'
+        ])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['title'])
+            || (request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['description'])
+            || (request.resource.data.description is string && request.resource.data.description.size() <= 5000))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['visibility'])
+            || request.resource.data.visibility in ['public', 'unlisted', 'private'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['poster'])
+            || (request.resource.data.poster is string && request.resource.data.poster.size() <= 4096))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['tags'])
+            || (request.resource.data.tags is list && request.resource.data.tags.size() <= 30))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hashtags'])
+            || (request.resource.data.hashtags is list && request.resource.data.hashtags.size() <= 30))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['monetizationEnabled'])
+            || request.resource.data.monetizationEnabled is bool);
+    }
+
     match /reels/{reelId} {
-      allow get: if !('visibility' in resource.data)
-                 || resource.data.visibility != 'private'
-                 || (signedIn() && resource.data.ownerId == request.auth.uid)
-                 || isAdmin();
+      allow get: if isValidId(reelId) && (
+                   !('visibility' in resource.data)
+                   || resource.data.visibility != 'private'
+                   || (signedIn() && resource.data.ownerId == request.auth.uid)
+                   || isAdmin()
+                 );
 
       allow list: if !('visibility' in resource.data)
                   || resource.data.visibility == 'public'
                   || (signedIn() && resource.data.ownerId == request.auth.uid)
                   || isAdmin();
 
-      allow create: if signedIn()
+      allow create: if (signedIn()
+                    && isValidId(reelId)
                     && request.resource.data.ownerId == request.auth.uid
+                    && (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid)
+                    && (!('uploaderId' in request.resource.data) || request.resource.data.uploaderId == request.auth.uid)
+                    && (!('visibility' in request.resource.data) || request.resource.data.visibility in ['public', 'unlisted', 'private'])
                     && (!('views' in request.resource.data) || request.resource.data.views == 0)
-                    && (!('likes' in request.resource.data) || request.resource.data.likes == 0);
+                    && (!('likes' in request.resource.data) || request.resource.data.likes == 0)
+                    && (!('dislikes' in request.resource.data) || request.resource.data.dislikes == 0)
+                    && (!('commentsCount' in request.resource.data) || request.resource.data.commentsCount == 0)
+                    && (!('sharesCount' in request.resource.data) || request.resource.data.sharesCount == 0)
+                    && (!('isTrending' in request.resource.data) || request.resource.data.isTrending == false)
+                    && (!('title' in request.resource.data) || (request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 200))
+                    && (!('description' in request.resource.data) || (request.resource.data.description is string && request.resource.data.description.size() <= 5000)))
+                    || (isAdmin() && isValidId(reelId));
 
-      allow update: if (signedIn() && (
-                      (resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == resource.data.ownerId) ||
-                      isValidReelInteraction()
-                    )) || isAdmin();
+      allow update: if isValidId(reelId) && ((signedIn() && (
+                      isValidReelCreatorUpdate() ||
+                      isValidReelInteraction(reelId)
+                    )) || isAdmin());
 
-      allow delete: if (signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+      allow delete: if isValidId(reelId) && ((signedIn() && resource.data.ownerId == request.auth.uid) || isAdmin());
     }
 
     // =========================================================================
-    // 4. COMMENTS
+    // 4. COMMENTS (Strict 2000-char limit & field-restricted updates)
     // =========================================================================
+    function isTargetContentOwner(targetId) {
+      return signedIn() && (
+        (exists(/databases/$(database)/documents/videos/$(targetId)) &&
+          get(/databases/$(database)/documents/videos/$(targetId)).data.ownerId == request.auth.uid) ||
+        (exists(/databases/$(database)/documents/reels/$(targetId)) &&
+          get(/databases/$(database)/documents/reels/$(targetId)).data.ownerId == request.auth.uid)
+      );
+    }
+
+    function isValidCommentCreate(data, commentId) {
+      return isValidId(commentId)
+        && data.keys().hasAll(['id', 'targetId', 'userId', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'targetId', 'targetType', 'userId', 'userName', 'authorName',
+          'authorHandle', 'userAvatar', 'authorAvatar', 'content', 'text',
+          'likes', 'dislikes', 'repliesCount', 'isPinned', 'isEdited',
+          'timestamp', 'createdAt'
+        ])
+        && data.id == commentId
+        && data.userId == request.auth.uid
+        && data.targetId is string && data.targetId.size() > 0 && data.targetId.size() <= 128
+        && (!('targetType' in data) || data.targetType in ['video', 'reel'])
+        && (('content' in data) || ('text' in data))
+        && (!('content' in data) || (data.content is string && data.content.size() > 0 && data.content.size() <= 2000))
+        && (!('text' in data) || (data.text is string && data.text.size() > 0 && data.text.size() <= 2000))
+        && (!('authorName' in data) || (data.authorName is string && data.authorName.size() <= 120))
+        && (!('userName' in data) || (data.userName is string && data.userName.size() <= 120))
+        && (!('authorHandle' in data) || (data.authorHandle is string && data.authorHandle.size() <= 64))
+        && (!('authorAvatar' in data) || (data.authorAvatar is string && data.authorAvatar.size() <= 4096))
+        && (!('userAvatar' in data) || (data.userAvatar is string && data.userAvatar.size() <= 4096))
+        && (!('timestamp' in data) || (data.timestamp is string && data.timestamp.size() <= 64))
+        && (!('likes' in data) || data.likes == 0)
+        && (!('dislikes' in data) || data.dislikes == 0)
+        && (!('repliesCount' in data) || data.repliesCount == 0)
+        && (!('isPinned' in data) || data.isPinned == false)
+        && (!('isEdited' in data) || data.isEdited == false)
+        && data.createdAt is int;
+    }
+
+    function isValidCommentAuthorEdit() {
+      return resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'text', 'isEdited'])
+        && (('content' in request.resource.data) || ('text' in request.resource.data))
+        && (!('content' in request.resource.data) || (request.resource.data.content is string && request.resource.data.content.size() > 0 && request.resource.data.content.size() <= 2000))
+        && (!('text' in request.resource.data) || (request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 2000))
+        && (!('isEdited' in request.resource.data) || request.resource.data.isEdited == true);
+    }
+
+    function isValidCommentPinUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isPinned'])
+        && request.resource.data.isPinned is bool
+        && isTargetContentOwner(resource.data.targetId);
+    }
+
     match /comments/{commentId} {
-      allow read: if true;
+      allow get: if isValidId(commentId);
+      allow list: if true;
 
-      allow create: if signedIn()
-                    && request.resource.data.userId == request.auth.uid
-                    && (!('likes' in request.resource.data) || request.resource.data.likes == 0);
+      allow create: if signedIn() && isValidCommentCreate(request.resource.data, commentId);
 
-      allow update: if (signedIn() && (
-                      (resource.data.userId == request.auth.uid && request.resource.data.userId == resource.data.userId) ||
-                      isValidCommentInteraction()
-                    )) || isAdmin();
+      allow update: if isValidId(commentId) && ((signedIn() && (
+                      isValidCommentAuthorEdit() ||
+                      isValidCommentInteraction() ||
+                      isValidCommentPinUpdate()
+                    )) || isAdmin());
 
-      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow delete: if isValidId(commentId) && ((signedIn() && (
+                      resource.data.userId == request.auth.uid ||
+                      isTargetContentOwner(resource.data.targetId)
+                    )) || isAdmin());
     }
 
     // =========================================================================
-    // 5. LIKES (3. डुप्लीकेट और फर्जी Like रोकने के लिए Doc ID बाँधना)
+    // 5. LIKES (UID-bound IDs + atomic video/reel counter synchronization)
     // =========================================================================
+    function isValidLikeTargetCreateAtomicity(targetId, likeType) {
+      return (
+        !exists(/databases/$(database)/documents/videos/$(targetId))
+        || (
+          request.resource.data.get('targetType', '') == 'video'
+          && (
+            (likeType == 'like'
+              && getAfter(/databases/$(database)/documents/videos/$(targetId)).data.likes
+                == get(/databases/$(database)/documents/videos/$(targetId)).data.get('likes', 0) + 1)
+            ||
+            (likeType == 'dislike'
+              && getAfter(/databases/$(database)/documents/videos/$(targetId)).data.dislikes
+                == get(/databases/$(database)/documents/videos/$(targetId)).data.get('dislikes', 0) + 1)
+          )
+        )
+      ) && (
+        !exists(/databases/$(database)/documents/reels/$(targetId))
+        || (
+          request.resource.data.get('targetType', '') == 'reel'
+          && (
+            likeType != 'like'
+            || getAfter(/databases/$(database)/documents/reels/$(targetId)).data.likes
+              == get(/databases/$(database)/documents/reels/$(targetId)).data.get('likes', 0) + 1
+          )
+        )
+      );
+    }
+
+    function isValidLikeTargetUpdateAtomicity(targetId, prevType, nextType) {
+      return (
+        !exists(/databases/$(database)/documents/videos/$(targetId))
+        || prevType == nextType
+        || (
+          request.resource.data.get('targetType', '') == 'video'
+          && (
+            (nextType == 'like'
+              && getAfter(/databases/$(database)/documents/videos/$(targetId)).data.likes
+                == get(/databases/$(database)/documents/videos/$(targetId)).data.get('likes', 0) + 1)
+            ||
+            (nextType == 'dislike'
+              && getAfter(/databases/$(database)/documents/videos/$(targetId)).data.dislikes
+                == get(/databases/$(database)/documents/videos/$(targetId)).data.get('dislikes', 0) + 1)
+          )
+        )
+      ) && (
+        !exists(/databases/$(database)/documents/reels/$(targetId))
+        || prevType == nextType
+        || request.resource.data.get('targetType', '') == 'reel'
+      );
+    }
+
+    function isValidLikeTargetDeleteAtomicity(targetId, prevType) {
+      return (
+        !exists(/databases/$(database)/documents/videos/$(targetId))
+        || (
+          (prevType == 'like' && (
+            get(/databases/$(database)/documents/videos/$(targetId)).data.get('likes', 0) == 0 ||
+            getAfter(/databases/$(database)/documents/videos/$(targetId)).data.likes
+              == get(/databases/$(database)/documents/videos/$(targetId)).data.get('likes', 0) - 1
+          ))
+          ||
+          (prevType == 'dislike' && (
+            get(/databases/$(database)/documents/videos/$(targetId)).data.get('dislikes', 0) == 0 ||
+            getAfter(/databases/$(database)/documents/videos/$(targetId)).data.dislikes
+              == get(/databases/$(database)/documents/videos/$(targetId)).data.get('dislikes', 0) - 1
+          ))
+        )
+      ) && (
+        !exists(/databases/$(database)/documents/reels/$(targetId))
+        || prevType != 'like'
+        || get(/databases/$(database)/documents/reels/$(targetId)).data.get('likes', 0) == 0
+        || getAfter(/databases/$(database)/documents/reels/$(targetId)).data.likes
+          == get(/databases/$(database)/documents/reels/$(targetId)).data.get('likes', 0) - 1
+      );
+    }
+
     match /likes/{likeId} {
-      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isValidId(likeId) && signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
       allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      // likeId अनिवार्य रूप से `${request.auth.uid}_${targetId}` होना चाहिए
+
       allow create: if signedIn()
                     && isValidId(likeId)
                     && request.resource.data.keys().hasAll(['id', 'userId', 'targetId', 'type', 'createdAt'])
                     && request.resource.data.keys().hasOnly(['id', 'userId', 'targetId', 'targetType', 'type', 'createdAt'])
                     && request.resource.data.id == likeId
                     && request.resource.data.userId == request.auth.uid
-                    && request.resource.data.targetId is string
-                    && request.resource.data.targetId.size() > 0
+                    && isValidId(request.resource.data.targetId)
                     && request.resource.data.targetId.size() <= 128
                     && (!('targetType' in request.resource.data) || request.resource.data.targetType in ['video', 'reel', 'comment'])
                     && request.resource.data.type in ['like', 'dislike']
                     && request.resource.data.createdAt is int
-                    && likeId == request.auth.uid + '_' + request.resource.data.targetId;
+                    && likeId == request.auth.uid + '_' + request.resource.data.targetId
+                    && isValidLikeTargetCreateAtomicity(request.resource.data.targetId, request.resource.data.type);
+
       allow update: if signedIn()
+                    && isValidId(likeId)
                     && resource.data.userId == request.auth.uid
                     && request.resource.data.keys().hasAll(['id', 'userId', 'targetId', 'type', 'createdAt'])
                     && request.resource.data.keys().hasOnly(['id', 'userId', 'targetId', 'targetType', 'type', 'createdAt'])
@@ -196,15 +548,22 @@ service cloud.firestore {
                     && (!('targetType' in request.resource.data) || request.resource.data.targetType in ['video', 'reel', 'comment'])
                     && request.resource.data.type in ['like', 'dislike']
                     && request.resource.data.createdAt is int
-                    && likeId == request.auth.uid + '_' + request.resource.data.targetId;
-      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+                    && likeId == request.auth.uid + '_' + request.resource.data.targetId
+                    && isValidLikeTargetUpdateAtomicity(resource.data.targetId, resource.data.type, request.resource.data.type);
+
+      allow delete: if isValidId(likeId) && (
+                      (signedIn()
+                        && resource.data.userId == request.auth.uid
+                        && isValidLikeTargetDeleteAtomicity(resource.data.targetId, resource.data.type))
+                      || isAdmin()
+                    );
     }
 
     // =========================================================================
     // 6. SUBSCRIPTIONS
     // =========================================================================
     match /subscriptions/{subscriptionId} {
-      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isValidId(subscriptionId) && signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
       allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if signedIn()
                     && isValidId(subscriptionId)
@@ -214,20 +573,20 @@ service cloud.firestore {
                     && request.resource.data.channelId.size() <= 128
                     && subscriptionId == request.auth.uid + '_' + request.resource.data.channelId;
       allow update: if signedIn()
+                    && isValidId(subscriptionId)
                     && resource.data.userId == request.auth.uid
                     && request.resource.data.userId == request.auth.uid
                     && request.resource.data.channelId == resource.data.channelId
                     && subscriptionId == request.auth.uid + '_' + request.resource.data.channelId;
-      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow delete: if isValidId(subscriptionId) && ((signedIn() && resource.data.userId == request.auth.uid) || isAdmin());
     }
 
     // =========================================================================
-    // 7. FOLLOWERS (7. Follow Button के लिए 100% सुरक्षित और संगत व्यवस्था)
+    // 7. FOLLOWERS
     // =========================================================================
     match /followers/{followerId} {
-      allow get: if signedIn() && (resource == null || resource.data.followerId == request.auth.uid || isAdmin());
+      allow get: if isValidId(followerId) && signedIn() && (resource == null || resource.data.followerId == request.auth.uid || isAdmin());
       allow list: if signedIn() && (resource.data.followerId == request.auth.uid || isAdmin());
-      // followerId अनिवार्य रूप से `${request.auth.uid}_${creatorId}` होना चाहिए
       allow create: if signedIn()
                     && isValidId(followerId)
                     && request.resource.data.followerId == request.auth.uid
@@ -236,108 +595,248 @@ service cloud.firestore {
                     && request.resource.data.creatorId.size() <= 128
                     && followerId == request.auth.uid + '_' + request.resource.data.creatorId;
       allow update: if signedIn()
+                    && isValidId(followerId)
                     && resource.data.followerId == request.auth.uid
                     && request.resource.data.followerId == request.auth.uid
                     && request.resource.data.creatorId == resource.data.creatorId
                     && followerId == request.auth.uid + '_' + request.resource.data.creatorId;
-      allow delete: if (signedIn() && resource.data.followerId == request.auth.uid) || isAdmin();
+      allow delete: if isValidId(followerId) && ((signedIn() && resource.data.followerId == request.auth.uid) || isAdmin());
     }
 
     // =========================================================================
-    // 8. NOTIFICATIONS (2. केवल अधिकृत प्रेषक ही Notification बना सकता है)
+    // 8. NOTIFICATIONS
     // =========================================================================
     match /notifications/{notificationId} {
-      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isValidId(notificationId) && signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
       allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
 
-      // प्रेषक (sender) का UID लॉगिन यूज़र से मेल खाना चाहिए; कोई फर्जी नाम से नहीं भेज सकता
-      allow create: if (signedIn() && (
-        request.resource.data.senderId == request.auth.uid ||
-        request.resource.data.fromUserId == request.auth.uid ||
-        request.resource.data.userId == request.auth.uid
-      )) || isAdmin();
+      allow create: if (signedIn()
+                    && isValidId(notificationId)
+                    && request.resource.data.keys().hasAll(['id', 'userId', 'type', 'title', 'message', 'read', 'createdAt'])
+                    && request.resource.data.keys().hasOnly([
+                      'id', 'userId', 'senderId', 'fromUserId', 'type', 'title', 'message',
+                      'avatar', 'thumbnailUrl', 'videoId', 'channelId', 'read', 'timestamp', 'createdAt'
+                    ])
+                    && request.resource.data.id == notificationId
+                    && request.resource.data.userId is string
+                    && request.resource.data.userId.size() > 0
+                    && request.resource.data.userId.size() <= 128
+                    && (
+                      request.resource.data.get('senderId', '') == request.auth.uid ||
+                      request.resource.data.get('fromUserId', '') == request.auth.uid ||
+                      request.resource.data.userId == request.auth.uid
+                    )
+                    && request.resource.data.type in ['upload', 'reply', 'milestone', 'subscription']
+                    && (request.resource.data.type != 'milestone' || request.resource.data.userId == request.auth.uid)
+                    && request.resource.data.title is string
+                    && request.resource.data.title.size() > 0
+                    && request.resource.data.title.size() <= 140
+                    && request.resource.data.message is string
+                    && request.resource.data.message.size() > 0
+                    && request.resource.data.message.size() <= 500
+                    && request.resource.data.read == false
+                    && request.resource.data.createdAt is int) || (isAdmin() && isValidId(notificationId));
 
-      // केवल प्राप्तकर्ता ही पढ़ सकता है और 'read' मार्क कर सकता है
-      allow update: if signedIn()
+      allow update: if isValidId(notificationId)
+                    && signedIn()
                     && resource.data.userId == request.auth.uid
-                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+                    && request.resource.data.read is bool;
 
-      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow delete: if isValidId(notificationId) && ((signedIn() && resource.data.userId == request.auth.uid) || isAdmin());
     }
 
     // =========================================================================
-    // 9. WATCH HISTORY
+    // 9. WATCH HISTORY (isValidId + strict schema & size limits)
     // =========================================================================
+    function isValidWatchHistoryDoc(data, historyId) {
+      return isValidId(historyId)
+        && data.keys().hasAll(['id', 'userId', 'videoId', 'watchedAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'videoId', 'videoTitle', 'videoPoster',
+          'videoDuration', 'progressSeconds', 'completed', 'watchedAt'
+        ])
+        && data.id == historyId
+        && data.userId == request.auth.uid
+        && isValidId(data.videoId)
+        && data.videoId.size() <= 128
+        && historyId == request.auth.uid + '_' + data.videoId
+        && (!('videoTitle' in data) || (data.videoTitle is string && data.videoTitle.size() <= 300))
+        && (!('videoPoster' in data) || (data.videoPoster is string && data.videoPoster.size() <= 4096))
+        && (!('videoDuration' in data) || ((data.videoDuration is int || data.videoDuration is float) && data.videoDuration >= 0 && data.videoDuration <= 864000))
+        && (!('progressSeconds' in data) || ((data.progressSeconds is int || data.progressSeconds is float) && data.progressSeconds >= 0 && data.progressSeconds <= 864000))
+        && (!('completed' in data) || data.completed is bool)
+        && data.watchedAt is int && data.watchedAt > 0;
+    }
+
     match /watchHistory/{historyId} {
-      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isValidId(historyId) && signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
       allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if signedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
-      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow create: if signedIn() && isValidWatchHistoryDoc(request.resource.data, historyId);
+      allow update: if isValidId(historyId)
+                    && signedIn()
+                    && resource.data.userId == request.auth.uid
+                    && isValidWatchHistoryDoc(request.resource.data, historyId)
+                    && request.resource.data.id == resource.data.id
+                    && request.resource.data.userId == resource.data.userId
+                    && request.resource.data.videoId == resource.data.videoId;
+      allow delete: if isValidId(historyId) && ((signedIn() && resource.data.userId == request.auth.uid) || isAdmin());
     }
 
     // =========================================================================
-    // 10. PLAYLISTS
+    // 10. PLAYLISTS (isValidId + strict schema, array limits & privacy fix)
     // =========================================================================
+    function isValidPlaylistDoc(data, playlistId) {
+      return isValidId(playlistId)
+        && data.keys().hasAll(['id', 'userId', 'title', 'isPublic', 'videoIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'title', 'description', 'isPublic', 'isPrivate',
+          'videoIds', 'thumbnailUrl', 'videoCount', 'createdAt', 'updatedAt'
+        ])
+        && data.id == playlistId
+        && data.userId == request.auth.uid
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 150
+        && (!('description' in data) || (data.description is string && data.description.size() <= 1000))
+        && data.isPublic is bool
+        && (!('isPrivate' in data) || (data.isPrivate is bool && data.isPrivate == !data.isPublic))
+        && data.videoIds is list
+        && data.videoIds.size() <= 500
+        && (data.videoIds.size() == 0 || (data.videoIds[0] is string && data.videoIds[0].size() > 0 && data.videoIds[0].size() <= 128))
+        && (!('thumbnailUrl' in data) || (data.thumbnailUrl is string && data.thumbnailUrl.size() <= 2048))
+        && (!('videoCount' in data) || (data.videoCount is int && data.videoCount == data.videoIds.size()))
+        && data.createdAt is int
+        && data.updatedAt is int;
+    }
+
     match /playlists/{playlistId} {
-      allow read: if resource.data.isPublic == true
-                  || resource.data.isPrivate == false
+      allow get: if isValidId(playlistId) && (
+                   (resource.data.isPublic == true && (!('isPrivate' in resource.data) || resource.data.isPrivate == false))
+                   || (signedIn() && resource.data.userId == request.auth.uid)
+                   || isAdmin()
+                 );
+      allow list: if (resource.data.isPublic == true && (!('isPrivate' in resource.data) || resource.data.isPrivate == false))
                   || (signedIn() && resource.data.userId == request.auth.uid)
                   || isAdmin();
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow create: if signedIn() && isValidPlaylistDoc(request.resource.data, playlistId);
+      allow update: if isValidId(playlistId) && ((
+                      signedIn()
+                      && resource.data.userId == request.auth.uid
+                      && isValidPlaylistDoc(request.resource.data, playlistId)
+                      && request.resource.data.id == resource.data.id
+                      && request.resource.data.userId == resource.data.userId
+                      && request.resource.data.createdAt == resource.data.createdAt
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'title', 'description', 'isPublic', 'isPrivate',
+                        'videoIds', 'thumbnailUrl', 'videoCount', 'updatedAt'
+                      ])
+                    ) || isAdmin());
+      allow delete: if isValidId(playlistId) && ((signedIn() && resource.data.userId == request.auth.uid) || isAdmin());
     }
 
     // =========================================================================
-    // 11. ANALYTICS
+    // 11. ANALYTICS (isValidId + strict metric bounds & key allowlists)
     // =========================================================================
+    function isValidAnalyticsDoc(data, analyticsId) {
+      return isValidId(analyticsId)
+        && data.keys().hasAll(['id', 'videoId', 'userId', 'timestamp'])
+        && data.keys().hasOnly([
+          'id', 'videoId', 'userId', 'views', 'watchTimeSeconds',
+          'impressions', 'engagementRate', 'bufferEvents',
+          'rebufferingDurationMs', 'timestamp'
+        ])
+        && data.id == analyticsId
+        && isValidId(data.videoId) && data.videoId.size() <= 128
+        && data.userId == request.auth.uid
+        && (!('views' in data) || (data.views is int && data.views >= 0 && data.views <= 10))
+        && (!('watchTimeSeconds' in data) || ((data.watchTimeSeconds is int || data.watchTimeSeconds is float) && data.watchTimeSeconds >= 0 && data.watchTimeSeconds <= 86400))
+        && (!('impressions' in data) || (data.impressions is int && data.impressions >= 0 && data.impressions <= 100))
+        && (!('engagementRate' in data) || ((data.engagementRate is int || data.engagementRate is float) && data.engagementRate >= 0 && data.engagementRate <= 100))
+        && (!('bufferEvents' in data) || (data.bufferEvents is int && data.bufferEvents >= 0 && data.bufferEvents <= 1000))
+        && (!('rebufferingDurationMs' in data) || ((data.rebufferingDurationMs is int || data.rebufferingDurationMs is float) && data.rebufferingDurationMs >= 0 && data.rebufferingDurationMs <= 3600000))
+        && data.timestamp is int && data.timestamp > 0;
+    }
+
     match /analytics/{analyticsId} {
-      allow get: if isAdmin() || (signedIn() && (resource == null || resource.data.userId == request.auth.uid));
+      allow get: if isValidId(analyticsId) && (isAdmin() || (signedIn() && (resource == null || resource.data.userId == request.auth.uid)));
       allow list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-      allow create: if (signedIn() && request.resource.data.userId == request.auth.uid) || isAdmin();
-      allow update, delete: if isAdmin();
+      allow create: if (signedIn() && isValidAnalyticsDoc(request.resource.data, analyticsId))
+                    || (isAdmin() && isValidId(analyticsId));
+      allow update, delete: if isValidId(analyticsId) && isAdmin();
     }
 
     // =========================================================================
-    // 12. REPORTS
+    // 12. REPORTS (isValidId + strict payload, status & size validation)
     // =========================================================================
+    function isValidReportDoc(data, reportId) {
+      return isValidId(reportId)
+        && data.keys().hasAll(['id', 'userId', 'targetId', 'targetType', 'reason', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'targetId', 'targetType', 'reason', 'details', 'status', 'createdAt'
+        ])
+        && data.id == reportId
+        && data.userId == request.auth.uid
+        && isValidId(data.targetId) && data.targetId.size() <= 128
+        && data.targetType in ['video', 'reel', 'comment', 'user']
+        && data.reason is string && data.reason.size() > 0 && data.reason.size() <= 200
+        && (!('details' in data) || (data.details is string && data.details.size() <= 2000))
+        && data.status == 'pending'
+        && data.createdAt is int && data.createdAt > 0;
+    }
+
     match /reports/{reportId} {
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow get: if isAdmin() || (signedIn() && (resource == null || resource.data.userId == request.auth.uid));
+      allow create: if signedIn() && isValidReportDoc(request.resource.data, reportId);
+      allow get: if isValidId(reportId) && (isAdmin() || (signedIn() && (resource == null || resource.data.userId == request.auth.uid)));
       allow list: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-      allow update, delete: if isAdmin();
+      allow update, delete: if isValidId(reportId) && isAdmin();
     }
 
     // =========================================================================
     // 13. CATEGORIES
     // =========================================================================
     match /categories/{categoryId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow get: if isValidId(categoryId);
+      allow list: if true;
+      allow write: if isValidId(categoryId) && isAdmin();
     }
 
     // =========================================================================
-    // 14. SEARCH HISTORY
+    // 14. SEARCH HISTORY (isValidId + strict schema & query size limit)
     // =========================================================================
+    function isValidSearchHistoryDoc(data, searchId) {
+      return isValidId(searchId)
+        && data.keys().hasAll(['id', 'userId', 'query', 'timestamp'])
+        && data.keys().hasOnly(['id', 'userId', 'query', 'timestamp'])
+        && data.id == searchId
+        && data.userId == request.auth.uid
+        && data.query is string && data.query.size() > 0 && data.query.size() <= 300
+        && data.timestamp is int && data.timestamp > 0;
+    }
+
     match /searchHistory/{searchId} {
-      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isValidId(searchId) && signedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
       allow list: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if signedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
-      allow delete: if (signedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow create: if signedIn() && isValidSearchHistoryDoc(request.resource.data, searchId);
+      allow update: if isValidId(searchId)
+                    && signedIn()
+                    && resource.data.userId == request.auth.uid
+                    && isValidSearchHistoryDoc(request.resource.data, searchId)
+                    && request.resource.data.id == resource.data.id
+                    && request.resource.data.userId == resource.data.userId
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['query', 'timestamp']);
+      allow delete: if isValidId(searchId) && ((signedIn() && resource.data.userId == request.auth.uid) || isAdmin());
     }
 
     // =========================================================================
     // 15. TEST CONNECTION
     // =========================================================================
     match /test/{docId} {
-      allow get: if docId == 'connection' || signedIn();
-      allow list: if signedIn();
+      allow get: if docId == 'connection' || isAdmin();
+      allow list: if isAdmin();
       allow write: if isAdmin();
     }
 
     // =========================================================================
-    // DEFAULT DENY CATCH-ALL (9. बिना अनुमति के किसी भी Collection का एक्सेस ब्लॉक)
+    // DEFAULT DENY CATCH-ALL
     // =========================================================================
     match /{document=**} {
       allow read, write: if false;

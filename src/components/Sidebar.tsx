@@ -19,10 +19,12 @@ import {
   LogOut,
   Settings,
   UserCircle2,
-  ListVideo
+  ListVideo,
+  Globe
 } from 'lucide-react';
 import { Channel } from '../types/video';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage, APP_LANGUAGES } from '../context/LanguageContext';
 import { VioLogo } from './VioLogo';
 
 export type NavigationPage =
@@ -75,6 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettings,
 }) => {
   const { currentUser, userProfile, signOutUser } = useAuth();
+  const { language, setLanguage, t } = useLanguage();
   const followedChannels = channels.filter((c) => c.isSubscribed);
 
   const handleNav = (page: NavigationPage) => {
@@ -103,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'home')}
         >
           <Home className="h-5 w-5 shrink-0" />
-          <span>Home</span>
+          <span>{t('nav.home', 'Home')}</span>
         </button>
 
         <button
@@ -111,7 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'reels')}
         >
           <Sparkles className="h-5 w-5 shrink-0" />
-          <span>Shorts & Reels</span>
+          <span>{t('nav.reels', 'Shorts & Reels')}</span>
         </button>
 
         <button
@@ -119,7 +122,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'subscriptions')}
         >
           <Tv className="h-5 w-5 shrink-0" />
-          <span>Following</span>
+          <span>{t('nav.following', 'Following')}</span>
         </button>
       </div>
 
@@ -131,7 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => (isMobileDrawer ? handleNav('history') : onNavigate('history'))}
           className="flex w-full items-center gap-1.5 px-3 py-2 rounded-[10px] text-[15px] font-semibold text-[var(--ink)] hover:bg-[var(--card-hover)]/70 transition-colors"
         >
-          <span>You</span>
+          <span>{t('nav.you', 'You')}</span>
           <ChevronRight className="h-4 w-4 text-[var(--ink-medium)]" />
         </button>
 
@@ -140,7 +143,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'history')}
         >
           <History className="h-5 w-5 shrink-0" />
-          <span>History</span>
+          <span>{t('nav.history', 'History')}</span>
         </button>
 
         <button
@@ -148,7 +151,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'watchLater')}
         >
           <Clock className="h-5 w-5 shrink-0" />
-          <span>Watch later</span>
+          <span>{t('nav.watchLater', 'Watch later')}</span>
         </button>
 
         <button
@@ -156,7 +159,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'playlists')}
         >
           <ListVideo className="h-5 w-5 shrink-0" />
-          <span>Playlists</span>
+          <span>{t('nav.playlists', 'Playlists')}</span>
         </button>
 
         <button
@@ -164,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'liked')}
         >
           <ThumbsUp className="h-5 w-5 shrink-0" />
-          <span>Liked videos</span>
+          <span>{t('nav.likedVideos', 'Liked videos')}</span>
         </button>
 
         <button
@@ -172,7 +175,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'studio')}
         >
           <LayoutDashboard className="h-5 w-5 shrink-0" />
-          <span>Creator Studio</span>
+          <span>{t('nav.studio', 'Creator Studio')}</span>
         </button>
       </div>
 
@@ -181,7 +184,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* 3. Following Channels Section */}
       <div className="space-y-0.5">
         <div className="px-3 py-1.5 text-[15px] font-semibold text-[var(--ink)]">
-          Following
+          {t('nav.following', 'Following')}
         </div>
 
         {followedChannels.length === 0 ? (
@@ -217,7 +220,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* 4. Explore Section */}
       <div className="space-y-0.5">
         <div className="px-3 py-1.5 text-[15px] font-semibold text-[var(--ink)]">
-          Explore
+          {t('nav.explore', 'Explore')}
         </div>
 
         <button
@@ -225,7 +228,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'trending')}
         >
           <Flame className="h-5 w-5 shrink-0" />
-          <span>Trending</span>
+          <span>{t('nav.trending', 'Trending')}</span>
         </button>
 
         <button
@@ -233,7 +236,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className={navItemClass(currentPage === 'customFeed')}
         >
           <Cpu className="h-5 w-5 shrink-0" />
-          <span>Custom Feed</span>
+          <span>{t('nav.customFeed', 'Custom Feed')}</span>
         </button>
       </div>
 
@@ -250,9 +253,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className={navItemClass(false)}
           >
             <Settings className="h-5 w-5 shrink-0" />
-            <span>Settings</span>
+            <span>{t('nav.settings', 'Settings')}</span>
           </button>
         )}
+
+        {/* Language Quick Switcher */}
+        <div className="px-3 py-2 rounded-[10px]">
+          <div className="flex items-center gap-3 text-[13px] font-medium text-[var(--ink)]/90 mb-2">
+            <Globe className="h-4 w-4 shrink-0 text-[var(--ink-medium)]" />
+            <span>{t('nav.language', 'Language')}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {APP_LANGUAGES.map((opt) => (
+              <button
+                key={opt.code}
+                type="button"
+                onClick={() => setLanguage(opt.code)}
+                className={`px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                  language === opt.code
+                    ? 'bg-[#FF0000] text-white'
+                    : 'bg-[var(--card-hover)] text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {opt.nativeLabel}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {toggleDarkMode && (
           <button
@@ -265,7 +292,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ) : (
                 <Sun className="h-5 w-5 shrink-0" />
               )}
-              <span>Appearance: {isDarkMode ? 'Dark' : 'Light'}</span>
+              <span>{t('nav.appearance', 'Appearance')}: {isDarkMode ? 'Dark' : 'Light'}</span>
             </div>
           </button>
         )}
@@ -279,7 +306,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className={navItemClass(false)}
           >
             <Sliders className="h-5 w-5 shrink-0" />
-            <span>Video Filters</span>
+            <span>{t('nav.videoFilters', 'Video Filters')}</span>
           </button>
         )}
 
@@ -292,7 +319,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className={navItemClass(false)}
           >
             <Keyboard className="h-5 w-5 shrink-0" />
-            <span>Keyboard Shortcuts</span>
+            <span>{t('nav.shortcuts', 'Keyboard Shortcuts')}</span>
           </button>
         )}
       </div>
@@ -409,7 +436,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }`}
           >
             <Home className="h-5 w-5" />
-            <span className="mt-1.5">Home</span>
+            <span className="mt-1.5">{t('nav.home', 'Home')}</span>
           </button>
 
           <button
@@ -421,7 +448,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }`}
           >
             <Sparkles className="h-5 w-5" />
-            <span className="mt-1.5">Reels</span>
+            <span className="mt-1.5">{t('nav.reelsShort', 'Reels')}</span>
           </button>
 
           <button
@@ -433,7 +460,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }`}
           >
             <Tv className="h-5 w-5" />
-            <span className="mt-1.5">Following</span>
+            <span className="mt-1.5">{t('nav.following', 'Following')}</span>
           </button>
 
           <button
@@ -445,7 +472,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }`}
           >
             <UserCircle2 className="h-5 w-5" />
-            <span className="mt-1.5">You</span>
+            <span className="mt-1.5">{t('nav.you', 'You')}</span>
           </button>
 
           <button
@@ -457,7 +484,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }`}
           >
             <LayoutDashboard className="h-5 w-5" />
-            <span className="mt-1.5">Studio</span>
+            <span className="mt-1.5">{t('nav.studioShort', 'Studio')}</span>
           </button>
         </aside>
       ) : (

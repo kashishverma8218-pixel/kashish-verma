@@ -13,9 +13,13 @@ import {
   Plus,
   UserCircle2,
   History as HistoryIcon,
-  ArrowUpRight
+  ArrowUpRight,
+  Globe,
+  Video,
+  Clapperboard
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage, APP_LANGUAGES } from '../context/LanguageContext';
 import { NotificationsPanel } from './NotificationsPanel';
 import { NotificationItem, VideoItem, Channel } from '../types/video';
 import { VioLogo } from './VioLogo';
@@ -30,7 +34,7 @@ interface NavbarProps {
   onOpenProfile: () => void;
   onOpenStudio: () => void;
   onOpenSettings?: () => void;
-  onOpenCreate?: () => void;
+  onOpenCreate?: (target?: 'video' | 'reel') => void;
   notifications: NotificationItem[];
   onMarkAllNotificationsRead: () => void;
   onToggleNotificationRead: (id: string) => void;
@@ -70,9 +74,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   channels = [],
 }) => {
   const { currentUser, userProfile, signOutUser } = useAuth();
+  const { language, setLanguage, t, activeOption } = useLanguage();
 
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showLangMenu, setShowLangMenu] = useState(false);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
   const [voiceSearchActive, setVoiceSearchActive] = useState(false);
   const [voiceStatusText, setVoiceStatusText] = useState('Listening... Speak now');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
@@ -80,15 +87,23 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [avatarFailed, setAvatarFailed] = useState(false);
   const recognitionRef = useRef<any>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const langMenuRef = useRef<HTMLDivElement>(null);
+  const createMenuRef = useRef<HTMLDivElement>(null);
   const searchBoxRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   useEffect(() => {
-    if (!showUserMenu && !searchFocused) return;
+    if (!showUserMenu && !searchFocused && !showLangMenu && !showCreateMenu) return;
     const handleOutside = (e: MouseEvent | TouchEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setShowUserMenu(false);
+      }
+      if (langMenuRef.current && !langMenuRef.current.contains(e.target as Node)) {
+        setShowLangMenu(false);
+      }
+      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
+        setShowCreateMenu(false);
       }
       if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
         setSearchFocused(false);
@@ -100,7 +115,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       document.removeEventListener('mousedown', handleOutside);
       document.removeEventListener('touchstart', handleOutside);
     };
-  }, [showUserMenu, searchFocused]);
+  }, [showUserMenu, searchFocused, showLangMenu, showCreateMenu]);
 
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const matchedVideos = trimmedQuery
@@ -241,7 +256,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <input
               type="text"
               autoFocus
-              placeholder="Search Vio streaming"
+              placeholder={t('nav.searchVio', 'Search Vio streaming')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setSearchFocused(true)}
@@ -344,7 +359,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               aria-label="Vio streaming Home"
               className="flex items-center focus:outline-none group overflow-visible py-0.5 cursor-pointer"
             >
-              <VioLogo size="md" />
+              <VioLogo size="md" showWordmark={false} />
             </button>
           </div>
 
@@ -355,7 +370,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="flex flex-1 items-center h-full rounded-l-full border border-[var(--ink-faint)] focus-within:border-[var(--link)] bg-[var(--bg)] pl-4 pr-2 transition-colors">
                   <input
                     type="text"
-                    placeholder="Search"
+                    placeholder={t('nav.searchPlaceholder', 'Search')}
                     value={searchQuery}
                     onFocus={() => setSearchFocused(true)}
                     onChange={(e) => {
@@ -494,18 +509,109 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Search className="h-5 w-5" />
             </button>
 
-            {/* + Create Pill Button (YouTube style) */}
+            {/* + Create Menu Button (Upload Long Video / Upload Shorts & Reels) */}
             {onOpenCreate && (
-              <button
-                onClick={onOpenCreate}
-                title="Create & Upload"
-                aria-label="Create"
-                className="hidden sm:flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-[var(--card-hover)] hover:bg-[var(--ink-faint)] text-[var(--ink)] text-sm font-medium whitespace-nowrap shrink-0 transition-colors"
-              >
-                <Plus className="h-4 w-4" />
-                <span>Create</span>
-              </button>
+              <div ref={createMenuRef} className="relative hidden sm:block">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateMenu((prev) => !prev);
+                    setShowLangMenu(false);
+                    setShowNotifications(false);
+                    setShowUserMenu(false);
+                  }}
+                  title={t('nav.create', 'Create')}
+                  aria-label={t('nav.create', 'Create')}
+                  aria-expanded={showCreateMenu}
+                  className="flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-[var(--card-hover)] hover:bg-[var(--ink-faint)] text-[var(--ink)] text-sm font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>{t('nav.create', 'Create')}</span>
+                </button>
+
+                {showCreateMenu && (
+                  <div className="absolute right-0 top-11 z-50 w-64 rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface-elevated)] p-1.5 shadow-2xl animate-in fade-in slide-in-from-top-1 duration-150">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateMenu(false);
+                        onOpenCreate('video');
+                      }}
+                      className="flex w-full items-center gap-3 px-3 py-2.5 min-h-[44px] rounded-xl text-left hover:bg-[var(--card-hover)] transition-colors cursor-pointer"
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--ink)] text-[var(--bg)]">
+                        <Video className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-[var(--ink)]">Upload Long Video</div>
+                        <div className="text-[11px] text-[var(--ink-medium)]">16:9 · MP4, MOV, WebM</div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateMenu(false);
+                        onOpenCreate('reel');
+                      }}
+                      className="flex w-full items-center gap-3 px-3 py-2.5 min-h-[44px] rounded-xl text-left hover:bg-[var(--card-hover)] transition-colors cursor-pointer mt-0.5"
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FF0000] text-white">
+                        <Clapperboard className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-[var(--ink)]">Upload Shorts / Reels</div>
+                        <div className="text-[11px] text-[var(--ink-medium)]">9:16 Vertical · Up to 3 min</div>
+                      </div>
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
+
+            {/* Quick Language Switcher (Desktop; mobile uses Sidebar/Settings) */}
+            <div ref={langMenuRef} className="relative hidden sm:block">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLangMenu((prev) => !prev);
+                  setShowNotifications(false);
+                  setShowUserMenu(false);
+                }}
+                title={t('nav.language', 'Language')}
+                aria-label={t('nav.language', 'Language')}
+                className="flex items-center gap-1 h-9 px-2.5 rounded-full text-[var(--ink)] hover:bg-[var(--card-hover)] text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <Globe className="h-4 w-4 text-[var(--ink-medium)]" />
+                <span>{activeOption.shortCode}</span>
+              </button>
+
+              {showLangMenu && (
+                <div className="absolute right-0 top-11 z-50 w-44 rounded-xl border border-[var(--ink-faint)] bg-[var(--surface-elevated)] p-1.5 shadow-2xl text-xs animate-in fade-in slide-in-from-top-1 duration-150">
+                  <div className="px-2.5 py-1.5 text-[11px] font-semibold text-[var(--ink-medium)] border-b border-[var(--ink-faint)] mb-1">
+                    {t('nav.language', 'Language')}
+                  </div>
+                  {APP_LANGUAGES.map((opt) => (
+                    <button
+                      key={opt.code}
+                      type="button"
+                      onClick={() => {
+                        setLanguage(opt.code);
+                        setShowLangMenu(false);
+                      }}
+                      className={`flex w-full items-center justify-between px-2.5 py-2 rounded-lg transition-colors cursor-pointer ${
+                        language === opt.code
+                          ? 'bg-[#FF0000]/12 text-[#FF0000] font-bold'
+                          : 'text-[var(--ink)] hover:bg-[var(--card-hover)]'
+                      }`}
+                    >
+                      <span>{opt.nativeLabel}</span>
+                      <span className="text-[10px] font-mono opacity-75">{opt.shortCode}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Notifications Dropdown */}
             <div className="relative z-50">
@@ -602,7 +708,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                         className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--card-hover)] transition-colors font-medium text-[var(--accent-ink)]"
                       >
                         <LayoutDashboard className="h-4 w-4" />
-                        <span>Creator Studio Dashboard</span>
+                        <span>{t('nav.studio', 'Creator Studio')}</span>
                       </button>
 
                       <button
@@ -625,7 +731,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                           className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--card-hover)] transition-colors font-medium"
                         >
                           <Settings className="h-4 w-4 text-[var(--ink-medium)]" />
-                          <span>Settings & Preferences</span>
+                          <span>{t('nav.settings', 'Settings')}</span>
                         </button>
                       )}
 
@@ -639,20 +745,30 @@ export const Navbar: React.FC<NavbarProps> = ({
                         className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-colors font-medium"
                       >
                         <LogOut className="h-4 w-4" />
-                        <span>Sign Out</span>
+                        <span>{t('nav.signOut', 'Sign Out')}</span>
                       </button>
                     </div>
                   </div>
                 )}
               </div>
             ) : (
-              <button
-                onClick={onOpenAuth}
-                className="flex items-center gap-1 sm:gap-1.5 h-9 rounded-full border border-[var(--ink-faint)] hover:bg-[var(--link)]/10 hover:border-[var(--link)]/40 text-[var(--link)] px-2.5 sm:px-3.5 text-xs sm:text-sm font-medium whitespace-nowrap shrink-0 transition-colors active:scale-95 cursor-pointer"
-              >
-                <UserCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />
-                <span>Sign in</span>
-              </button>
+              <>
+                <button
+                  onClick={onOpenAuth}
+                  aria-label={t('nav.signIn', 'Sign in')}
+                  title={t('nav.signIn', 'Sign in')}
+                  className="flex sm:hidden h-8 w-8 items-center justify-center rounded-full bg-[var(--card-hover)] ring-1 ring-[var(--ink-faint)] text-[var(--ink)] hover:bg-[var(--ink-faint)] transition-colors ml-1 cursor-pointer"
+                >
+                  <User className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={onOpenAuth}
+                  className="hidden sm:flex items-center gap-1.5 h-9 rounded-full border border-[var(--ink-faint)] hover:bg-[var(--link)]/10 hover:border-[var(--link)]/40 text-[var(--link)] px-3.5 text-sm font-medium whitespace-nowrap shrink-0 transition-colors active:scale-95 cursor-pointer"
+                >
+                  <UserCircle2 className="h-5 w-5" />
+                  <span>{t('nav.signIn', 'Sign in')}</span>
+                </button>
+              </>
             )}
           </div>
         </div>

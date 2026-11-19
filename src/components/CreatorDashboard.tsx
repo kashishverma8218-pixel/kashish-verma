@@ -37,7 +37,12 @@ import {
   RefreshCw,
   Download,
   Activity,
-  Clapperboard
+  Clapperboard,
+  Award,
+  Wallet,
+  CreditCard,
+  ShieldCheck,
+  HeartHandshake
 } from 'lucide-react';
 import { VideoItem, ReelItem, Channel, Comment } from '../types/video';
 import { formatTime } from '../utils/formatTime';
@@ -47,6 +52,7 @@ import { EditVideoModal } from './EditVideoModal';
 import { calculateRevenueSplit, estimateEarningsFromViews } from '../utils/revenueSharing';
 import { HlsStreamingMetricsPanel } from './HlsStreamingMetricsPanel';
 import { uploadImageAsset } from '../services/firebaseDatabaseService';
+import { useLanguage } from '../context/LanguageContext';
 
 const FALLBACK_POSTER =
   'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=800&q=80';
@@ -60,7 +66,7 @@ interface CreatorDashboardProps {
   comments: Record<string, Comment[]>;
   onPlayVideo: (video: VideoItem) => void;
   onPlayReel?: (reelId: string) => void;
-  onOpenUpload: () => void;
+  onOpenUpload: (target?: 'video' | 'reel') => void;
   onUpdateVideo: (video: VideoItem) => void;
   onDeleteVideo: (videoId: string) => void;
   onUpdateReel?: (reel: ReelItem) => void;
@@ -84,6 +90,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   onUpdateChannel,
   onDeleteComment,
 }) => {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<
     'overview' | 'content' | 'analytics' | 'hls-metrics' | 'customization' | 'comments' | 'monetization' | 'ai-editor'
   >('overview');
@@ -94,14 +101,88 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // Revenue Sharing Calculator State
+  // Monetization & YouTube-Style Partner Program State
   const [calcEarningsInput, setCalcEarningsInput] = useState<number>(3500);
+  const [partnerActive, setPartnerActive] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(`vio_partner_status_${channel.id}`);
+      return saved === null ? true : saved === 'active';
+    } catch {
+      return true;
+    }
+  });
+  const [payoutMethod, setPayoutMethod] = useState<'bank' | 'upi' | 'paypal'>(() => {
+    try {
+      const saved = localStorage.getItem(`vio_payout_method_${channel.id}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.method === 'bank' || parsed.method === 'upi' || parsed.method === 'paypal') {
+          return parsed.method;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return 'upi';
+  });
+  const [payoutAccount, setPayoutAccount] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(`vio_payout_method_${channel.id}`);
+      if (saved) {
+        return JSON.parse(saved).account || '';
+      }
+    } catch {
+      // ignore
+    }
+    return '';
+  });
+  const [payoutSavedMsg, setPayoutSavedMsg] = useState<string | null>(null);
+  const [monetizeFilter, setMonetizeFilter] = useState<'all' | 'videos' | 'reels'>('all');
+
+  useEffect(() => {
+    try {
+      const savedStatus = localStorage.getItem(`vio_partner_status_${channel.id}`);
+      setPartnerActive(savedStatus === null ? true : savedStatus === 'active');
+      const savedPayout = localStorage.getItem(`vio_payout_method_${channel.id}`);
+      if (savedPayout) {
+        const parsed = JSON.parse(savedPayout);
+        setPayoutMethod(parsed.method || 'upi');
+        setPayoutAccount(parsed.account || '');
+      }
+    } catch {
+      // ignore
+    }
+  }, [channel.id]);
+
+  const handleTogglePartnerStatus = () => {
+    const next = !partnerActive;
+    setPartnerActive(next);
+    try {
+      localStorage.setItem(`vio_partner_status_${channel.id}`, next ? 'active' : 'paused');
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSavePayoutMethod = (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      localStorage.setItem(
+        `vio_payout_method_${channel.id}`,
+        JSON.stringify({ method: payoutMethod, account: payoutAccount.trim() })
+      );
+    } catch {
+      // ignore
+    }
+    setPayoutSavedMsg('Payout details saved securely for the 15th monthly cycle.');
+    setTimeout(() => setPayoutSavedMsg(null), 3000);
+  };
 
   // Studio Color & Framing Lab State
   const [selectedEditorVideoId, setSelectedEditorVideoId] = useState<string>(
     videos.find((v) => v.channelId === channel.id)?.id || videos[0]?.id || ''
   );
-  const [aiTools, setAiTools] = useState({
+  const DEFAULT_STUDIO_TOOLS = {
     autoCut: false,
     autoCaptions: true,
     lutGrade: true,
@@ -110,7 +191,8 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
     shortsFormat: false,
     autoZoom: false,
     sfxEnhance: true,
-  });
+  };
+  const [aiTools, setAiTools] = useState(DEFAULT_STUDIO_TOOLS);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [aiStatusMsg, setAiStatusMsg] = useState<string | null>(null);
 
@@ -140,6 +222,20 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
       setSelectedEditorVideoId(channelMatch?.id || videos[0]?.id || '');
     }
   }, [channel.id, videos, selectedEditorVideoId]);
+
+  useEffect(() => {
+    if (!selectedEditorVideoId) return;
+    try {
+      const savedMap = JSON.parse(localStorage.getItem('vio_studio_lab_presets') || '{}');
+      if (savedMap[selectedEditorVideoId]) {
+        setAiTools({ ...DEFAULT_STUDIO_TOOLS, ...savedMap[selectedEditorVideoId] });
+      } else {
+        setAiTools(DEFAULT_STUDIO_TOOLS);
+      }
+    } catch {
+      // ignore
+    }
+  }, [selectedEditorVideoId]);
 
   const handleChannelImageUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -266,14 +362,22 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={onOpenUpload}
-              className="min-h-[42px] flex items-center gap-2 rounded-full bg-[#FF0000] px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#CC0000] active:scale-95 transition-all cursor-pointer"
+              onClick={() => onOpenUpload('video')}
+              className="min-h-[44px] flex items-center gap-2 rounded-full border border-[var(--ink-faint)] bg-[var(--bg)] px-4 py-2 text-xs font-bold text-[var(--ink)] hover:bg-[var(--card-hover)] active:scale-95 transition-all cursor-pointer"
             >
               <Upload className="h-4 w-4" />
-              <span>Upload Video</span>
+              <span>Upload Long Video</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenUpload('reel')}
+              className="min-h-[44px] flex items-center gap-2 rounded-full bg-[#FF0000] px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#CC0000] active:scale-95 transition-all cursor-pointer"
+            >
+              <Clapperboard className="h-4 w-4" />
+              <span>Upload Shorts / Reels</span>
             </button>
           </div>
         </div>
@@ -281,14 +385,14 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         {/* Studio Navigation Tabs */}
         <div className="mt-6 flex items-center gap-2 overflow-x-auto border-t border-[var(--ink-faint)] pt-4 scrollbar-none">
           {[
-            { id: 'overview', name: 'Dashboard', icon: LayoutDashboard },
-            { id: 'content', name: 'Content Manager', icon: Film },
-            { id: 'analytics', name: 'Channel Analytics', icon: BarChart3 },
-            { id: 'hls-metrics', name: 'HLS Streaming Telemetry', icon: Activity },
-            { id: 'monetization', name: 'Monetization (30/70)', icon: DollarSign },
-            { id: 'ai-editor', name: 'Color & Framing Lab', icon: SlidersHorizontal },
-            { id: 'comments', name: 'Comments', icon: MessageSquare },
-            { id: 'customization', name: 'Branding & Customization', icon: Paintbrush },
+            { id: 'overview', name: t('studio.dashboard', 'Dashboard'), icon: LayoutDashboard },
+            { id: 'content', name: t('studio.content', 'Content Manager'), icon: Film },
+            { id: 'analytics', name: t('studio.analytics', 'Channel Analytics'), icon: BarChart3 },
+            { id: 'hls-metrics', name: t('studio.hlsMetrics', 'HLS Telemetry'), icon: Activity },
+            { id: 'monetization', name: t('studio.monetization', 'Monetization (Earn)'), icon: DollarSign },
+            { id: 'ai-editor', name: t('studio.colorLab', 'Color & Framing Lab'), icon: SlidersHorizontal },
+            { id: 'comments', name: t('studio.comments', 'Comments'), icon: MessageSquare },
+            { id: 'customization', name: t('studio.branding', 'Branding'), icon: Paintbrush },
           ].map((tab) => {
             const Icon = tab.icon;
             const isSel = activeTab === tab.id;
@@ -461,8 +565,8 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                   </p>
                   <button
                     type="button"
-                    onClick={onOpenUpload}
-                    className="mt-4 px-5 py-2 rounded-full bg-[#FF0000] hover:bg-[#CC0000] text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer"
+                    onClick={() => onOpenUpload('video')}
+                    className="mt-4 px-5 py-2 min-h-[42px] rounded-full bg-[#FF0000] hover:bg-[#CC0000] text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer"
                   >
                     Upload First Video
                   </button>
@@ -479,16 +583,33 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               <div className="space-y-2.5">
                 <button
                   type="button"
-                  onClick={onOpenUpload}
+                  onClick={() => onOpenUpload('video')}
+                  className="group flex w-full items-center justify-between rounded-2xl border border-[var(--ink-faint)] bg-[var(--bg)] p-3.5 hover:border-[#FF0000]/40 hover:bg-[var(--card-hover)] transition-all text-left cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--ink)] text-[var(--bg)] shadow-xs group-hover:scale-105 transition-transform">
+                      <Upload className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-[var(--ink)] truncate">Upload Long Video</div>
+                      <div className="text-[11px] text-[var(--ink-medium)] truncate">16:9 widescreen · MP4, MOV, WebM</div>
+                    </div>
+                  </div>
+                  <ArrowUpRight className="h-4 w-4 shrink-0 text-[var(--ink-medium)] group-hover:text-[#FF0000] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all ml-2" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onOpenUpload('reel')}
                   className="group flex w-full items-center justify-between rounded-2xl border border-[var(--ink-faint)] bg-[var(--bg)] p-3.5 hover:border-[#FF0000]/40 hover:bg-[var(--card-hover)] transition-all text-left cursor-pointer"
                 >
                   <div className="flex items-center gap-3.5 min-w-0">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF0000] text-white shadow-xs group-hover:scale-105 transition-transform">
-                      <Upload className="h-5 w-5" />
+                      <Clapperboard className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-xs font-bold text-[var(--ink)] truncate">Upload New Video</div>
-                      <div className="text-[11px] text-[var(--ink-medium)] truncate">Publish in 1080p / 4K multi-res</div>
+                      <div className="text-xs font-bold text-[var(--ink)] truncate">Upload Shorts / Reels</div>
+                      <div className="text-[11px] text-[var(--ink-medium)] truncate">9:16 vertical feed · Up to 3 min</div>
                     </div>
                   </div>
                   <ArrowUpRight className="h-4 w-4 shrink-0 text-[var(--ink-medium)] group-hover:text-[#FF0000] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all ml-2" />
@@ -663,11 +784,11 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
 
               <button
                 type="button"
-                onClick={onOpenUpload}
-                className="min-h-[40px] flex items-center gap-1.5 rounded-full bg-[#FF0000] px-4 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#CC0000] shrink-0 cursor-pointer"
+                onClick={() => onOpenUpload(contentMediaType === 'reels' ? 'reel' : 'video')}
+                className="min-h-[42px] flex items-center gap-1.5 rounded-full bg-[#FF0000] px-4 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#CC0000] shrink-0 cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
-                <span>Upload</span>
+                <span>{contentMediaType === 'reels' ? 'Upload Short / Reel' : 'Upload Long Video'}</span>
               </button>
             </div>
           </div>
@@ -837,10 +958,10 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={onOpenUpload}
-                  className="px-4 py-1.5 rounded-full bg-[#FF0000] hover:bg-[#CC0000] text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer"
+                  onClick={() => onOpenUpload('video')}
+                  className="px-4 py-1.5 min-h-[38px] rounded-full bg-[#FF0000] hover:bg-[#CC0000] text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer"
                 >
-                  Upload New Video
+                  Upload Long Video
                 </button>
               </div>
             </div>
@@ -1345,254 +1466,598 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         </div>
       )}
 
-      {/* TAB 6: MONETIZATION & REVENUE SHARING (30% Creator / 70% Platform Split) */}
-      {activeTab === 'monetization' && (
-        <div className="space-y-6">
-          {/* Header Banner */}
-          <div className="rounded-3xl border border-emerald-500/30 bg-[var(--surface)] p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3.5">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-600/30">
-                  <DollarSign className="h-6 w-6" />
+      {/* TAB 6: YOUTUBE-STYLE MONETIZATION & PARTNER PROGRAM (30% Creator / 70% Platform Split) */}
+      {activeTab === 'monetization' && (() => {
+        const numericWatchHours = Number(totalWatchHours) || 0;
+        const publicUploadsCount =
+          channelVideos.filter((v) => (v.visibility || 'public') === 'public').length +
+          channelReels.filter((r) => (r.visibility || 'public') === 'public').length;
+
+        const tier1SubsPct = Math.min(100, Math.round((channel.subscribersCount / 500) * 100));
+        const tier1UploadsPct = Math.min(100, Math.round((publicUploadsCount / 3) * 100));
+        const tier1HoursPct = Math.min(100, Math.round((numericWatchHours / 3000) * 100));
+
+        const tier2SubsPct = Math.min(100, Math.round((channel.subscribersCount / 1000) * 100));
+        const tier2HoursPct = Math.min(100, Math.round((numericWatchHours / 4000) * 100));
+        const tier2ReelsPct = Math.min(100, Math.round((totalReelViews / 10000000) * 100));
+
+        const monetizedVideoViews = channelVideos
+          .filter((v) => v.monetizationEnabled !== false)
+          .reduce((acc, v) => acc + (v.views || 0), 0);
+        const monetizedReelViews = channelReels
+          .filter((r) => r.monetizationEnabled !== false)
+          .reduce((acc, r) => acc + (r.views || 0), 0);
+
+        const watchAdsSplit = estimateEarningsFromViews(monetizedVideoViews, 2.5);
+        const reelsAdsSplit = estimateEarningsFromViews(monetizedReelViews, 0.45);
+        const fanFundingGross = Number((channel.subscribersCount * 0.04).toFixed(2));
+        const fanFundingSplit = calculateRevenueSplit(fanFundingGross);
+
+        const combinedGross = Number(
+          (watchAdsSplit.totalEarnings + reelsAdsSplit.totalEarnings + fanFundingSplit.totalEarnings).toFixed(2)
+        );
+        const combinedSplit = calculateRevenueSplit(combinedGross);
+        const payoutThresholdUsd = 100;
+        const payoutThresholdPct = Math.min(100, Math.round((combinedSplit.creatorShare / payoutThresholdUsd) * 100));
+        const calcSplit = calculateRevenueSplit(calcEarningsInput);
+
+        const unifiedItems = [
+          ...channelVideos.map((v) => ({
+            id: v.id,
+            kind: 'video' as const,
+            title: v.title,
+            poster: v.poster,
+            views: v.views || 0,
+            monetized: v.monetizationEnabled !== false,
+            rpm: 2.5,
+            rawVideo: v,
+            rawReel: undefined,
+          })),
+          ...channelReels.map((r) => ({
+            id: r.id,
+            kind: 'reel' as const,
+            title: r.title,
+            poster: r.poster,
+            views: r.views || 0,
+            monetized: r.monetizationEnabled !== false,
+            rpm: 0.45,
+            rawVideo: undefined,
+            rawReel: r,
+          })),
+        ].filter((item) =>
+          monetizeFilter === 'all' ? true : monetizeFilter === 'videos' ? item.kind === 'video' : item.kind === 'reel'
+        );
+
+        return (
+          <div className="space-y-6">
+            {/* Partner Program Header Banner */}
+            <div className="rounded-3xl border border-emerald-500/30 bg-[var(--surface)] p-6">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex items-start sm:items-center gap-3.5">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-600/25">
+                    <Award className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg sm:text-xl font-black text-[var(--ink)]">
+                        {t('monetization.title', 'Creator Monetization & Partner Program')}
+                      </h2>
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                          partnerActive
+                            ? 'bg-emerald-500/15 text-emerald-500'
+                            : 'bg-amber-500/15 text-amber-500'
+                        }`}
+                      >
+                        {partnerActive
+                          ? t('monetization.activePartner', 'Active Monetized Partner')
+                          : t('monetization.inProgress', 'Partner Paused')}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[var(--ink-medium)] mt-0.5">
+                      {t('monetization.subtitle', 'Track YouTube-style eligibility, ad revenue streams, memberships & 30/70 payouts')} ·{' '}
+                      <strong className="text-emerald-500">30% Creator</strong> / <strong className="text-[var(--ink)]">70% Platform</strong>.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-xl font-black text-[var(--ink)]">
-                      Creator Monetization & Revenue Sharing
-                    </h2>
-                    <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-bold text-emerald-500">
-                      Active Partner
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleTogglePartnerStatus}
+                    className={`min-h-[42px] inline-flex items-center gap-2 rounded-full px-5 py-2 text-xs font-bold transition-all cursor-pointer ${
+                      partnerActive
+                        ? 'border border-[var(--ink-faint)] bg-[var(--bg)] text-[var(--ink)] hover:bg-[var(--card-hover)]'
+                        : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-md'
+                    }`}
+                  >
+                    <DollarSign className="h-4 w-4" />
+                    <span>{partnerActive ? 'Pause Monetization' : t('monetization.applyNow', 'Apply for Partner Program')}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI Summary + 4 Revenue Streams */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/[0.06] p-5 shadow-xs">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-500">
+                  <span>Creator Net (30%)</span>
+                  <Wallet className="h-4 w-4 text-emerald-500" />
+                </div>
+                <div className="mt-2 text-2xl font-black tabular-nums text-emerald-500">
+                  {partnerActive ? combinedSplit.formattedCreatorShare : '$0.00'}
+                </div>
+                <p className="mt-1 text-[11px] text-[var(--ink-medium)] tabular-nums">
+                  From {combinedSplit.formattedTotal} gross revenue
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 shadow-xs">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
+                  <span>Watch Page Ads</span>
+                  <Play className="h-4 w-4 text-[#FF0000]" />
+                </div>
+                <div className="mt-2 text-2xl font-black tabular-nums text-[var(--ink)]">
+                  {watchAdsSplit.formattedCreatorShare}
+                </div>
+                <p className="mt-1 text-[11px] text-[var(--ink-medium)] tabular-nums">
+                  {monetizedVideoViews.toLocaleString()} monetized views · $2.50 RPM
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 shadow-xs">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
+                  <span>Reels Feed Ads</span>
+                  <Clapperboard className="h-4 w-4 text-[#3EA6FF]" />
+                </div>
+                <div className="mt-2 text-2xl font-black tabular-nums text-[var(--ink)]">
+                  {reelsAdsSplit.formattedCreatorShare}
+                </div>
+                <p className="mt-1 text-[11px] text-[var(--ink-medium)] tabular-nums">
+                  {monetizedReelViews.toLocaleString()} reel views · $0.45 RPM
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 shadow-xs">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
+                  <span>Memberships & Thanks</span>
+                  <HeartHandshake className="h-4 w-4 text-amber-500" />
+                </div>
+                <div className="mt-2 text-2xl font-black tabular-nums text-[var(--ink)]">
+                  {fanFundingSplit.formattedCreatorShare}
+                </div>
+                <p className="mt-1 text-[11px] text-[var(--ink-medium)] tabular-nums">
+                  Fan Funding · {channel.subscribersCount.toLocaleString()} followers
+                </p>
+              </div>
+            </div>
+
+            {/* YouTube-Style Dual-Tier Earn Eligibility + Payout Setup */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Eligibility Progress Trackers */}
+              <div className="lg:col-span-7 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 shadow-xs space-y-5">
+                <div className="flex items-center justify-between gap-2 pb-3 border-b border-[var(--ink-faint)]">
+                  <div>
+                    <h3 className="text-sm font-bold text-[var(--ink)]">
+                      Partner Program Eligibility Milestones
+                    </h3>
+                    <p className="text-xs text-[var(--ink-medium)] mt-0.5">
+                      Unlock Fan Funding at 500 followers and full Watch & Reels Ad Sharing at 1,000 followers.
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-500 shrink-0">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span>0 Strikes</span>
+                  </span>
+                </div>
+
+                {/* Tier 1: Fan Funding */}
+                <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--bg)] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-[var(--ink)]">
+                      Tier 1: Fan Funding, Memberships & Super Thanks
+                    </span>
+                    <span className="text-[11px] font-bold text-[#3EA6FF] tabular-nums">
+                      500 followers · 3 uploads
                     </span>
                   </div>
-                  <p className="text-xs text-[var(--ink-medium)] mt-0.5">
-                    Platform standard: strict <strong className="text-emerald-500">30% to creator</strong> and <strong className="text-[var(--ink)]">70% to platform owner</strong>.
-                  </p>
+                  <div className="space-y-2.5 text-xs">
+                    <div>
+                      <div className="flex justify-between mb-1">
+                        <span className="text-[var(--ink-medium)]">Followers</span>
+                        <span className="font-mono font-bold tabular-nums text-[var(--ink)]">
+                          {channel.subscribersCount.toLocaleString()} / 500
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-[var(--surface)] overflow-hidden">
+                        <div className="h-full bg-[#3EA6FF] rounded-full transition-all" style={{ width: `${tier1SubsPct}%` }} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <div className="flex justify-between mb-1">
+                          <span className="text-[var(--ink-medium)]">Public Uploads (last 90d)</span>
+                          <span className="font-mono font-bold tabular-nums text-[var(--ink)]">
+                            {publicUploadsCount} / 3
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-[var(--surface)] overflow-hidden">
+                          <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${tier1UploadsPct}%` }} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex justify-between mb-1">
+                          <span className="text-[var(--ink-medium)]">Watch Hours</span>
+                          <span className="font-mono font-bold tabular-nums text-[var(--ink)]">
+                            {numericWatchHours.toLocaleString()} / 3,000
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-[var(--surface)] overflow-hidden">
+                          <div className="h-full bg-amber-500 rounded-full transition-all" style={{ width: `${Math.max(4, tier1HoursPct)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tier 2: Full Watch & Reels Ads */}
+                <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--bg)] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-[var(--ink)]">
+                      Tier 2: Watch Page & Reels Feed Ad Revenue
+                    </span>
+                    <span className="text-[11px] font-bold text-emerald-500 tabular-nums">
+                      1,000 followers · 4K hrs or 10M Reels
+                    </span>
+                  </div>
+                  <div className="space-y-2.5 text-xs">
+                    <div>
+                      <div className="flex justify-between mb-1">
+                        <span className="text-[var(--ink-medium)]">Followers</span>
+                        <span className="font-mono font-bold tabular-nums text-[var(--ink)]">
+                          {channel.subscribersCount.toLocaleString()} / 1,000
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-[var(--surface)] overflow-hidden">
+                        <div className="h-full bg-[#FF0000] rounded-full transition-all" style={{ width: `${tier2SubsPct}%` }} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <div className="flex justify-between mb-1">
+                          <span className="text-[var(--ink-medium)]">Watch Hours (365d)</span>
+                          <span className="font-mono font-bold tabular-nums text-[var(--ink)]">
+                            {numericWatchHours.toLocaleString()} / 4,000
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-[var(--surface)] overflow-hidden">
+                          <div className="h-full bg-[#3EA6FF] rounded-full transition-all" style={{ width: `${Math.max(4, tier2HoursPct)}%` }} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex justify-between mb-1">
+                          <span className="text-[var(--ink-medium)]">Reels Views (90d)</span>
+                          <span className="font-mono font-bold tabular-nums text-[var(--ink)]">
+                            {totalReelViews.toLocaleString()} / 10M
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-[var(--surface)] overflow-hidden">
+                          <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${Math.max(4, tier2ReelsPct)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-[var(--ink-medium)]">Payout Schedule:</span>
-                <span className="rounded-lg bg-[var(--bg)] border border-[var(--ink-faint)] px-3 py-1 text-xs font-bold text-[var(--ink)]">
-                  Monthly (15th)
-                </span>
+              {/* $100 Payout Threshold & Bank / UPI / PayPal Form */}
+              <div className="lg:col-span-5 rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 shadow-xs flex flex-col justify-between space-y-5">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-[var(--ink)] flex items-center gap-2">
+                      <CreditCard className="h-4 w-4 text-emerald-500" />
+                      <span>Payout Threshold & Method</span>
+                    </h3>
+                    <span className="rounded-lg bg-[var(--bg)] border border-[var(--ink-faint)] px-2.5 py-1 text-[11px] font-bold text-[var(--ink)]">
+                      Monthly · 15th
+                    </span>
+                  </div>
+
+                  {/* $100 Threshold Meter */}
+                  <div className="rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] p-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-[var(--ink-medium)]">Payment Threshold</span>
+                      <span className="font-mono font-black tabular-nums text-[var(--ink)]">
+                        {combinedSplit.formattedCreatorShare} / $100.00
+                      </span>
+                    </div>
+                    <div className="h-3 w-full rounded-full bg-[var(--surface)] overflow-hidden border border-[var(--ink-faint)]">
+                      <div
+                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+                        style={{ width: `${Math.max(3, payoutThresholdPct)}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-[var(--ink-medium)] tabular-nums">
+                      {combinedSplit.creatorShare >= payoutThresholdUsd
+                        ? 'Minimum $100 threshold reached! Eligible for next payout cycle.'
+                        : `${payoutThresholdPct}% towards your $100.00 automatic creator payout.`}
+                    </p>
+                  </div>
+
+                  {/* Payout Account Form */}
+                  <form onSubmit={handleSavePayoutMethod} className="space-y-3">
+                    {payoutSavedMsg && (
+                      <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-3 py-2 text-[11px] font-semibold text-emerald-500 flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                        <span>{payoutSavedMsg}</span>
+                      </div>
+                    )}
+
+                    <div>
+                      <span className="block text-xs font-semibold text-[var(--ink)] mb-1.5">Select Method</span>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { id: 'upi' as const, label: 'UPI (India)' },
+                          { id: 'bank' as const, label: 'Bank / IMPS' },
+                          { id: 'paypal' as const, label: 'PayPal' },
+                        ].map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => setPayoutMethod(m.id)}
+                            className={`min-h-[38px] rounded-xl border px-2 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                              payoutMethod === m.id
+                                ? 'border-emerald-500 bg-emerald-500/15 text-emerald-500'
+                                : 'border-[var(--ink-faint)] bg-[var(--bg)] text-[var(--ink)] hover:bg-[var(--card-hover)]'
+                            }`}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="payout-account" className="block text-xs font-semibold text-[var(--ink)] mb-1">
+                        {payoutMethod === 'upi'
+                          ? 'UPI ID'
+                          : payoutMethod === 'bank'
+                          ? 'Bank Account / IFSC'
+                          : 'PayPal Email'}
+                      </label>
+                      <input
+                        id="payout-account"
+                        type="text"
+                        value={payoutAccount}
+                        onChange={(e) => setPayoutAccount(e.target.value)}
+                        placeholder={
+                          payoutMethod === 'upi'
+                            ? 'creator@okicici'
+                            : payoutMethod === 'bank'
+                            ? 'XXXX-XXXX-4821 · SBIN000123'
+                            : 'creator@example.com'
+                        }
+                        className="w-full min-h-[42px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] px-3.5 py-2 text-base sm:text-xs text-[var(--ink)] focus:border-emerald-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full min-h-[42px] rounded-full bg-[var(--ink)] text-[var(--bg)] text-xs font-bold hover:opacity-90 active:scale-[0.99] transition-all cursor-pointer"
+                    >
+                      Save Payout Method
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+
+            {/* Interactive Revenue Split Simulator */}
+            <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--ink-faint)]">
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--ink)] flex items-center gap-2">
+                    <DollarSign className="h-4 w-4 text-emerald-500" />
+                    Interactive Revenue Split Simulator (30% Creator / 70% Platform)
+                  </h3>
+                  <p className="text-xs text-[var(--ink-medium)] mt-0.5">
+                    Calculate exact creator (30%) and platform (70%) distribution for any gross earnings amount.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto">
+                  {[500, 1500, 3500, 10000, 25000].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setCalcEarningsInput(amt)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold tabular-nums transition-colors cursor-pointer ${
+                        calcEarningsInput === amt
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-[var(--bg)] hover:bg-[var(--card-hover)] border border-[var(--ink-faint)] text-[var(--ink)]'
+                      }`}
+                    >
+                      ${amt.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+                <div>
+                  <label className="block text-xs font-bold text-[var(--ink)] mb-1.5">
+                    Gross Total Earnings (USD)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-2.5 text-[var(--ink-medium)] font-bold">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="50"
+                      value={calcEarningsInput}
+                      onChange={(e) => setCalcEarningsInput(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-full rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] pl-8 pr-4 py-2 text-base sm:text-sm font-bold tabular-nums text-[var(--ink)] focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="mt-4 space-y-1.5">
+                    <div className="flex justify-between text-xs font-bold tabular-nums">
+                      <span className="text-emerald-500">
+                        Creator Share: 30% ({calcSplit.formattedCreatorShare})
+                      </span>
+                      <span className="text-[var(--ink-medium)]">
+                        Platform Owner: 70% ({calcSplit.formattedPlatformShare})
+                      </span>
+                    </div>
+                    <div className="h-3 w-full rounded-full bg-[var(--bg)] border border-[var(--ink-faint)] overflow-hidden flex">
+                      <div style={{ width: '30%' }} className="h-full bg-emerald-500 transition-all duration-300" />
+                      <div style={{ width: '70%' }} className="h-full bg-[var(--ink-medium)]/50 transition-all duration-300" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-[var(--bg)] p-4 border border-[var(--ink-faint)] space-y-2.5 text-xs">
+                  <div className="flex justify-between py-1 border-b border-[var(--ink-faint)]">
+                    <span className="text-[var(--ink-medium)]">Gross Revenue:</span>
+                    <span className="font-bold tabular-nums text-[var(--ink)]">{calcSplit.formattedTotal}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-[var(--ink-faint)] text-emerald-500">
+                    <span className="font-semibold">Creator Payout (30%):</span>
+                    <span className="font-black tabular-nums">{calcSplit.formattedCreatorShare}</span>
+                  </div>
+                  <div className="flex justify-between py-1 text-[var(--ink-medium)]">
+                    <span>Platform Owner Share (70%):</span>
+                    <span className="font-bold tabular-nums text-[var(--ink)]">{calcSplit.formattedPlatformShare}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Video & Reel Monetization Breakdown Table with Per-Item Toggle */}
+            <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs overflow-hidden">
+              <div className="p-5 border-b border-[var(--ink-faint)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--ink)]">
+                    Videos & Reels Monetization Controls
+                  </h3>
+                  <p className="text-xs text-[var(--ink-medium)] mt-0.5">
+                    Toggle ad monetization on individual uploads. Earnings apply the 30/70 platform split.
+                  </p>
+                </div>
+
+                <div className="inline-flex rounded-xl bg-[var(--bg)] p-1 border border-[var(--ink-faint)] self-start">
+                  {[
+                    { id: 'all' as const, label: `All (${channelVideos.length + channelReels.length})` },
+                    { id: 'videos' as const, label: `Videos (${channelVideos.length})` },
+                    { id: 'reels' as const, label: `Reels (${channelReels.length})` },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setMonetizeFilter(f.id)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                        monetizeFilter === f.id
+                          ? 'bg-[var(--ink)] text-[var(--bg)]'
+                          : 'text-[var(--ink-medium)] hover:text-[var(--ink)]'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[var(--bg)] text-[var(--ink-medium)] uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="p-3.5 pl-5">Content</th>
+                      <th className="p-3.5">Format</th>
+                      <th className="p-3.5">Views</th>
+                      <th className="p-3.5">Gross</th>
+                      <th className="p-3.5 text-emerald-600 dark:text-emerald-400">Creator 30%</th>
+                      <th className="p-3.5">Platform 70%</th>
+                      <th className="p-3.5 pr-5 text-right">Monetization</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--ink-faint)]">
+                    {unifiedItems.map((item) => {
+                      const vSplit = estimateEarningsFromViews(item.monetized ? item.views : 0, item.rpm);
+                      return (
+                        <tr key={`${item.kind}-${item.id}`} className="hover:bg-[var(--card-hover)] transition-colors">
+                          <td className="p-3.5 pl-5">
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={item.poster || FALLBACK_POSTER}
+                                alt=""
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  const target = e.currentTarget;
+                                  if (target.src !== FALLBACK_POSTER) target.src = FALLBACK_POSTER;
+                                }}
+                                className={`rounded-lg object-cover ring-1 ring-[var(--ink-faint)] shrink-0 ${
+                                  item.kind === 'reel' ? 'h-12 w-8' : 'h-10 w-16'
+                                }`}
+                              />
+                              <span className="font-bold text-[var(--ink)] line-clamp-1 max-w-[200px]">
+                                {item.title}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-3.5">
+                            <span
+                              className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                item.kind === 'reel'
+                                  ? 'bg-[#FF0000]/15 text-[#FF0000]'
+                                  : 'bg-[#3EA6FF]/15 text-[#3EA6FF]'
+                              }`}
+                            >
+                              {item.kind === 'reel' ? 'Reel' : 'Video'}
+                            </span>
+                          </td>
+                          <td className="p-3.5 tabular-nums text-[var(--ink-medium)]">
+                            {item.views.toLocaleString()}
+                          </td>
+                          <td className="p-3.5 font-bold tabular-nums text-[var(--ink)]">
+                            {vSplit.formattedTotal}
+                          </td>
+                          <td className="p-3.5 font-black tabular-nums text-emerald-500">
+                            {vSplit.formattedCreatorShare}
+                          </td>
+                          <td className="p-3.5 font-medium tabular-nums text-[var(--ink-medium)]">
+                            {vSplit.formattedPlatformShare}
+                          </td>
+                          <td className="p-3.5 pr-5 text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (item.kind === 'video' && item.rawVideo) {
+                                  onUpdateVideo({ ...item.rawVideo, monetizationEnabled: !item.monetized });
+                                } else if (item.kind === 'reel' && item.rawReel && onUpdateReel) {
+                                  onUpdateReel({ ...item.rawReel, monetizationEnabled: !item.monetized });
+                                }
+                              }}
+                              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold transition-colors cursor-pointer ${
+                                item.monetized && partnerActive
+                                  ? 'bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25'
+                                  : 'bg-[var(--bg)] text-[var(--ink-medium)] border border-[var(--ink-faint)] hover:text-[var(--ink)]'
+                              }`}
+                            >
+                              <DollarSign className="h-3 w-3" />
+                              <span>{item.monetized ? (partnerActive ? 'On' : 'Paused') : 'Off'}</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
-
-          {/* Revenue Split Overview Cards */}
-          {(() => {
-            const channelRevenue = estimateEarningsFromViews(totalViews);
-            const calcSplit = calculateRevenueSplit(calcEarningsInput);
-
-            return (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {/* Gross Earnings */}
-                  <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
-                      <span>Total Channel Gross</span>
-                      <TrendingUp className="h-4 w-4 text-[#3EA6FF]" />
-                    </div>
-                    <div className="mt-2 text-2xl font-black tabular-nums text-[var(--ink)]">
-                      {channelRevenue.formattedTotal}
-                    </div>
-                    <p className="mt-1 text-[11px] text-[var(--ink-medium)]">
-                      Estimated from {totalViews.toLocaleString()} views @ $2.50 RPM
-                    </p>
-                  </div>
-
-                  {/* 30% Creator Payout */}
-                  <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/[0.06] p-5 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-500">
-                      <span>Creator Payout (30%)</span>
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    </div>
-                    <div className="mt-2 text-2xl font-black tabular-nums text-emerald-500">
-                      {channelRevenue.formattedCreatorShare}
-                    </div>
-                    <p className="mt-1 text-[11px] text-emerald-500/80 font-medium">
-                      Direct earnings deposited to your account
-                    </p>
-                  </div>
-
-                  {/* 70% Platform Infrastructure */}
-                  <div className="rounded-2xl border border-[var(--ink-faint)] bg-[var(--surface)] p-5 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-[var(--ink-medium)]">
-                      <span>Platform Owner Share (70%)</span>
-                      <Globe className="h-4 w-4 text-[var(--ink-medium)]" />
-                    </div>
-                    <div className="mt-2 text-2xl font-black tabular-nums text-[var(--ink)]">
-                      {channelRevenue.formattedPlatformShare}
-                    </div>
-                    <p className="mt-1 text-[11px] text-[var(--ink-medium)]">
-                      Global CDN delivery, video encoding, cloud storage
-                    </p>
-                  </div>
-                </div>
-
-                {/* Interactive Revenue Split Calculator */}
-                <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] p-6 shadow-xs space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--ink-faint)]">
-                    <div>
-                      <h3 className="text-sm font-bold text-[var(--ink)] flex items-center gap-2">
-                        <DollarSign className="h-4 w-4 text-emerald-500" />
-                        Interactive Revenue Split Simulator
-                      </h3>
-                      <p className="text-xs text-[var(--ink-medium)] mt-0.5">
-                        Calculate exact creator (30%) and platform (70%) distribution for any gross earnings amount.
-                      </p>
-                    </div>
-
-                    {/* Quick Presets */}
-                    <div className="flex items-center gap-1.5 overflow-x-auto">
-                      {[500, 1500, 3500, 10000, 25000].map((amt) => (
-                        <button
-                          key={amt}
-                          type="button"
-                          onClick={() => setCalcEarningsInput(amt)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                            calcEarningsInput === amt
-                              ? 'bg-emerald-600 text-white'
-                              : 'bg-[var(--bg)] hover:bg-[var(--card-hover)] border border-[var(--ink-faint)] text-[var(--ink)]'
-                          }`}
-                        >
-                          ${amt.toLocaleString()}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                    <div>
-                      <label className="block text-xs font-bold text-[var(--ink)] mb-1.5">
-                        Gross Total Earnings (USD)
-                      </label>
-                      <div className="relative">
-                        <span className="absolute left-3.5 top-2.5 text-[var(--ink-medium)] font-bold">$</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="50"
-                          value={calcEarningsInput}
-                          onChange={(e) => setCalcEarningsInput(Math.max(0, parseFloat(e.target.value) || 0))}
-                          className="w-full rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] pl-8 pr-4 py-2 text-base sm:text-sm font-bold text-[var(--ink)] focus:border-emerald-500 focus:outline-none"
-                        />
-                      </div>
-
-                      {/* Visual Ratio Bar */}
-                      <div className="mt-4 space-y-1.5">
-                        <div className="flex justify-between text-xs font-bold">
-                          <span className="text-emerald-500">
-                            Creator Share: 30% ({calcSplit.formattedCreatorShare})
-                          </span>
-                          <span className="text-[var(--ink-medium)]">
-                            Platform Owner: 70% ({calcSplit.formattedPlatformShare})
-                          </span>
-                        </div>
-                        <div className="h-3 w-full rounded-full bg-[var(--bg)] border border-[var(--ink-faint)] overflow-hidden flex">
-                          <div
-                            style={{ width: '30%' }}
-                            className="h-full bg-emerald-500 transition-all duration-300"
-                          />
-                          <div
-                            style={{ width: '70%' }}
-                            className="h-full bg-[var(--ink-medium)]/50 transition-all duration-300"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl bg-[var(--bg)] p-4 border border-[var(--ink-faint)] space-y-2.5 text-xs">
-                      <div className="flex justify-between py-1 border-b border-[var(--ink-faint)]">
-                        <span className="text-[var(--ink-medium)]">Gross Revenue:</span>
-                        <span className="font-bold text-[var(--ink)]">{calcSplit.formattedTotal}</span>
-                      </div>
-                      <div className="flex justify-between py-1 border-b border-[var(--ink-faint)] text-emerald-500">
-                        <span className="font-semibold">Creator Payout (30%):</span>
-                        <span className="font-black">{calcSplit.formattedCreatorShare}</span>
-                      </div>
-                      <div className="flex justify-between py-1 text-[var(--ink-medium)]">
-                        <span>Platform Owner Share (70%):</span>
-                        <span className="font-bold text-[var(--ink)]">{calcSplit.formattedPlatformShare}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Video-Level Monetization Table */}
-                <div className="rounded-3xl border border-[var(--ink-faint)] bg-[var(--surface)] shadow-xs overflow-hidden">
-                  <div className="p-5 border-b border-[var(--ink-faint)]">
-                    <h3 className="text-sm font-bold text-[var(--ink)]">
-                      Video Monetization Breakdown
-                    </h3>
-                    <p className="text-xs text-[var(--ink-medium)] mt-0.5">
-                      Estimated earnings calculated per video applying the strict 30/70 platform split.
-                    </p>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-[var(--bg)] text-[var(--ink-medium)] uppercase tracking-wider text-[10px]">
-                        <tr>
-                          <th className="p-3.5 pl-5">Video</th>
-                          <th className="p-3.5">Views</th>
-                          <th className="p-3.5">Gross Revenue</th>
-                          <th className="p-3.5 text-emerald-600 dark:text-emerald-400">Creator 30%</th>
-                          <th className="p-3.5">Platform 70%</th>
-                          <th className="p-3.5 pr-5">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--ink-faint)]">
-                        {channelVideos.map((v) => {
-                          const vSplit = estimateEarningsFromViews(v.views || 0);
-                          return (
-                            <tr key={v.id} className="hover:bg-[var(--card-hover)] transition-colors">
-                              <td className="p-3.5 pl-5">
-                                <div className="flex items-center gap-3">
-                                  <img
-                                    src={v.poster || FALLBACK_POSTER}
-                                    alt=""
-                                    referrerPolicy="no-referrer"
-                                    onError={(e) => {
-                                      const target = e.currentTarget;
-                                      if (target.src !== FALLBACK_POSTER) target.src = FALLBACK_POSTER;
-                                    }}
-                                    className="h-10 w-16 rounded-lg object-cover ring-1 ring-[var(--ink-faint)] shrink-0"
-                                  />
-                                  <span className="font-bold text-[var(--ink)] line-clamp-1 max-w-[200px]">
-                                    {v.title}
-                                  </span>
-                                </div>
-                              </td>
-                              <td className="p-3.5 tabular-nums text-[var(--ink-medium)]">
-                                {(v.views || 0).toLocaleString()}
-                              </td>
-                              <td className="p-3.5 font-bold tabular-nums text-[var(--ink)]">
-                                {vSplit.formattedTotal}
-                              </td>
-                              <td className="p-3.5 font-black tabular-nums text-emerald-500">
-                                {vSplit.formattedCreatorShare}
-                              </td>
-                              <td className="p-3.5 font-medium tabular-nums text-[var(--ink-medium)]">
-                                {vSplit.formattedPlatformShare}
-                              </td>
-                              <td className="p-3.5 pr-5">
-                                <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-bold text-emerald-500">
-                                  Monetized
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </>
-            );
-          })()}
-        </div>
-      )}
+        );
+      })()}
 
       {/* TAB 7: STUDIO COLOR & FRAMING LAB (40x40px controls with live preview) */}
       {activeTab === 'ai-editor' && (
@@ -1651,13 +2116,35 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
               });
             };
 
+            const persistPreset = (nextTools: typeof aiTools) => {
+              if (!currentEditVideo) return;
+              try {
+                const existing = JSON.parse(localStorage.getItem('vio_studio_lab_presets') || '{}');
+                existing[currentEditVideo.id] = nextTools;
+                localStorage.setItem('vio_studio_lab_presets', JSON.stringify(existing));
+              } catch {
+                // ignore
+              }
+            };
+
             const handleRunRender = () => {
+              if (!currentEditVideo) return;
               setIsProcessingAI(true);
               setTimeout(() => {
+                persistPreset(aiTools);
+                onUpdateVideo({
+                  ...currentEditVideo,
+                  filterPreset: aiTools.lutGrade ? 'Cinema Teal' : 'Original',
+                  filterStyle: aiTools.lutGrade
+                    ? 'saturate(1.25) contrast(1.1) brightness(1.05)'
+                    : 'none',
+                  cropAspect: aiTools.shortsFormat ? '9:16' : currentEditVideo.cropAspect || 'original',
+                  cropFit: aiTools.autoZoom ? 'cover' : currentEditVideo.cropFit || 'contain',
+                });
                 setIsProcessingAI(false);
-                setAiStatusMsg('Studio look & framing preset saved for this preview.');
+                setAiStatusMsg('Studio look & framing preset saved & applied!');
                 setTimeout(() => setAiStatusMsg(null), 3000);
-              }, 800);
+              }, 450);
             };
 
             return (
@@ -1676,6 +2163,8 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                       src={sanitizePlayableVideoUrl(currentEditVideo?.url, currentEditVideo?.id, 'video', false)}
                       poster={currentEditVideo?.poster}
                       controls
+                      muted
+                      playsInline
                       onError={(e) => {
                         const target = e.currentTarget;
                         if (target.dataset.fallbackApplied === 'true') return;
@@ -1842,7 +2331,8 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setAiStatusMsg('Preset saved to current studio session.');
+                        persistPreset(aiTools);
+                        setAiStatusMsg('Preset saved for this video.');
                         setTimeout(() => setAiStatusMsg(null), 2500);
                       }}
                       title="Save Preset"

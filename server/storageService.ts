@@ -3,7 +3,7 @@ import { Storage, Bucket } from '@google-cloud/storage';
 import { serverConfig } from './config';
 
 const storageClient = new Storage({
-  projectId: serverConfig.gcpProjectId,
+  projectId: serverConfig.firebaseProjectId || serverConfig.gcpProjectId,
 });
 
 export function getMediaBucket(): Bucket {
@@ -157,6 +157,21 @@ export function verifyUploadSessionToken(token: string): {
   }
 }
 
+const ALLOWED_VIDEO_MIMES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/x-m4v',
+]);
+
+const ALLOWED_IMAGE_MIMES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+]);
+
 /**
  * Creates a real Google Cloud Storage Resumable Upload session URI
  * inside the configured Firebase/GCS bucket.
@@ -165,24 +180,35 @@ export async function createAuthorizedResumableUpload(
   params: UploadSessionParams
 ): Promise<UploadSessionResult> {
   const { uid, videoId, folder, fileName, contentType, fileSizeBytes, visibility, origin } = params;
+  const normalizedMime = contentType.toLowerCase().split(';')[0].trim();
+  const lowerName = fileName.toLowerCase();
 
   if (folder === 'videos') {
-    if (!contentType.startsWith('video/') && contentType !== 'application/octet-stream') {
-      throw Object.assign(new Error('Invalid contentType: expected video/* MIME type.'), { statusCode: 400 });
-    }
-    if (fileSizeBytes <= 0 || fileSizeBytes > serverConfig.maxVideoUploadBytes) {
+    const validVideoExt = /\.(mp4|mov|webm|m4v)$/i.test(lowerName);
+    if (!ALLOWED_VIDEO_MIMES.has(normalizedMime) && !(normalizedMime === 'application/octet-stream' && validVideoExt)) {
       throw Object.assign(
-        new Error(`Video size must be between 1 byte and ${Math.round(serverConfig.maxVideoUploadBytes / (1024 * 1024 * 1024))} GB.`),
+        new Error('Unsupported video format. Allowed formats: MP4, MOV, and WebM.'),
+        { statusCode: 400 }
+      );
+    }
+    const maxBytes = Math.min(serverConfig.maxVideoUploadBytes, 500 * 1024 * 1024);
+    if (fileSizeBytes <= 0 || fileSizeBytes > maxBytes) {
+      throw Object.assign(
+        new Error(`Video size must be between 1 byte and ${Math.round(maxBytes / (1024 * 1024))} MB.`),
         { statusCode: 400 }
       );
     }
   } else {
-    if (!contentType.startsWith('image/')) {
-      throw Object.assign(new Error('Invalid contentType: expected image/* MIME type.'), { statusCode: 400 });
-    }
-    if (fileSizeBytes <= 0 || fileSizeBytes > serverConfig.maxImageUploadBytes) {
+    if (!ALLOWED_IMAGE_MIMES.has(normalizedMime)) {
       throw Object.assign(
-        new Error(`Image size must be between 1 byte and ${Math.round(serverConfig.maxImageUploadBytes / (1024 * 1024))} MB.`),
+        new Error('Unsupported image format. Allowed formats: JPG, PNG, WebP, or GIF.'),
+        { statusCode: 400 }
+      );
+    }
+    const maxImageBytes = Math.min(serverConfig.maxImageUploadBytes, 5 * 1024 * 1024);
+    if (fileSizeBytes <= 0 || fileSizeBytes > maxImageBytes) {
+      throw Object.assign(
+        new Error(`Image size must be between 1 byte and ${Math.round(maxImageBytes / (1024 * 1024))} MB.`),
         { statusCode: 400 }
       );
     }

@@ -12,9 +12,11 @@ import {
   Sun,
   Trash2,
   LogOut,
-  Server
+  Server,
+  Globe
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage, APP_LANGUAGES } from '../context/LanguageContext';
 import { CloudInfrastructureModal } from './CloudInfrastructureModal';
 
 interface SettingsModalProps {
@@ -39,6 +41,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onPreferencesChange,
 }) => {
   const { currentUser, userProfile, signOutUser } = useAuth();
+  const { language, setLanguage, t } = useLanguage();
   const [activeTab, setActiveTab] = useState<'account' | 'playback' | 'notifications' | 'privacy' | 'appearance'>('account');
 
   // Playback settings
@@ -701,6 +704,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <div className="text-[10px] text-[var(--ink-medium)]">Clean day contrast</div>
                     </div>
                   </button>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-[var(--bg)] border border-[var(--ink-faint)] space-y-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-[var(--ink)]">
+                  <Globe className="h-4 w-4 text-[#FF0000]" />
+                  <span>{t('nav.language', 'Language')} & Region</span>
+                </div>
+                <p className="text-[11px] text-[var(--ink-medium)]">
+                  Choose your preferred interface language across Vio streaming.
+                </p>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {APP_LANGUAGES.map((opt) => (
+                    <button
+                      key={opt.code}
+                      type="button"
+                      onClick={() => {
+                        setLanguage(opt.code);
+                        showSavedBadge(`Language set to ${opt.nativeLabel}`);
+                      }}
+                      className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        language === opt.code
+                          ? 'border-[#FF0000] bg-[#FF0000]/10 text-[#FF0000]'
+                          : 'border-[var(--ink-faint)] hover:bg-[var(--card-hover)] text-[var(--ink)]'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-xs font-bold">{opt.nativeLabel}</div>
+                        <div className="text-[10px] text-[var(--ink-medium)]">{opt.label}</div>
+                      </div>
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--surface)]">
+                        {opt.shortCode}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>

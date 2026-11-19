@@ -16,7 +16,6 @@ import {
   Check,
   Info,
   Tv,
-  ListPlus,
   Loader2,
   AlertCircle,
   Share2,
@@ -40,8 +39,10 @@ import {
   SkipForward,
   ArrowLeft,
   Gauge,
+  Repeat,
   RectangleHorizontal,
-  Minimize2
+  Keyboard,
+  PictureInPicture2
 } from 'lucide-react';
 import { VideoItem, Bookmark, VideoFilters, AspectRatioMode, VideoStreamQuality, VideoChapter } from '../types/video';
 import { formatTime } from '../utils/formatTime';
@@ -117,8 +118,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onToggleTheaterMode,
   onEnterMiniplayer,
   onOpenShortcuts,
-  nextVideo,
-  nextChannelName,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -132,13 +131,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [duration, setDuration] = useState<number>(video.duration || 0);
   const [bufferedEnd, setBufferedEnd] = useState<number>(0);
   const [isBuffering, setIsBuffering] = useState<boolean>(false);
+  const [isLoadingMedia, setIsLoadingMedia] = useState<boolean>(false);
   const [volume, setVolume] = useState<number>(1);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isMuted, setIsMuted] = useState<boolean>(Boolean(video.isMutedAudio));
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isLooping, setIsLooping] = useState<boolean>(false);
   const [showTimeRemaining, setShowTimeRemaining] = useState<boolean>(false);
-  const [upNextCountdown, setUpNextCountdown] = useState<number | null>(null);
 
   // UI Interactivity State: Never auto-hide controls permanently on mobile
   const [isCleanMode, setIsCleanMode] = useState<boolean>(false);
@@ -499,30 +498,41 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const handleStreamError = useCallback(() => {
     if (!videoRef.current) return;
+    setIsLoadingMedia(false);
+    setIsBuffering(false);
     const timeBeforeError = videoRef.current.currentTime || 0;
     const wasPlaying = isPlaying;
+    const isKnownSample = Boolean(CDN_STREAM_MIRRORS[video.id]);
 
-    const rawMirrors = [
-      ...(video.backupStreams || []),
-      ...(CDN_STREAM_MIRRORS[video.id] || []),
-      DEFAULT_PLAYABLE_VIDEO_URL,
-      'https://download.blender.org/durian/trailer/sintel_trailer-720p.mp4',
-      'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
-    ].map((u) => sanitizePlayableVideoUrl(u, video.id, 'video', true));
+    const rawMirrors = isKnownSample
+      ? [
+          ...(video.backupStreams || []),
+          ...(CDN_STREAM_MIRRORS[video.id] || []),
+          DEFAULT_PLAYABLE_VIDEO_URL,
+        ].map((u) => sanitizePlayableVideoUrl(u, video.id, 'video', true))
+      : (video.backupStreams || []).filter(Boolean);
 
     const uniqueMirrors = Array.from(new Set(rawMirrors)).filter(Boolean);
     const candidateMirrors = uniqueMirrors.filter((u) => u !== currentSrc);
 
     if (failoverIndex >= candidateMirrors.length || candidateMirrors.length === 0) {
       setReconnecting(false);
-      setErrorMessage('This video stream could not be loaded. Click below to retry via Edge CDN.');
+      setErrorMessage(
+        'This video stream could not be loaded right now. Check your network connection or click Retry Playback.'
+      );
       return;
     }
 
-    const nextMirror = candidateMirrors[failoverIndex] || DEFAULT_PLAYABLE_VIDEO_URL;
+    const nextMirror = candidateMirrors[failoverIndex];
+    if (!nextMirror) {
+      setReconnecting(false);
+      setErrorMessage('This video stream could not be loaded right now. Click Retry Playback.');
+      return;
+    }
+
     setFailoverIndex((prev) => prev + 1);
     setReconnecting(true);
-    setReconnectToast(`Reconnecting stream via Cloud Edge CDN (${Math.floor(timeBeforeError)}s)...`);
+    setReconnectToast(`Reconnecting stream (${Math.floor(timeBeforeError)}s)...`);
 
     setTimeout(() => {
       if (videoRef.current) {
@@ -535,10 +545,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       setReconnecting(false);
       setErrorMessage(null);
-      setReconnectToast(`Stream reconnected via Edge CDN (${Math.floor(timeBeforeError)}s)`);
+      setReconnectToast(`Stream reconnected (${Math.floor(timeBeforeError)}s)`);
       setTimeout(() => setReconnectToast(null), 3000);
     }, 600);
   }, [failoverIndex, video.backupStreams, video.id, isPlaying, currentSrc]);
+
+  const handleManualRetry = useCallback(() => {
+    setErrorMessage(null);
+    setFailoverIndex(0);
+    setIsLoadingMedia(true);
+    const targetSrc = resolvedVideoUrl || currentSrc;
+    setCurrentSrc(targetSrc);
+    if (videoRef.current) {
+      videoRef.current.src = targetSrc;
+      videoRef.current.load();
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+    }
+  }, [resolvedVideoUrl, currentSrc]);
 
   // Upload local .srt or .vtt file
   const handleSubtitleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -654,23 +677,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setFailoverIndex(0);
     setNaturalVideoHeight(0);
     setErrorMessage(null);
-    setUpNextCountdown(null);
-  }, [video.id, resolvedVideoUrl]);
+    setIsLooping(false);
+    setIsMuted(Boolean(video.isMutedAudio));
+  }, [video.id, resolvedVideoUrl, video.isMutedAudio]);
 
   useEffect(() => {
-    if (upNextCountdown === null) return;
-    if (upNextCountdown <= 0) {
-      setUpNextCountdown(null);
-      if (hasNextVideo && onNextVideo) {
-        onNextVideo();
-      }
-      return;
+    if (videoRef.current) {
+      videoRef.current.loop = isLooping;
     }
-    const timer = window.setTimeout(() => {
-      setUpNextCountdown((prev) => (prev !== null ? prev - 1 : null));
-    }, 1000);
-    return () => window.clearTimeout(timer);
-  }, [upNextCountdown, hasNextVideo, onNextVideo]);
+  }, [isLooping, video.id]);
 
   const handleCopyVideoLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}?v=${video.id}`;
@@ -696,8 +711,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   // Filter CSS Generator
+  const basePlayerFilter = `brightness(${filters.brightness}%) contrast(${filters.contrast}%) saturate(${filters.saturate}%) grayscale(${filters.grayscale}%) sepia(${filters.sepia}%) blur(${filters.blur}px) invert(${filters.invert}%)`;
   const filterStyle: React.CSSProperties = {
-    filter: `brightness(${filters.brightness}%) contrast(${filters.contrast}%) saturate(${filters.saturate}%) grayscale(${filters.grayscale}%) sepia(${filters.sepia}%) blur(${filters.blur}px) invert(${filters.invert}%)`,
+    filter: video.filterStyle && video.filterStyle !== 'none'
+      ? `${video.filterStyle} ${basePlayerFilter}`
+      : basePlayerFilter,
   };
 
   // Container Aspect Ratio and Responsive Constraint mapping
@@ -705,21 +723,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (isFullscreen) {
       return 'w-full h-full max-h-screen';
     }
-    const maxHClass = isTheaterMode ? 'max-h-[82vh]' : 'max-h-[75vh]';
-    switch (aspectRatio) {
+    const effectiveAspect = aspectRatio === 'auto' && video.cropAspect && video.cropAspect !== 'original'
+      ? video.cropAspect
+      : aspectRatio;
+
+    switch (effectiveAspect) {
       case '16:9':
-        return `w-full aspect-video ${maxHClass}`;
+        return 'w-full aspect-video max-h-[75vh]';
       case '4:3':
-        return `w-full aspect-[4/3] ${maxHClass}`;
+        return 'w-full aspect-[4/3] max-h-[75vh]';
       case '21:9':
-        return `w-full aspect-[21/9] ${maxHClass}`;
+        return 'w-full aspect-[21/9] max-h-[75vh]';
       case '9:16':
         return 'w-full aspect-[9/16] max-h-[80vh] max-w-sm mx-auto';
+      case '4:5':
+        return 'w-full aspect-[4/5] max-h-[80vh] max-w-md mx-auto';
+      case '1:1':
+        return 'w-full aspect-square max-h-[75vh] max-w-xl mx-auto';
       case 'cover':
-        return `w-full aspect-video ${maxHClass}`;
+        return 'w-full aspect-video max-h-[75vh]';
       case 'auto':
       default:
-        return `w-full aspect-video ${maxHClass}`;
+        return 'w-full aspect-video max-h-[75vh]';
     }
   };
 
@@ -728,17 +753,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (isFullscreen) {
       return 'w-full h-full max-h-screen object-contain';
     }
-    switch (aspectRatio) {
-      case 'cover':
-        return 'w-full h-full object-cover';
-      case '16:9':
-      case '4:3':
-      case '21:9':
-      case '9:16':
-      case 'auto':
-      default:
-        return 'w-full h-full object-contain';
+    if (aspectRatio === 'cover' || (aspectRatio === 'auto' && video.cropFit === 'cover')) {
+      return 'w-full h-full object-cover';
     }
+    return 'w-full h-full object-contain';
   };
 
   const getAspectRatioClasses = getVideoElementClasses;
@@ -1262,6 +1280,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           if (session.fallbackUrl) {
             setIsHlsActive(false);
             setCurrentSrc(session.fallbackUrl);
+            if (videoEl.getAttribute('src') !== session.fallbackUrl) {
+              videoEl.src = session.fallbackUrl;
+            }
             videoEl.currentTime = 0;
             videoEl.playbackRate = playbackRate;
             videoEl.load();
@@ -1415,13 +1436,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           src={isHlsActive ? undefined : currentSrc || FALLBACK_VIDEO_SRC}
           poster={video.poster}
           playsInline
+          muted={isMuted || Boolean(video.isMutedAudio)}
           loop={isLooping}
           crossOrigin={enableCors ? 'anonymous' : undefined}
           style={filterStyle}
           className={`transition-all duration-150 ${getVideoElementClasses()}`}
+          onLoadStart={() => setIsLoadingMedia(true)}
+          onCanPlay={() => setIsLoadingMedia(false)}
           onTimeUpdate={() => {
             if (videoRef.current && !isSeeking) {
               const t = videoRef.current.currentTime;
+              if (video.trimEnd && video.trimEnd > 0 && t >= video.trimEnd) {
+                const resetTarget = video.trimStart && video.trimStart > 0 ? video.trimStart : 0;
+                if (isLooping) {
+                  videoRef.current.currentTime = resetTarget;
+                  setCurrentTime(resetTarget);
+                } else {
+                  videoRef.current.pause();
+                  setIsPlaying(false);
+                  if (hasNextVideo && onNextVideo) {
+                    onNextVideo();
+                  }
+                }
+                return;
+              }
               setCurrentTime(t);
               onTimeUpdate?.(t);
             }
@@ -1434,8 +1472,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           }}
           onLoadedMetadata={() => {
             if (videoRef.current) {
+              setIsLoadingMedia(false);
               setDuration(videoRef.current.duration);
-              setIsMuted(videoRef.current.muted);
+              setIsMuted(Boolean(video.isMutedAudio) || videoRef.current.muted);
               setVolume(videoRef.current.volume);
               if (videoRef.current.videoHeight > 0) {
                 setNaturalVideoHeight(videoRef.current.videoHeight);
@@ -1447,25 +1486,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 onTimeUpdate?.(targetTime);
                 pendingSeekRef.current = null;
                 onExternalSeekConsumed?.();
+              } else if (video.trimStart && video.trimStart > 0 && videoRef.current.duration > video.trimStart) {
+                videoRef.current.currentTime = video.trimStart;
+                setCurrentTime(video.trimStart);
               }
             }
           }}
           onWaiting={() => setIsBuffering(true)}
           onPlaying={() => {
             setIsBuffering(false);
+            setIsLoadingMedia(false);
             setIsPlaying(true);
             setErrorMessage(null);
-            setUpNextCountdown(null);
           }}
           onPause={() => setIsPlaying(false)}
           onEnded={() => {
+            if (isLooping && videoRef.current) {
+              videoRef.current.currentTime = video.trimStart || 0;
+              videoRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+              return;
+            }
             setIsPlaying(false);
-            if (hasNextVideo && onNextVideo && !isLooping) {
-              if (nextVideo) {
-                setUpNextCountdown(5);
-              } else {
-                onNextVideo();
-              }
+            if (hasNextVideo && onNextVideo) {
+              onNextVideo();
             }
           }}
           onError={() => {
@@ -1491,10 +1534,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         )}
 
-        {/* Buffering Spinner */}
-        {isBuffering && (
+        {/* Loading / Buffering Spinner */}
+        {(isBuffering || isLoadingMedia) && !errorMessage && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
-            <Loader2 className="h-12 w-12 animate-spin text-red-500" />
+            <Loader2 className="h-12 w-12 animate-spin text-[#FF0000]" />
           </div>
         )}
 
@@ -1502,7 +1545,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         {reconnecting && (
           <div className="absolute top-4 left-4 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#181818]/95 text-amber-300 text-xs font-semibold backdrop-blur-md border border-amber-500/30 shadow-xl animate-in fade-in">
             <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
-            <span>Reconnecting stream via Cloud Edge CDN...</span>
+            <span>Reconnecting video stream...</span>
           </div>
         )}
 
@@ -1517,74 +1560,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         {errorMessage && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#0F0F0F]/95 p-6 text-center text-white backdrop-blur-sm animate-in fade-in">
             <div className="h-14 w-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mb-3 ring-1 ring-amber-500/20">
-              <Signal className="h-7 w-7" />
+              <AlertCircle className="h-7 w-7" />
             </div>
-            <h4 className="text-base font-bold">Cloud Stream Optimization</h4>
+            <h4 className="text-base font-bold">Playback Unavailable</h4>
             <p className="mt-1 max-w-md text-xs text-white/75 leading-relaxed">{errorMessage}</p>
             <div className="mt-4 flex items-center gap-3">
               <button
-                onClick={handleStreamError}
+                type="button"
+                onClick={handleManualRetry}
                 className="rounded-xl bg-[#FF0000] px-4 py-2 text-xs font-bold text-white hover:bg-[#CC0000] shadow-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
               >
-                <Signal className="h-3.5 w-3.5" />
-                <span>Reconnect via CDN Edge</span>
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Retry Playback</span>
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* Autoplay Up Next 5-Second Countdown Overlay */}
-        {upNextCountdown !== null && nextVideo && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 p-4 text-white backdrop-blur-md animate-in fade-in"
-          >
-            <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#18181b]/95 p-4 shadow-2xl space-y-3">
-              <div className="flex items-center justify-between text-xs text-slate-300">
-                <span className="font-semibold uppercase tracking-wider text-slate-400">Up Next</span>
-                <span className="font-mono font-bold text-[#FF0000] tabular-nums">
-                  Playing in {upNextCountdown}s
-                </span>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="relative aspect-video w-28 shrink-0 overflow-hidden rounded-lg bg-black ring-1 ring-white/15">
-                  <img
-                    src={nextVideo.poster}
-                    alt={nextVideo.title}
-                    referrerPolicy="no-referrer"
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h4 className="line-clamp-2 text-sm font-bold leading-snug text-white">
-                    {nextVideo.title}
-                  </h4>
-                  <p className="mt-0.5 text-xs text-slate-400 truncate">
-                    {nextChannelName || nextVideo.author || 'Creator'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setUpNextCountdown(null)}
-                  className="flex-1 min-h-[38px] rounded-full border border-white/20 px-4 py-2 text-xs font-semibold text-white hover:bg-white/10 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUpNextCountdown(null);
-                    onNextVideo?.();
-                  }}
-                  className="flex-1 min-h-[38px] rounded-full bg-white px-4 py-2 text-xs font-bold text-black hover:bg-slate-200 transition-colors cursor-pointer"
-                >
-                  Play Now
-                </button>
-              </div>
             </div>
           </div>
         )}
@@ -1636,10 +1624,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         />
       </div>
 
-      {/* Subtitle Toast Feedback */}
+      {/* Player Settings & Subtitle Toast Feedback */}
       {subtitleToast && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full border border-white/15 bg-[#181818]/95 px-4 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-2">
-          <Captions className="h-4 w-4 text-sky-400 shrink-0" />
+          {subtitleToast.startsWith('Loop:') ? (
+            <Repeat className="h-4 w-4 text-[#FF0000] shrink-0" />
+          ) : (
+            <Captions className="h-4 w-4 text-sky-400 shrink-0" />
+          )}
           <span>{subtitleToast}</span>
         </div>
       )}
@@ -2170,20 +2162,42 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
                       <button
                         type="button"
-                        onClick={() => setIsLooping((prev) => !prev)}
-                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                        role="switch"
+                        aria-checked={isLooping}
+                        aria-label="Loop active video"
+                        onClick={() => {
+                          setIsLooping((prev) => {
+                            const next = !prev;
+                            if (videoRef.current) {
+                              videoRef.current.loop = next;
+                            }
+                            showSubToast(next ? 'Loop: On' : 'Loop: Off');
+                            return next;
+                          });
+                          handleUserActivity();
+                        }}
+                        className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
                       >
                         <div className="flex items-center gap-2.5">
-                          <ListPlus className="h-4 w-4 text-slate-300" />
-                          <span className="font-medium">Loop video</span>
+                          <Repeat className={`h-4 w-4 ${isLooping ? 'text-[#FF0000]' : 'text-slate-300'}`} />
+                          <span className="font-medium">Loop</span>
                         </div>
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            isLooping ? 'bg-[#FF0000] text-white' : 'bg-white/10 text-slate-300'
-                          }`}
-                        >
-                          {isLooping ? 'On' : 'Off'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-slate-300">
+                            {isLooping ? 'On' : 'Off'}
+                          </span>
+                          <span
+                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors ${
+                              isLooping ? 'bg-[#FF0000]' : 'bg-white/20'
+                            }`}
+                          >
+                            <span
+                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition ${
+                                isLooping ? 'translate-x-4' : 'translate-x-0'
+                              }`}
+                            />
+                          </span>
+                        </div>
                       </button>
 
                       <button
@@ -2243,6 +2257,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                           <span className="font-medium">Stats & Video Specs</span>
                         </div>
                       </button>
+
+                      {onOpenShortcuts && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSettingsMenuOpen(false);
+                            onOpenShortcuts();
+                          }}
+                          className="flex w-full items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/10 transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <Keyboard className="h-4 w-4 text-slate-300" />
+                            <span className="font-medium">Keyboard Shortcuts</span>
+                          </div>
+                          <span className="text-[11px] text-slate-400 font-mono">?</span>
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -2575,27 +2606,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               )}
             </div>
 
-            {/* Floating Miniplayer (I) */}
+            {/* In-App Floating Miniplayer Dock */}
             {onEnterMiniplayer && (
               <button
                 type="button"
                 onClick={() => onEnterMiniplayer(videoRef.current?.currentTime || currentTime)}
                 title="Miniplayer (I)"
-                aria-label="Open Miniplayer"
-                className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                aria-label="Miniplayer"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               >
-                <Minimize2 className="h-4 w-4" />
+                <PictureInPicture2 className="h-4 w-4" />
               </button>
             )}
 
-            {/* Theater Mode (T) */}
-            {onToggleTheaterMode && !isFullscreen && (
+            {/* Theater Mode Toggle */}
+            {onToggleTheaterMode && (
               <button
                 type="button"
                 onClick={onToggleTheaterMode}
-                title={isTheaterMode ? 'Default view (T)' : 'Theater mode (T)'}
-                aria-label={isTheaterMode ? 'Exit Theater Mode' : 'Enter Theater Mode'}
-                className={`hidden md:flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                title={isTheaterMode ? 'Default View (T)' : 'Theater Mode (T)'}
+                aria-label={isTheaterMode ? 'Default View' : 'Theater Mode'}
+                aria-pressed={isTheaterMode}
+                className={`hidden lg:flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
                   isTheaterMode
                     ? 'bg-white/20 text-white'
                     : 'text-slate-200 hover:text-white hover:bg-white/10'
@@ -2605,13 +2637,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </button>
             )}
 
-            {/* Picture in Picture (Desktop / Tablet) */}
+            {/* Browser Picture in Picture (Desktop / Tablet) */}
             <button
               type="button"
               onClick={togglePiP}
               title="Picture-in-Picture (P)"
               aria-label="Picture in Picture"
-              className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
             >
               <PictureInPicture className="h-4 w-4" />
             </button>
@@ -2622,7 +2654,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onClick={toggleFullscreen}
               title="Fullscreen (F)"
               aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
             >
               {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
             </button>

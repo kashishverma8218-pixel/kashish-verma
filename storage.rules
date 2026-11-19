@@ -14,35 +14,53 @@ service firebase.storage {
     function isAdmin() {
       return signedIn() && (
         request.auth.token.admin == true ||
-        request.auth.token.email == 'kashishverma8218@gmail.com'
+        (
+          request.auth.token.email == 'kashishverma8218@gmail.com' &&
+          request.auth.token.email_verified == true
+        )
       );
     }
 
     // USER PROFILE IMAGES
-    match /profileImages/{uid}/{fileName} {
+    match /profileImages/{uid}/{allPaths=**} {
       allow read: if true;
 
-      allow write: if isOwner(uid)
-        && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+      allow create, update: if isOwner(uid)
+        && request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType != null
+        && request.resource.contentType.matches('image/(jpeg|jpg|png|webp|gif)');
+
+      allow delete: if isOwner(uid) || isAdmin();
     }
 
-    // VIDEO UPLOADS
-    match /videos/{uid}/{fileName} {
-      allow read: if true;
+    // VIDEO UPLOADS (MP4, MOV, WebM, M4V up to 500 MB)
+    match /videos/{uid}/{allPaths=**} {
+      allow read: if isOwner(uid) || isAdmin();
 
-      allow write: if isOwner(uid)
-        && request.resource.size < 500 * 1024 * 1024
-        && request.resource.contentType.matches('video/.*');
+      allow create, update: if isOwner(uid)
+        && request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 500 * 1024 * 1024
+        && request.resource.contentType != null
+        && request.resource.contentType.matches('video/(mp4|quicktime|webm|x-m4v)');
+
+      allow delete: if isOwner(uid) || isAdmin();
     }
 
-    // THUMBNAILS
-    match /thumbnails/{uid}/{fileName} {
+    // THUMBNAILS (up to 5 MB)
+    match /thumbnails/{uid}/{allPaths=**} {
       allow read: if true;
 
-      allow write: if isOwner(uid)
-        && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+      allow create, update: if isOwner(uid)
+        && request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType != null
+        && request.resource.contentType.matches('image/(jpeg|jpg|png|webp|gif)');
+
+      allow delete: if isOwner(uid) || isAdmin();
     }
 
     // DEFAULT SECURITY

@@ -60,22 +60,24 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
 
   const handleCommentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCommentText.trim()) return;
-    onAddComment(videoId, newCommentText.trim());
+    const trimmed = newCommentText.trim().slice(0, 2000);
+    if (!trimmed) return;
+    onAddComment(videoId, trimmed);
     setNewCommentText('');
     setIsFocused(false);
   };
 
   const handleReplySubmit = (commentId: string) => {
-    if (!replyText.trim()) return;
-    onAddReply(commentId, replyText.trim());
+    const trimmed = replyText.trim().slice(0, 2000);
+    if (!trimmed) return;
+    onAddReply(commentId, trimmed);
     setReplyText('');
     setReplyingCommentId(null);
     setExpandedReplies((prev) => ({ ...prev, [commentId]: true }));
   };
 
   const handleEditSave = (commentId: string) => {
-    const trimmed = editingText.trim();
+    const trimmed = editingText.trim().slice(0, 2000);
     if (!trimmed || !onEditComment) return;
     onEditComment(commentId, trimmed);
     setEditingCommentId(null);
@@ -147,6 +149,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
         <form onSubmit={handleCommentSubmit} className="flex-1 min-w-0">
           <textarea
             rows={isFocused || newCommentText ? 3 : 1}
+            maxLength={2000}
             placeholder="Add a comment..."
             value={newCommentText}
             onChange={(e) => setNewCommentText(e.target.value)}
@@ -232,6 +235,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                   <div className="mt-2 space-y-2">
                     <textarea
                       rows={2}
+                      maxLength={2000}
                       value={editingText}
                       onChange={(e) => setEditingText(e.target.value)}
                       className="w-full resize-none rounded-xl border border-[var(--ink-faint)] bg-[var(--surface)] p-2.5 text-base sm:text-sm text-[var(--ink)] focus:border-[var(--ink)] focus:outline-none"
@@ -352,6 +356,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
                   <div className="mt-3 flex flex-wrap sm:flex-nowrap items-center gap-2 pl-2 sm:pl-4 border-l-2 border-[var(--ink-faint)]">
                     <input
                       type="text"
+                      maxLength={2000}
                       placeholder={`Reply to ${comment.authorHandle}...`}
                       value={replyText}
                       onChange={(e) => setReplyText(e.target.value)}

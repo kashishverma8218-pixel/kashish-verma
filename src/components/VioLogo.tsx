@@ -9,12 +9,12 @@ interface VioLogoProps {
 export const VioLogo: React.FC<VioLogoProps> = ({
   className = '',
   size = 'md',
-  showWordmark = true,
+  showWordmark = false,
 }) => {
   const iconSizes = {
-    sm: 'h-7 w-7',
-    md: 'h-8 w-8 sm:h-9 sm:w-9',
-    lg: 'h-10 w-10 sm:h-12 sm:w-12',
+    sm: 'h-8 w-8',
+    md: 'h-9 w-9 sm:h-10 sm:w-10',
+    lg: 'h-12 w-12 sm:h-14 sm:w-14',
   };
 
   const textSizes = {
@@ -24,23 +24,21 @@ export const VioLogo: React.FC<VioLogoProps> = ({
   };
 
   return (
-    <div className={`flex items-center gap-2.5 select-none shrink-0 ${className}`}>
-      {/* Official Vio Brand Logo Mark */}
-      <div className={`relative ${iconSizes[size]} shrink-0 flex items-center justify-center overflow-hidden rounded-[4px] border border-[var(--ink-faint)] bg-[#141416] shadow-xs`}>
-        <img
-          src="/assets/logo.png"
-          alt="Vio streaming"
-          referrerPolicy="no-referrer"
-          className="h-full w-full object-contain p-0.5 transition-transform group-hover:scale-105"
-        />
-      </div>
+    <div className={`flex items-center gap-2 select-none shrink-0 ${className}`}>
+      {/* Official Vio Brand Logo Mark (unboxed clean logo) */}
+      <img
+        src="/assets/logo.png"
+        alt="Vio"
+        referrerPolicy="no-referrer"
+        className={`${iconSizes[size]} shrink-0 object-contain transition-transform group-hover:scale-105`}
+      />
 
       {showWordmark && (
         <div className="flex items-center gap-1.5 sm:gap-2 leading-none whitespace-nowrap">
-          <span className={`font-display font-extrabold ${textSizes[size]} tracking-[-0.03em] text-[var(--accent-ink)] uppercase`}>
+          <span className={`font-display font-extrabold ${textSizes[size]} tracking-[-0.03em] text-[#CC0000] dark:text-[#FF4E45] uppercase`}>
             VIO
           </span>
-          <span className="hidden min-[380px]:inline font-mono text-[10px] uppercase tracking-[0.14em] sm:tracking-[0.16em] text-[var(--ink)]/75">
+          <span className="hidden min-[360px]:inline font-mono text-[10px] sm:text-[11px] uppercase tracking-[0.16em] text-[var(--ink)]/80">
             streaming
           </span>
         </div>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MoreVertical, Clock, Share2, Copy, Check, CheckCircle2, ListPlus, Trash2 } from 'lucide-react';
+import { MoreVertical, Clock, Share2, Copy, Check, CheckCircle2, ListPlus, Trash2, Download, Loader2 } from 'lucide-react';
 import { VideoItem, Channel, PlaylistItem } from '../types/video';
 import { formatTime } from '../utils/formatTime';
 import { formatViews } from '../data/mockData';
@@ -15,6 +15,7 @@ interface VideoCardProps {
   watchProgress?: number; // 0 to 1
   playlists?: PlaylistItem[];
   onAddToPlaylist?: (playlistId: string, videoId: string) => void;
+  onCreatePlaylist?: (title: string, initialVideoId?: string) => void;
   onRemoveFromHistory?: (videoId: string) => void;
 }
 
@@ -30,6 +31,18 @@ function formatVideoTitle(title: string): string {
   return cleaned;
 }
 
+function buildDownloadFilename(title: string, videoUrl: string): string {
+  const safeBase =
+    (title || 'vio-video')
+      .replace(/[^a-z0-9\-_\s]/gi, '')
+      .trim()
+      .replace(/\s+/g, '_')
+      .slice(0, 80) || 'vio-video';
+  const extMatch = videoUrl.split('?')[0].match(/\.(mp4|mov|webm|m4v|mkv)$/i);
+  const ext = extMatch ? extMatch[1].toLowerCase() : 'mp4';
+  return `${safeBase}.${ext}`;
+}
+
 export const VideoCard: React.FC<VideoCardProps> = ({
   video,
   channel,
@@ -40,11 +53,14 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   watchProgress = 0,
   playlists = [],
   onAddToPlaylist,
+  onCreatePlaylist,
   onRemoveFromHistory,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -104,6 +120,57 @@ export const VideoCard: React.FC<VideoCardProps> = ({
     setShareModalOpen(true);
   };
 
+  const triggerAnchorDownload = (href: string, filename: string, newTabFallback = false) => {
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = filename;
+    if (newTabFallback) {
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    }
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(() => link.remove(), 150);
+  };
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const sourceUrl = (video.url || '').trim();
+    if (!sourceUrl || isDownloading) return;
+
+    const filename = buildDownloadFilename(displayTitle, sourceUrl);
+    setIsDownloading(true);
+
+    try {
+      const isDirectLocal =
+        sourceUrl.startsWith('blob:') ||
+        sourceUrl.startsWith('data:') ||
+        sourceUrl.startsWith(window.location.origin);
+
+      if (isDirectLocal) {
+        triggerAnchorDownload(sourceUrl, filename);
+      } else {
+        const response = await fetch(sourceUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        triggerAnchorDownload(objectUrl, filename);
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+      }
+      setDownloaded(true);
+      window.setTimeout(() => setDownloaded(false), 2000);
+    } catch {
+      // Fallback for CORS-restricted external CDNs
+      triggerAnchorDownload(sourceUrl, filename, true);
+    } finally {
+      setIsDownloading(false);
+      setMenuOpen(false);
+    }
+  };
+
   return (
     <div className="group relative flex flex-col cursor-pointer">
       {/* YouTube-style Borderless Rounded-XL Thumbnail */}
@@ -141,19 +208,40 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           </button>
         )}
 
-        {/* Quick Watch Later Button on Thumbnail Hover (Top-Right) */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleWatchLater(video.id);
-          }}
-          title={isWatchLater ? 'Remove from Watch later' : 'Watch later'}
-          aria-label={isWatchLater ? 'Remove from Watch later' : 'Watch later'}
-          className="absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-md bg-black/80 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black cursor-pointer"
-        >
-          {isWatchLater ? <Check className="h-4 w-4 text-[#FF0000]" /> : <Clock className="h-4 w-4" />}
-        </button>
+        {/* Quick Thumbnail Actions on Hover (Top-Right: Download & Watch Later) */}
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          {video.url && (
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={isDownloading}
+              title={isDownloading ? 'Downloading...' : downloaded ? 'Downloaded' : 'Download'}
+              aria-label={`Download ${displayTitle}`}
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-black/80 text-white hover:bg-black disabled:opacity-60 cursor-pointer"
+            >
+              {isDownloading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : downloaded ? (
+                <Check className="h-4 w-4 text-emerald-400" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleWatchLater(video.id);
+            }}
+            title={isWatchLater ? 'Remove from Watch later' : 'Watch later'}
+            aria-label={isWatchLater ? 'Remove from Watch later' : 'Watch later'}
+            className="flex h-7 w-7 items-center justify-center rounded-md bg-black/80 text-white hover:bg-black cursor-pointer"
+          >
+            {isWatchLater ? <Check className="h-4 w-4 text-[#FF0000]" /> : <Clock className="h-4 w-4" />}
+          </button>
+        </div>
 
         {/* Bottom-Right Duration Timestamp */}
         <div className="absolute bottom-2 right-2 bg-black/80 px-1.5 py-0.5 text-xs font-semibold text-white tabular-nums rounded-[4px] leading-tight">
@@ -260,6 +348,24 @@ export const VideoCard: React.FC<VideoCardProps> = ({
                 <span>Share</span>
               </button>
 
+              {video.url && (
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={isDownloading}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-[var(--ink)]/90 hover:bg-[var(--card-hover)] transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  {isDownloading ? (
+                    <Loader2 className="h-4 w-4 text-[var(--ink-medium)] animate-spin" />
+                  ) : downloaded ? (
+                    <Check className="h-4 w-4 text-emerald-500" />
+                  ) : (
+                    <Download className="h-4 w-4 text-[var(--ink-medium)]" />
+                  )}
+                  <span>{isDownloading ? 'Downloading...' : downloaded ? 'Downloaded' : 'Download'}</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
@@ -272,7 +378,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
                 <span>{isWatchLater ? 'Remove from Watch later' : 'Save to Watch later'}</span>
               </button>
 
-              {onAddToPlaylist && playlists.length > 0 && (
+              {(onAddToPlaylist || onCreatePlaylist) && (
                 <div className="border-t border-[var(--ink-faint)] mt-1 pt-1">
                   <button
                     type="button"
@@ -286,7 +392,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
                     <span className="text-[10px] text-[var(--ink-medium)]">{playlistMenuOpen ? '−' : '+'}</span>
                   </button>
                   {playlistMenuOpen && (
-                    <div className="mt-1 space-y-0.5 pl-2 max-h-32 overflow-y-auto">
+                    <div className="mt-1 space-y-0.5 pl-2 max-h-36 overflow-y-auto">
                       {playlists.map((pl) => {
                         const inPlaylist = pl.videoIds.includes(video.id);
                         return (
@@ -294,7 +400,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
                             key={pl.id}
                             type="button"
                             onClick={() => {
-                              onAddToPlaylist(pl.id, video.id);
+                              onAddToPlaylist?.(pl.id, video.id);
                               setMenuOpen(false);
                             }}
                             className="flex w-full items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] text-[var(--ink)] hover:bg-[var(--card-hover)] cursor-pointer"
@@ -304,6 +410,18 @@ export const VideoCard: React.FC<VideoCardProps> = ({
                           </button>
                         );
                       })}
+                      {onCreatePlaylist && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onCreatePlaylist('Favorites', video.id);
+                            setMenuOpen(false);
+                          }}
+                          className="flex w-full items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-[#3EA6FF] hover:bg-[var(--card-hover)] cursor-pointer"
+                        >
+                          <span>+ Create & add to Favorites</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Edit3, Save, Upload, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { VideoItem } from '../types/video';
 import { CATEGORIES } from '../data/mockData';
+import { CONTENT_LANGUAGES } from '../context/LanguageContext';
 import { uploadImageAsset } from '../services/firebaseDatabaseService';
 
 interface EditVideoModalProps {
@@ -20,6 +21,8 @@ export const EditVideoModal: React.FC<EditVideoModalProps> = ({
   const [title, setTitle] = useState(video.title);
   const [description, setDescription] = useState(video.description);
   const [category, setCategory] = useState(video.category || 'Animation');
+  const [language, setLanguage] = useState(video.language || 'Hindi');
+  const [monetizationEnabled, setMonetizationEnabled] = useState<boolean>(video.monetizationEnabled ?? true);
   const [visibility, setVisibility] = useState<'public' | 'unlisted' | 'private'>(video.visibility || 'public');
   const [poster, setPoster] = useState(video.poster);
   const [tagInput, setTagInput] = useState('');
@@ -35,6 +38,8 @@ export const EditVideoModal: React.FC<EditVideoModalProps> = ({
       setTitle(video.title);
       setDescription(video.description || '');
       setCategory(video.category || 'Animation');
+      setLanguage(video.language || 'Hindi');
+      setMonetizationEnabled(video.monetizationEnabled ?? true);
       setVisibility(video.visibility || 'public');
       setPoster(video.poster || '');
       setTags(video.tags || []);
@@ -103,6 +108,8 @@ export const EditVideoModal: React.FC<EditVideoModalProps> = ({
       title: title.trim(),
       description: description.trim(),
       category,
+      language,
+      monetizationEnabled,
       visibility,
       poster: poster.trim() || video.poster,
       tags,
@@ -194,6 +201,47 @@ export const EditVideoModal: React.FC<EditVideoModalProps> = ({
                 <option value="unlisted">Unlisted (Anyone with link)</option>
                 <option value="private">Private (Only you)</option>
               </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+            <div>
+              <label className="block text-xs font-bold text-[var(--ink)] mb-1">
+                Video Language
+              </label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="w-full min-h-[44px] rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] px-3 py-2 text-base sm:text-xs text-[var(--ink)] focus:border-[#FF0000] focus:outline-none"
+              >
+                {CONTENT_LANGUAGES.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {lang}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--ink-faint)] bg-[var(--bg)] px-3.5 py-2.5 sm:mt-5">
+              <div>
+                <div className="text-xs font-bold text-[var(--ink)]">Monetization</div>
+                <div className="text-[10px] text-[var(--ink-medium)]">Creator 30% revenue active</div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={monetizationEnabled}
+                onClick={() => setMonetizationEnabled((prev) => !prev)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+                  monetizationEnabled ? 'bg-emerald-500' : 'bg-[var(--ink-faint)]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    monetizationEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
             </div>
           </div>
 

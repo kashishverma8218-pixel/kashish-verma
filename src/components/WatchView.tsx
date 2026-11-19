@@ -555,10 +555,15 @@ export const WatchView: React.FC<WatchViewProps> = ({
               {video.description}
             </p>
 
-            {video.tags && video.tags.length > 0 && descriptionExpanded && (
+            {((video.hashtags && video.hashtags.length > 0) || (video.tags && video.tags.length > 0)) && descriptionExpanded && (
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--accent-ink)]">
-                {video.tags.map((tag) => (
-                  <span key={tag}>#{tag.replace(/\s+/g, '')}</span>
+                {Array.from(
+                  new Set([
+                    ...(video.hashtags || []).map((h) => (h.startsWith('#') ? h : `#${h}`)),
+                    ...(video.tags || []).map((tag) => `#${tag.replace(/\s+/g, '')}`),
+                  ])
+                ).map((tag) => (
+                  <span key={tag}>{tag}</span>
                 ))}
               </div>
             )}
